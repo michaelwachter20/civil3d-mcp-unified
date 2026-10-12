@@ -169,11 +169,9 @@ public sealed class ScriptArgs
       return defaultValue ?? throw new ArgumentException($"Missing required argument '{name}'.");
     }
 
-    if (node is JsonValue value)
-    {
-      if (value.TryGetValue<double>(out var number)) return number;
-      if (value.TryGetValue<string>(out var text) && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) return number;
-    }
+    if (ScriptJson.TryGetDouble(node, out var number)) return number;
+    if (node is JsonValue value && value.TryGetValue<string>(out var text) &&
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) return number;
 
     throw new ArgumentException($"Argument '{name}' is not a number.");
   }
@@ -200,7 +198,7 @@ public sealed class ScriptArgs
     {
       if (value.TryGetValue<bool>(out var flag)) return flag;
       if (value.TryGetValue<string>(out var text) && bool.TryParse(text, out flag)) return flag;
-      if (value.TryGetValue<double>(out var number)) return number != 0;
+      if (ScriptJson.TryGetDouble(value, out var number)) return number != 0;
     }
 
     throw new ArgumentException($"Argument '{name}' is not a boolean.");
@@ -214,10 +212,7 @@ public sealed class ScriptArgs
       throw new ArgumentException($"Argument '{name}' must be an object with x and y.");
     }
 
-    return new Point3d(
-      point["x"]?.GetValue<double>() ?? throw new ArgumentException($"'{name}.x' is required."),
-      point["y"]?.GetValue<double>() ?? throw new ArgumentException($"'{name}.y' is required."),
-      point["z"]?.GetValue<double>() ?? 0);
+    return ScriptJson.ToPoint3d(point, name);
   }
 
   /// <summary>Reads an array of strings (or a single string) as a list.</summary>
@@ -239,6 +234,41 @@ public sealed class ScriptArgs
   }
 
   public override string ToString() => _values.ToJsonString();
+}
+
+/// <summary>
+/// Numeric reads that work for both parsed JSON and values built in code.
+/// <c>TryGetValue&lt;double&gt;</c> only converts parsed numbers; a value created with
+/// <c>JsonValue.Create(21L)</c> reports false, so check the JSON kind instead.
+/// </summary>
+internal static class ScriptJson
+{
+  public static bool TryGetDouble(JsonNode? node, out double number)
+  {
+    number = 0;
+    return node is JsonValue value &&
+      value.GetValueKind() == JsonValueKind.Number &&
+      double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number);
+  }
+
+  public static Point3d ToPoint3d(JsonObject point, string name)
+  {
+    return new Point3d(
+      Coordinate(point, "x", name, required: true),
+      Coordinate(point, "y", name, required: true),
+      Coordinate(point, "z", name, required: false));
+  }
+
+  private static double Coordinate(JsonObject point, string axis, string name, bool required)
+  {
+    var node = point[axis];
+    if (node == null)
+    {
+      return required ? throw new ArgumentException($"'{name}.{axis}' is required.") : 0;
+    }
+
+    return TryGetDouble(node, out var number) ? number : throw new ArgumentException($"'{name}.{axis}' must be a number.");
+  }
 }
 
 /// <summary>Builds output text for MCPRUN without exposing internals.</summary>

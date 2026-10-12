@@ -289,12 +289,12 @@ internal static class ScriptLibrary
       {
         case "number":
         {
-          if (value is JsonValue v && v.TryGetValue<double>(out var d)) return JsonValue.Create(d)!;
+          if (ScriptJson.TryGetDouble(value, out var d)) return JsonValue.Create(d)!;
           return JsonValue.Create(double.Parse(value.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture))!;
         }
         case "integer":
         {
-          if (value is JsonValue v && v.TryGetValue<double>(out var d)) return JsonValue.Create((long)Math.Round(d))!;
+          if (ScriptJson.TryGetDouble(value, out var d)) return JsonValue.Create((long)Math.Round(d))!;
           return JsonValue.Create(long.Parse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture))!;
         }
         case "boolean":

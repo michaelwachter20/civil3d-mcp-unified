@@ -143,12 +143,9 @@ public static class ScriptCommands
       tokens[index] = items[index] switch
       {
         null => string.Empty,
-        JsonObject point when point["x"] != null && point["y"] != null => new Point3d(
-          point["x"]!.GetValue<double>(),
-          point["y"]!.GetValue<double>(),
-          point["z"]?.GetValue<double>() ?? 0),
+        JsonObject point when point["x"] != null && point["y"] != null => ScriptJson.ToPoint3d(point, $"command[{index}]"),
         JsonValue value when value.TryGetValue<string>(out var text) => text,
-        JsonValue value when value.TryGetValue<double>(out var number) => number.ToString("R", CultureInfo.InvariantCulture),
+        JsonValue value when ScriptJson.TryGetDouble(value, out var number) => number.ToString("R", CultureInfo.InvariantCulture),
         JsonValue value when value.TryGetValue<bool>(out var flag) => flag ? "_Yes" : "_No",
         var other => other.ToJsonString(),
       };
@@ -360,7 +357,7 @@ public static class ScriptCommands
       case "integer":
       {
         var options = new PromptDoubleOptions(label + ": ") { AllowNone = !parameter.Required || parameter.Default != null };
-        if (parameter.Default is JsonValue d && d.TryGetValue<double>(out var defaultNumber))
+        if (ScriptJson.TryGetDouble(parameter.Default, out var defaultNumber))
         {
           options.DefaultValue = defaultNumber;
           options.UseDefaultValue = true;
