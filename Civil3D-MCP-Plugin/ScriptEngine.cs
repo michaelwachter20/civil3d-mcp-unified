@@ -229,7 +229,10 @@ internal static class ScriptEngine
       .WithReferences(GetReferences())
       .WithImports(Imports)
       .WithAllowUnsafe(false)
-      .WithOptimizationLevel(RoslynOptimization.Debug)
+      // Release: Debug-mode script IL crashed the .NET 10 runtime twice inside Civil 3D 2027
+      // (clrjit access violation, then an AV during exception dispatch) on long-running loops.
+      // Debug information is still emitted, so runtime errors keep their script line numbers.
+      .WithOptimizationLevel(RoslynOptimization.Release)
       .WithEmitDebugInformation(true)
       .WithFilePath(ScriptFileName)
       .WithFileEncoding(Encoding.UTF8);
