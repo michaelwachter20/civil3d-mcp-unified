@@ -2,8 +2,8 @@
 
 Generated from the runtime manifest for civil3d-mcp 1.2.1. Do not edit by hand.
 
-- Catalog entries: 206
-- Domains: 29
+- Catalog entries: 211
+- Domains: 30
 
 | Tool | Domain | Operations | Plugin methods | Safe retry |
 |---|---|---|---|---|
@@ -162,6 +162,11 @@ Generated from the runtime manifest for civil3d-mcp 1.2.1. Do not edit by hand.
 | `civil3d_qty_pressure_network_lengths` | quantity_takeoff | — | qtyPressureNetworkLengths | yes |
 | `civil3d_qty_surface_volume` | quantity_takeoff | — | qtySurfaceVolume | yes |
 | `civil3d_quantity_takeoff` | quantity_takeoff | surface_volume, pipe_network_lengths, pressure_network_lengths, parcel_areas, alignment_lengths, point_count_by_group, export_to_csv, earthwork_summary | qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths, qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv, qtyEarthworkSummary | no |
+| `acad_command` | scripting | — | runAcadCommand | no |
+| `civil3d_execute` | scripting | — | executeCode | no |
+| `civil3d_query` | scripting | — | queryCode | yes |
+| `civil3d_script` | scripting | script_save, script_list, script_get, script_run, script_delete, compile, status | scriptSave, scriptList, scriptGet, scriptRun, scriptDelete, compileCode, getScriptingStatus | no |
+| `civil3d_skills` | scripting | skills_list, skills_search, skills_read | — | yes |
 | `civil3d_section` | section | list_sample_lines, get_section_data, create_sample_lines, view_create, view_list, view_update_style, view_group_create, view_export | listSampleLineGroups, getSectionData, createSampleLines, createSectionViews, listSectionViews, updateSectionViewStyles, createSectionViewGroup, exportSectionData | no |
 | `civil3d_section_view_create` | section | — | createSectionViews | no |
 | `civil3d_section_view_export` | section | — | exportSectionData | no |

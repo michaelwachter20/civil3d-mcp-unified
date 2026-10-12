@@ -10,7 +10,7 @@
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
   [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
   [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.29-blueviolet)](https://modelcontextprotocol.io)
-  [![Civil 3D](https://img.shields.io/badge/Civil%203D-2026-0696D7?logo=autodesk&logoColor=white)](https://www.autodesk.com/products/civil-3d)
+  [![Civil 3D](https://img.shields.io/badge/Civil%203D-2027-0696D7?logo=autodesk&logoColor=white)](https://www.autodesk.com/products/civil-3d)
   [![Issues](https://img.shields.io/github/issues/Sacred-G/Civil3D-mcp)](https://github.com/Sacred-G/Civil3D-mcp/issues)
 
   <p>
@@ -32,13 +32,19 @@
 ```text
 MCP client  <-- stdio ----------->  civil3d-mcp (Node.js)
 HTTP client <-- HTTP :3000 ------>  civil3d-mcp (Node.js)
-civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2026 API
+civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 API (+ Roslyn C#)
 ```
 
 This is the **MCP server** (TypeScript). You also need the **Civil 3D .NET plugin** — see [Installation](#installation).
 
 ### What Changed Recently
 
+- **New in this fork (civil3d-mcp-unified):** live C# execution through Roslyn
+  (`civil3d_execute`, `civil3d_query`), native command-line commands
+  (`acad_command`), a library of C# code templates (`civil3d_skills`), and saved,
+  parameterized scripts for repetitive tasks (`civil3d_script`, plus `MCPRUN`
+  inside Civil 3D). Built for **Civil 3D 2027 / .NET 10**. See
+  [Code Execution and Saved Scripts](#code-execution-and-saved-scripts).
 - Production-ready host execution now includes bounded queues and jobs,
   cancellation, idempotency, structured telemetry, readiness endpoints, and
   observable rotating plugin logs.
@@ -54,6 +60,64 @@ This is the **MCP server** (TypeScript). You also need the **Civil 3D .NET plugi
   compatibility artifact, generated with `npm run package:claude`.
 - The release-checked inventory is generated from the runtime manifest at
   [`docs/tools.generated.md`](./docs/tools.generated.md).
+
+---
+
+## Code Execution and Saved Scripts
+
+The 200+ fixed tools cover common Civil 3D work. Everything else the AutoCAD and
+Civil 3D .NET APIs can do is reachable by letting the AI write C# that runs inside
+Civil 3D. The Roslyn execution engine and the skills library come from
+[barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp) (MIT) and run on
+this repo's serialized host queue, approval flow, and logging.
+
+| Tool | What it does | Approval |
+| --- | --- | --- |
+| `civil3d_query` | Runs **read-only** C#: the transaction is always rolled back, and commands, saves, commits, and file writes are blocked. | Not required |
+| `civil3d_execute` | Runs C# with **write** access. Commits on success, rolls back on any exception, and groups all changes into **one undo step**. | Required |
+| `acad_command` | Runs a native command with its prompt responses, e.g. `["_.-LAYER","_M","C-ROAD",""]`. | Required |
+| `civil3d_skills` | Lists, searches, and reads documented C# templates in [`skills/`](./skills). | Not required |
+| `civil3d_script` | `save` / `list` / `get` / `run` / `delete` reusable scripts, `compile` to check code without running it, and `status`. | save, run, delete |
+
+**Script globals:** `Document`, `CivilDoc`, `Database`, `Transaction`, `Editor`,
+`ModelSpace`, `Args` (typed accessors for the call's `args` object), `Print(obj)`,
+`Get<T>(id)`, `AddToModelSpace(entity)`, `FromHandle(hex)`, `IsWriteMode`,
+`CancellationToken`. The common AutoCAD and Civil 3D namespaces are imported automatically. End a
+script with `return new { ... };` to send results back as JSON.
+
+```csharp
+// civil3d_query with args: { "layer": "C-TOPO*" }
+var filter = new SelectionFilter(new[] { new TypedValue((int)DxfCode.LayerName, Args.GetString("layer")) });
+var result = Editor.SelectAll(filter);
+return new { count = result.Status == PromptStatus.OK ? result.Value.Count : 0 };
+```
+
+### Saved scripts for repetitive tasks
+
+When a snippet works and the task is likely to come up again, the AI saves it with
+`civil3d_script action=save` and gives it a name, description, mode (`write` or
+`read`), and typed parameters. Scripts are compile-checked before they are saved,
+and each one is stored as a plain, editable `.csx` file in
+`Documents\Civil3DMcp\scripts` (override this with `CIVIL3D_SCRIPTS_DIR`). Later, the AI
+reruns a script with `civil3d_script action=run`, or **you** run it from the Civil 3D
+command line:
+
+| Command | Purpose |
+| --- | --- |
+| `MCPRUN` | Prompts for a saved script name and its parameters (point parameters are picked in the drawing), then runs it. |
+| `MCPSCRIPTS` | Lists the saved scripts. |
+
+### Safety model
+
+- Write operations use the protected-action flow: `civil3d_preview_action`, then
+  `civil3d_request_approval`, then a retry with `approvalToken`. For a local
+  sandbox only, `CIVIL3D_APPROVAL_MODE=disabled` removes those extra steps.
+- A source-pattern sandbox blocks processes, networking, reflection, P/Invoke,
+  the registry, file deletion, and calls into plugin internals.
+  `acad_command` blocks SHELL, NETLOAD, AutoLISP, and similar commands. **This is
+  a guardrail, not a security boundary**, so work on copies of important drawings.
+- Scripts time out after 110 seconds (`CIVIL3D_SCRIPT_TIMEOUT_SECONDS`). For
+  cancellation to work, long loops must check `CancellationToken`.
 
 ---
 
@@ -127,8 +191,8 @@ For a source-based or Claude Code installation:
 1. Clone and build the Node side:
 
    ```bash
-   git clone https://github.com/Sacred-G/Civil3D-mcp.git
-   cd Civil3D-mcp
+   git clone https://github.com/<your-account>/civil3d-mcp-unified.git
+   cd civil3d-mcp-unified
    npm install
    npm run build
    ```
@@ -136,9 +200,12 @@ For a source-based or Claude Code installation:
 2. Build and `NETLOAD` the Civil 3D plugin:
 
    ```powershell
-   dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release `
-     /p:Civil3DReferencesPath="C:\Program Files\Autodesk\AutoCAD 2026\C3D"
+   dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release
    ```
+
+   The project finds the Autodesk DLLs in a default Civil 3D 2027 install
+   (`C:\Program Files\Autodesk\AutoCAD 2027`, plus its `C3D` and `ACA`
+   subfolders). For a different location, pass `/p:Civil3DInstallPath=...`.
 
 3. Register Claude Code for this repo:
 
@@ -271,7 +338,7 @@ flowchart LR
         Queue["Bounded Host Queue"]
         Context["ExecuteInCommandContextAsync"]
         Safety["Document Lock + Transaction"]
-        API["Civil 3D 2026 .NET API"]
+        API["Civil 3D 2027 .NET API"]
 
         Plugin --> Queue --> Context --> Safety --> API
     end
@@ -288,10 +355,10 @@ narrow transaction; callers never mutate a drawing directly from Node.js.
 | Component | Version |
 |---|---|
 | Node.js | 18+ |
-| Civil 3D | 2026 (live validated) |
-| .NET SDK | 8.0 |
+| Civil 3D | 2027 (AutoCAD 2027 requires .NET 10 plugins; 2025/2026 builds will not load) |
+| .NET SDK | 10.0 |
 | Civil 3D API refs | Licensed local installation or untracked reference directory |
-| Visual Studio | 2022 recommended |
+| Visual Studio | 2026 (optional; VS 2022 cannot target AutoCAD 2027) |
 
 ---
 
@@ -347,21 +414,27 @@ bridge port (default `3000`).
 
 ### 2 — Build & Load the C# Plugin
 
-**Prerequisites:** Civil 3D 2026, .NET 8 SDK, and licensed local Civil 3D managed
-API assemblies. Autodesk binaries are intentionally not tracked or published by
-this repository.
+**Prerequisites:** Civil 3D 2027, the .NET 10 SDK, and licensed local Civil 3D
+managed API assemblies. This repository intentionally does not track or publish
+Autodesk binaries.
 
 ```powershell
-$refs = "C:\Program Files\Autodesk\AutoCAD 2026\C3D"
-dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release `
-  /p:Civil3DReferencesPath="$refs"
-# Output: Civil3D-MCP-Plugin\bin\Release\net8.0-windows\Civil3DMcpPlugin.dll
+dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release
+# Output: Civil3D-MCP-Plugin\bin\Release\net10.0-windows\Civil3DMcpPlugin.dll
 ```
 
-An untracked `C_References` directory remains the local fallback when
-`Civil3DReferencesPath` is omitted.
+Each Autodesk DLL is resolved independently, and the first match wins:
 
-At minimum, the configured directory must contain:
+1. `/p:Civil3DReferencesPath=<folder>`: one folder that holds all six DLLs.
+2. `/p:Civil3DInstallPath=<folder>`: the AutoCAD install root, which defaults to
+   `C:\Program Files\Autodesk\AutoCAD 2027`. The root, `C3D\`, and `ACA\`
+   subfolders are all searched.
+3. An untracked `C_References` folder next to the plugin project.
+
+Keep the whole `bin\Release\net10.0-windows` folder together when you `NETLOAD`,
+because the Roslyn (`Microsoft.CodeAnalysis*`) DLLs next to the plugin are required.
+
+The required DLLs are:
 
 ```text
 accoremgd.dll
@@ -379,13 +452,15 @@ AeccPressurePipesMgd.dll
 | **Manual (NETLOAD)** | Open Civil 3D → type `NETLOAD` → browse to `Civil3D-MCP-Plugin.dll` |
 | **Autoload (recommended)** | Add registry key — see [DEPLOYMENT.md](./docs/DEPLOYMENT.md) |
 
-Once loaded, three commands are available in the Civil 3D command line:
+Once loaded, these commands are available in the Civil 3D command line:
 
 | Command | Description |
 |---|---|
 | `C3DMCPSTART` | Start the JSON-RPC server (auto-starts on plugin load) |
 | `C3DMCPSTOP` | Stop the JSON-RPC server |
 | `C3DMCPSTATUS` | Show server status, port, and queue depth |
+| `MCPRUN` | Run a saved script by name, prompting for its parameters |
+| `MCPSCRIPTS` | List saved scripts |
 
 ### 3 — Configure Your AI Client
 
@@ -889,7 +964,8 @@ one or more operations; alias rows show an em dash in the **Operations** column.
 | 2023 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2024 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2025 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
-| 2026 | Supported and live validated | Set `Civil3DReferencesPath` to the matching licensed 2026 managed assemblies. |
+| 2026 | Validated upstream (Sacred-G/Civil3D-mcp) | This fork targets .NET 10, so 2026 needs the upstream .NET 8 build. |
+| 2027 | Target of this fork | Builds against the 2027 install by default. Live validation is in progress; report issues with your plugin log. |
 
 For startup-suite and autoload registry details, use the version-specific guidance in [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
 
@@ -916,6 +992,16 @@ The Node MCP server reads the following variables at startup. All are optional; 
 |---|---|---|
 | `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 34-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
+| `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of extra or replacement `*.skill.md` C# templates for `civil3d_skills`. |
+
+### Code execution (set where Civil 3D is launched)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CIVIL3D_SCRIPTS_DIR` | `Documents\Civil3DMcp\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. |
+| `CIVIL3D_SCRIPT_TIMEOUT_SECONDS` | `110` | Maximum run time per script. Keep it below `CIVIL3D_COMMAND_TIMEOUT` on the Node side. |
+| `CIVIL3D_SCRIPT_UNDO_GROUP` | `true` | Wraps each write run in `UNDO BEGIN/END` so a single undo reverts it. |
+| `CIVIL3D_SCRIPT_SANDBOX` | enforced | `disabled` skips the host-protection patterns (processes, network, reflection...). Read-only rules for `civil3d_query` always apply. |
 
 ### Local Autodesk help search
 
@@ -1112,5 +1198,7 @@ Pull requests are welcome. For major changes, open an issue first to discuss wha
 ---
 
 ## License
+
+This fork combines two MIT-licensed projects. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 [MIT](./LICENSE) — Steven Bouldin

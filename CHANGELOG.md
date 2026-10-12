@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased: civil3d-mcp-unified
+
+### Civil 3D 2027
+
+- Retargeted the plugin to `net10.0-windows`, as AutoCAD 2027 requires. 2025 and 2026
+  builds are not binary compatible.
+- Autodesk references now resolve per DLL from the default 2027 install
+  (root, `C3D\`, and `ACA\`), from `Civil3DReferencesPath`, or from `C_References`.
+- CI now targets .NET 10 and a `Civil3D-2027` runner. Help search prefers 2027 docs.
+
+### Code execution (merged from barbosaihan/civil3d-mcp)
+
+- Added the `civil3d_execute` (write, approval-gated) and `civil3d_query` (read-only)
+  tools, which run Roslyn C# against the full AutoCAD and Civil 3D .NET API.
+  They use the serialized host queue, drawing-identity checks, and cancellation.
+- Compilation happens off the AutoCAD main thread and is cached by SHA-256.
+  Diagnostics include line and column numbers, and runtime errors report the
+  script line.
+- Each write run is grouped into one undo step (`UNDO BEGIN/END`).
+- A result serializer turns ObjectId, Point3d, Extents3d, and entity values into
+  compact JSON instead of walking their full property graphs.
+- The sandbox has host-protection rules plus strict read-only rules for queries.
+- Added the `acad_command` tool for native commands with prompt responses.
+  Dangerous commands and AutoLISP are blocked.
+- Added the `civil3d_skills` tool: 16 C# templates (11 from barbosaihan, 5 new
+  Args-based templates) with a CRLF-safe parser.
+- Added the `civil3d_script` tool for saved, parameterized, compile-checked `.csx`
+  scripts, with save/list/get/run/delete/compile/status actions.
+- Added the `MCPRUN` and `MCPSCRIPTS` commands, which run saved scripts from the
+  Civil 3D command line with interactive parameter prompts.
+
 ## v1.2.1 — 2026-07-14
 
 ### Production readiness
