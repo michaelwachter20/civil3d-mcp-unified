@@ -112,13 +112,16 @@ internal static class ScriptEngine
   public static Task<ScriptRunResult> RunFromRequestAsync(CompiledScript compiled, JsonObject? args, bool write, string description)
   {
     var cancellationToken = PluginRuntime.GetCurrentRequestCancellationToken();
-    return CivilExecution.ExecuteInCommandContextAsync(async () =>
+    Func<Func<Task<ScriptRunResult>>, Task<ScriptRunResult>> host = write
+      ? CivilExecution.ExecuteInCommandContextAsync
+      : CivilExecution.ExecuteReadOnlyAsync;
+    return host(async () =>
     {
       var (document, civilDocument) = CivilExecution.GetVerifiedActiveDocuments();
       var undoGrouped = write && UndoGroupingEnabled && await TryRunUndoAsync(document, "_BEGIN");
       try
       {
-        var result = await RunInDocumentAsync(compiled, document, civilDocument, args, write, cancellationToken, lockDocument: true);
+        var result = await RunInDocumentAsync(compiled, document, civilDocument, args, write, cancellationToken, lockDocument: write);
         PluginLog.Info("Script", $"{(write ? "execute" : "query")} ok hash={compiled.Hash[..12]} ms={result.ElapsedMs} desc={Truncate(description, 120)}");
         return result with { UndoGrouped = undoGrouped };
       }

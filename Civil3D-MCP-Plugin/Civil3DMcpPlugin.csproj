@@ -64,6 +64,12 @@
     <Message Importance="high" Text="Civil 3D references: $(AcMgdPath); $(AeccDbMgdPath); $(AecBaseMgdPath)" />
   </Target>
 
+  <!-- WPF dispatcher marshals read-only requests onto the AutoCAD main thread.
+       A framework reference (not UseWPF) keeps the default implicit usings intact. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
   <!-- Roslyn scripting powers civil3d_execute / civil3d_query / saved scripts. -->
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.0.0" />
