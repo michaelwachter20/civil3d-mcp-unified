@@ -4,13 +4,17 @@ import { registerTools } from "./tools/register.js";
 import { startHttpBridge } from "./httpBridge.js";
 import { createLogger } from "./utils/logger.js";
 import { APP_VERSION } from "./version.js";
+import { SERVER_INSTRUCTIONS } from "./serverInstructions.js";
 
 const log = createLogger("MCP");
 
-const server = new McpServer({
-  name: "civil3d-mcp",
-  version: APP_VERSION,
-});
+const server = new McpServer(
+  {
+    name: "civil3d-mcp",
+    version: APP_VERSION,
+  },
+  { instructions: SERVER_INSTRUCTIONS },
+);
 
 async function main() {
   await registerTools(server);

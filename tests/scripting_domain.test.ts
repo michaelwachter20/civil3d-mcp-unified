@@ -6,6 +6,39 @@ import { hasApprovalRisk } from "../src/tools/approvalPolicy.js";
 import { SCRIPTING_DOMAIN_DEFINITION } from "../src/tools/domains/scriptingDomain.js";
 import { selectManifestExposures } from "../src/tools/toolManifest.js";
 import { listSkills, parseSkill, readSkill, searchSkills } from "../src/tools/skillsLibrary.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { SERVER_INSTRUCTIONS } from "../src/serverInstructions.js";
+
+describe("server instructions", () => {
+  it("tell every connecting client to check saved scripts and skills before writing new code", async () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/civil3d_skills action=search/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/civil3d_script action=list/);
+
+    const server = new McpServer({ name: "instructions", version: "test" }, { instructions: SERVER_INSTRUCTIONS });
+    const client = new Client({ name: "instructions-client", version: "test" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("repeats the check in the code-execution tool descriptions", () => {
+    for (const name of ["civil3d_execute", "civil3d_query", "civil3d_skills"]) {
+      const exposure = SCRIPTING_DOMAIN_DEFINITION.exposures.find((e) => e.toolName === name)!;
+      expect(exposure.description).toMatch(/civil3d_skills|BEFORE writing new code/);
+    }
+  });
+
+  it("finds the proven label-declutter skill by task description", () => {
+    expect(searchSkills("point labels overlapping").results[0]?.name).toBe("declutter_point_labels");
+  });
+});
 
 function riskFor(action: string) {
   const definition = SCRIPTING_DOMAIN_DEFINITION.actions[action];

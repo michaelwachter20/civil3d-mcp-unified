@@ -61,6 +61,10 @@ const ScriptDeleteArgs = z.object({ action: z.literal("script_delete"), name: Sc
 const sendCommand = (method: string, params: Record<string, unknown>) =>
   withApplicationConnection(async (appClient) => await appClient.sendCommand(method, params));
 
+const CHECK_EXISTING_FIRST =
+  "Before writing new code, check for an existing solution: civil3d_script action=list (ready-to-run saved scripts) " +
+  "and civil3d_skills action=search (proven templates); adapt a match instead of starting from scratch.";
+
 const SCRIPT_GLOBALS_HELP =
   "Code is a C# script body (statements, then `return <value>;` — anonymous objects, lists and dictionaries become JSON). " +
   "Globals: Document, CivilDoc (CivilDocument), Database, Transaction (use Transaction.GetObject), Editor, ModelSpace, " +
@@ -151,7 +155,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Execute C#",
       description:
         "Runs C# code inside Civil 3D with WRITE access to the full AutoCAD and Civil 3D .NET API (Roslyn). " +
-        "Use it for anything the dedicated civil3d_* tools do not cover. The transaction commits on success and all changes form one undo step. " +
+        "Use it for anything the dedicated civil3d_* tools do not cover. " + CHECK_EXISTING_FIRST + " The transaction commits on success and all changes form one undo step. " +
         "Protected action: call civil3d_preview_action, then civil3d_request_approval, then retry with approvalToken. " +
         "Inspect first with civil3d_query, and validate tricky code with civil3d_script action=compile. " +
         "If the task will repeat, save it with civil3d_script action=save. " + SCRIPT_GLOBALS_HELP,
@@ -168,7 +172,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Query C#",
       description:
         "Runs READ-ONLY C# code inside Civil 3D (transaction always rolled back; commands, saves, commits and file writes are blocked). " +
-        "No approval needed — use it freely to inspect drawings, find objects, and compute values. " + SCRIPT_GLOBALS_HELP,
+        "No approval needed — use it freely to inspect drawings, find objects, and compute values. " + CHECK_EXISTING_FIRST + " " + SCRIPT_GLOBALS_HELP,
       inputShape: {
         code: z.string().min(1).describe("C# script body. End with `return ...;`."),
         args: ScriptArgsSchema.optional().describe("Named inputs readable in code via Args."),
@@ -196,7 +200,8 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       toolName: "civil3d_skills",
       displayName: "Civil 3D Code Skills",
       description:
-        "Browses the skills library: documented, working C# templates for common Civil 3D/AutoCAD API tasks. " +
+        "Browses the skills library: documented, proven C# templates for Civil 3D/AutoCAD tasks, with the rules and pitfalls learned on real drawings. " +
+        "Search it BEFORE writing new code for civil3d_execute/civil3d_query. " +
         "action=list (optional category), search (query), or read (skillName) to get the full template, then adapt it for civil3d_query or civil3d_execute.",
       inputShape: {
         action: z.enum(["list", "search", "read"]),
