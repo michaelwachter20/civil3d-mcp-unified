@@ -10,8 +10,10 @@ const manifest = JSON.parse(await readFile(manifestTarget, "utf8"));
 const manifestOutput = `${JSON.stringify({ ...manifest, version: packageJson.version }, null, 2)}\n`;
 
 if (process.argv.includes("--check")) {
-  const current = await readFile(target, "utf8").catch(() => "");
-  const currentManifest = await readFile(manifestTarget, "utf8").catch(() => "");
+  // Compare without CR so Windows checkouts (core.autocrlf=true) don't report false staleness.
+  const normalize = (text) => text.replace(/\r\n/g, "\n");
+  const current = normalize(await readFile(target, "utf8").catch(() => ""));
+  const currentManifest = normalize(await readFile(manifestTarget, "utf8").catch(() => ""));
   if (current !== output || currentManifest !== manifestOutput) {
     console.error("Generated version files are stale. Run npm run version:sync.");
     process.exit(1);
