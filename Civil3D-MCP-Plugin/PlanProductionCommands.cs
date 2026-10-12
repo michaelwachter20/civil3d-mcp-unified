@@ -77,7 +77,7 @@ public static class PlanProductionCommands
     _ = PluginRuntime.GetRequiredString(parameters, "name");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not document a managed sheet-set creation API. No sheet set was created; use Sheet Set Manager or a reviewed Autodesk Sheet Set API integration.");
+      "Civil 3D does not document a managed sheet-set creation API. No sheet set was created; use Sheet Set Manager or a reviewed Autodesk Sheet Set API integration.");
   }
 
   // -------------------------------------------------------------------------
@@ -168,7 +168,7 @@ public static class PlanProductionCommands
     _ = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not document a managed plan/profile sheet factory. No sheet, view frame, or placeholder layout was created.");
+      "Civil 3D does not document a managed plan/profile sheet factory. No sheet, view frame, or placeholder layout was created.");
   }
 
   // -------------------------------------------------------------------------

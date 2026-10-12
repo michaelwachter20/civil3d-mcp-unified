@@ -107,7 +107,7 @@
       "type": "string",
       "title": "Preferred offline help version",
       "description": "Civil 3D help version to prefer when more than one is installed.",
-      "default": "2026",
+      "default": "2027",
       "required": false
     },
     "enable_help_reindex": {

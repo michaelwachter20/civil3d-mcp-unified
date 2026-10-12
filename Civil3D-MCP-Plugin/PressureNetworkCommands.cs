@@ -177,7 +177,7 @@ public static class PressureNetworkCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 PressurePipeNetwork does not expose network-level minimum or maximum cover setters. No pipe elevations were changed; apply reviewed cover criteria through a pipe-run workflow.");
+      "Civil 3D PressurePipeNetwork does not expose network-level minimum or maximum cover setters. No pipe elevations were changed; apply reviewed cover criteria through a pipe-run workflow.");
   }
 
   // -------------------------------------------------------------------------
@@ -240,7 +240,7 @@ public static class PressureNetworkCommands
     _ = PluginRuntime.GetRequiredString(parameters, "sourceNetwork");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not expose a managed pressure-network merge operation. Component NetworkId values are read-only and were not reassigned; neither network was changed.");
+      "Civil 3D does not expose a managed pressure-network merge operation. Component NetworkId values are read-only and were not reassigned; neither network was changed.");
   }
 
   // -------------------------------------------------------------------------
@@ -302,7 +302,7 @@ public static class PressureNetworkCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 PressurePipe does not expose a managed resize or part-swap method. No diameter or catalog part was changed.");
+      "Civil 3D PressurePipe does not expose a managed resize or part-swap method. No diameter or catalog part was changed.");
   }
 
   // -------------------------------------------------------------------------
@@ -317,7 +317,7 @@ public static class PressureNetworkCommands
       ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "position is required; drawing origin will not be assumed.");
     var rotation = PluginRuntime.GetOptionalDouble(parameters, "rotation") ?? 0.0;
     if (Math.Abs(rotation) > 1.0e-12)
-      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D 2026 AddFitting does not accept a rotation. No fitting was created.");
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D AddFitting does not accept a rotation. No fitting was created.");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -363,7 +363,7 @@ public static class PressureNetworkCommands
       ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "position is required unless a future pipe-insertion workflow explicitly derives it.");
     var rotation = PluginRuntime.GetOptionalDouble(parameters, "rotation") ?? 0.0;
     if (Math.Abs(rotation) > 1.0e-12)
-      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D 2026 AddAppurtenance does not accept a rotation. No appurtenance was created.");
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D AddAppurtenance does not accept a rotation. No appurtenance was created.");
     var onPipeName = PluginRuntime.GetOptionalString(parameters, "onPipeName");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>

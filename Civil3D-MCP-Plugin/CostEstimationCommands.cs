@@ -45,7 +45,7 @@ public static class CostEstimationCommands
         quantityLines.Add(MakeLine("203.02", "Embankment (Fill)", "CY", Math.Round(fillCy, 1), payItems));
       }
 
-      // Civil 3D 2026 exposes QTO totals through SampleLineGroup material lists,
+      // Civil 3D exposes QTO totals through SampleLineGroup material lists,
       // not through a Corridor.GetMaterialVolumes member.
       if (includeCorridorMaterials && !string.IsNullOrWhiteSpace(corridorName))
       {
@@ -254,7 +254,7 @@ public static class CostEstimationCommands
   {
     return new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Corridor material quantities for '{corridorName}' cannot be read from Corridor in the Civil 3D 2026 .NET API. " +
+      $"Corridor material quantities for '{corridorName}' cannot be read from Corridor in the Civil 3D .NET API. " +
       "Civil 3D exposes material totals through SampleLineGroup.GetTotalVolumeResultDataForMaterialList(Guid); " +
       "supply a sample-line-group/material-list mapping in a dedicated QTO workflow instead.");
   }
