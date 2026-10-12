@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="./image/civil3d_dynamic_mcp_blueprint/dffc9d11-a9c7-4794-bf73-ff1a39c72e3a.jpg" alt="Civil3D-MCP dynamic blueprint" width="420" />
-
   <h1>Civil 3D MCP Unified</h1>
 
   <p><strong>Let an AI assistant drive a live Autodesk Civil 3D 2027 drawing with the full AutoCAD and Civil 3D .NET API.</strong></p>
@@ -1272,6 +1270,8 @@ reflection stays in `Civil3DCompatibility.cs`, and file writes go through `FileB
 
 ## License
 
-This fork combines two MIT-licensed projects. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
-
-[MIT](./LICENSE) — Steven Bouldin
+[MIT](./LICENSE). This is a fork of
+[Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) by Steven Bouldin that
+incorporates [barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp)
+(Copyright lisiting01). The fork is maintained by Michael Wachter. All original copyright
+notices are kept in [LICENSE](./LICENSE) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

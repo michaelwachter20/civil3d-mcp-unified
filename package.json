@@ -39,15 +39,19 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Sacred-G/Civil3D-mcp.git"
+    "url": "git+https://github.com/michaelwachter20/civil3d-mcp-unified.git"
   },
   "keywords": [],
   "author": "Steven Bouldin",
+  "contributors": [
+    "lisiting01 (barbosaihan/civil3d-mcp, https://github.com/barbosaihan/civil3d-mcp)",
+    "Michael Wachter (civil3d-mcp-unified fork maintainer, https://github.com/michaelwachter20)"
+  ],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Sacred-G/Civil3D-mcp/issues"
+    "url": "https://github.com/michaelwachter20/civil3d-mcp-unified/issues"
   },
-  "homepage": "https://github.com/Sacred-G/Civil3D-mcp#readme",
+  "homepage": "https://github.com/michaelwachter20/civil3d-mcp-unified#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.0.0",
