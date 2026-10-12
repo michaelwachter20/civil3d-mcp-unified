@@ -152,6 +152,7 @@ internal static class ScriptEngine
     var database = document.Database;
 
     using DocumentLock? documentLock = lockDocument ? document.LockDocument() : null;
+    using var changes = ViewFollower.Track(database);
     using var transaction = database.TransactionManager.StartTransaction();
     var context = new ScriptContext(document, civilDocument, database, transaction, args, write, linked.Token);
 
@@ -186,6 +187,8 @@ internal static class ScriptEngine
     if (write)
     {
       transaction.Commit();
+      transaction.Dispose();
+      ViewFollower.Follow(document, changes);
     }
     else
     {

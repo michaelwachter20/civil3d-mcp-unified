@@ -1001,6 +1001,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | `CIVIL3D_SCRIPTS_DIR` | `Documents\Civil3DMcp\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. |
 | `CIVIL3D_SCRIPT_TIMEOUT_SECONDS` | `110` | Maximum run time per script. Keep it below `CIVIL3D_COMMAND_TIMEOUT` on the Node side. |
 | `CIVIL3D_SCRIPT_UNDO_GROUP` | `true` | Wraps each write run in `UNDO BEGIN/END` so a single undo reverts it. |
+| `CIVIL3D_FOLLOW_VIEW` | `true` | After any MCP write (fixed tools or scripts), pans the model-space view to show what changed, zooming out only if it doesn't fit. Toggle at runtime with `C3DMCPFOLLOW`. |
 | `CIVIL3D_SCRIPT_SANDBOX` | enforced | `disabled` skips the host-protection patterns (processes, network, reflection...). Read-only rules for `civil3d_query` always apply. |
 
 ### Local Autodesk help search

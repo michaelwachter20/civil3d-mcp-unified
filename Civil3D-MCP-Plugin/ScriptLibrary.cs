@@ -318,7 +318,7 @@ internal static class ScriptLibrary
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.INVALID_INPUT",
-        $"Argument '{parameter.Name}' must be a {parameter.Type}: {exception.Message}");
+        $"Argument '{parameter.Name}' must be of type {parameter.Type}: {exception.Message}");
     }
   }
 

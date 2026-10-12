@@ -24,13 +24,20 @@ public static class CivilExecution
           var database = doc.Database;
 
           using var documentLock = doc.LockDocument();
-          using var transaction = database.TransactionManager.StartTransaction();
+          using var changes = ViewFollower.Track(database);
+          using (var transaction = database.TransactionManager.StartTransaction())
+          {
+            result = action(doc, civilDoc, database, transaction);
 
-          result = action(doc, civilDoc, database, transaction);
+            if (write)
+            {
+              transaction.Commit();
+            }
+          }
 
           if (write)
           {
-            transaction.Commit();
+            ViewFollower.Follow(doc, changes);
           }
         }
         catch (Exception ex)

@@ -73,6 +73,7 @@ public static class ScriptCommands
       ["sandboxHostProtection"] = ScriptSandbox.HostProtectionEnabled,
       ["timeoutSeconds"] = (int)ScriptEngine.Timeout.TotalSeconds,
       ["undoGrouping"] = ScriptEngine.UndoGroupingEnabled,
+      ["followView"] = ViewFollower.Enabled,
       ["globals"] = new[] { "Document", "CivilDoc", "Database", "Transaction", "Editor", "Args", "ModelSpace", "IsWriteMode", "CancellationToken", "Print(obj)", "Get<T>(id, mode)", "AddToModelSpace(entity)", "FromHandle(hex)" },
       ["imports"] = ScriptEngine.Imports,
     });
