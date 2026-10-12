@@ -1,24 +1,24 @@
 <div align="center">
   <img src="./image/civil3d_dynamic_mcp_blueprint/dffc9d11-a9c7-4794-bf73-ff1a39c72e3a.jpg" alt="Civil3D-MCP dynamic blueprint" width="420" />
 
-  <h1>Civil3D-MCP Server</h1>
+  <h1>Civil 3D MCP Unified</h1>
 
-  <p><strong>Connect Claude, Cursor, Cline, and other MCP clients directly to a live Autodesk Civil 3D drawing.</strong></p>
-  <p>Node.js MCP server + native Civil 3D plugin + workflow automation for grading, hydrology, plan production, QC, and data shortcuts.</p>
+  <p><strong>Let an AI assistant drive a live Autodesk Civil 3D 2027 drawing with the full AutoCAD and Civil 3D .NET API.</strong></p>
+  <p>200+ tested tools for everyday work, live C# for everything else, and saved scripts for the tasks you repeat.</p>
 
   [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
   [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
   [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.29-blueviolet)](https://modelcontextprotocol.io)
   [![Civil 3D](https://img.shields.io/badge/Civil%203D-2027-0696D7?logo=autodesk&logoColor=white)](https://www.autodesk.com/products/civil-3d)
-  [![Issues](https://img.shields.io/github/issues/Sacred-G/Civil3D-mcp)](https://github.com/Sacred-G/Civil3D-mcp/issues)
+  [![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
 
   <p>
     <a href="#quick-start">Quick Start</a> •
-    <a href="#autodesk-help-in-chat">Autodesk Help</a> •
+    <a href="#code-execution-and-saved-scripts">Code Execution</a> •
+    <a href="#working-alongside-the-ai">Working Alongside the AI</a> •
     <a href="#installation">Installation</a> •
-    <a href="./docs/DEPLOYMENT.md">Deployment</a> •
-    <a href="./docs/tools.generated.md">Generated Tool Reference</a>
+    <a href="./docs/tools.generated.md">Tool Reference</a>
   </p>
 
 </div>
@@ -27,7 +27,26 @@
 
 ## What Is This?
 
-**Civil3D-MCP** bridges AI assistants (Claude, Cline, Cursor, etc.) to a **live, open Civil 3D drawing** using the [Model Context Protocol](https://modelcontextprotocol.io). Give Claude your design brief — it reads your drawing, runs calculations, and makes changes in real time.
+An [MCP](https://modelcontextprotocol.io) server and Civil 3D plugin that connect
+AI assistants (Claude Code, Claude Desktop, Cursor, Cline…) to the drawing you
+have open in **Civil 3D 2027**. The AI can read the drawing, run calculations, and
+make changes while you watch.
+
+It merges two open-source projects:
+
+| From | What it contributes |
+| --- | --- |
+| [Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) (base of this fork) | The MCP server, the Civil 3D plugin, 200+ fixed tools (alignments, surfaces, corridors, pipes, grading, QC, plan production, hydrology…), approvals for destructive actions, a serialized host queue, jobs, logging, and the HTTP bridge. |
+| [barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp) | The Roslyn engine that compiles and runs AI-written C# inside Civil 3D, plus a library of C# templates. |
+
+So the AI has three ways to get work done, from safest to most flexible:
+
+1. **Fixed tools** for common, well-tested operations.
+2. **Code execution**: C# with access to effectively the entire .NET API.
+3. **Raw commands** (`acad_command`) for native command-line commands.
+
+When a piece of C# proves useful, the AI can save it as a **named, parameterized
+script** that it, or you through `MCPRUN`, can rerun later.
 
 ```text
 MCP client  <-- stdio ----------->  civil3d-mcp (Node.js)
@@ -35,31 +54,22 @@ HTTP client <-- HTTP :3000 ------>  civil3d-mcp (Node.js)
 civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 API (+ Roslyn C#)
 ```
 
-This is the **MCP server** (TypeScript). You also need the **Civil 3D .NET plugin** — see [Installation](#installation).
+### What this fork adds
 
-### What Changed Recently
-
-- **New in this fork (civil3d-mcp-unified):** live C# execution through Roslyn
-  (`civil3d_execute`, `civil3d_query`), native command-line commands
-  (`acad_command`), a library of C# code templates (`civil3d_skills`), and saved,
-  parameterized scripts for repetitive tasks (`civil3d_script`, plus `MCPRUN`
-  inside Civil 3D). Built for **Civil 3D 2027 / .NET 10**. See
+- **Civil 3D 2027 / .NET 10**: retargeted and rebuilt (2027 won't load 2025/2026 plugins).
+- **Code execution**: `civil3d_execute` (write, approval-gated), `civil3d_query`
+  (read-only), `acad_command`, `civil3d_skills`, and `civil3d_script`. See
   [Code Execution and Saved Scripts](#code-execution-and-saved-scripts).
-- Production-ready host execution now includes bounded queues and jobs,
-  cancellation, idempotency, structured telemetry, readiness endpoints, and
-  observable rotating plugin logs.
-- **New:** `civil3d_help` searches the locally installed Autodesk Civil 3D help,
-  returns cited topics with screenshots, and surfaces matching tutorial videos in chat.
-- The default MCP surface is compact: 34 public tools cover every domain. The
-  complete 219-tool surface can be enabled when a client needs specialized aliases.
-- Native workflow handlers cover major QC, grading, hydrology, plan-production,
-  and data-shortcut flows instead of relying only on client-side orchestration.
-- Claude Code can be registered with a single project-scoped command that
-  installs dependencies, builds the Node server, and writes the repo `.mcp.json` entry.
-- Claude Desktop now has a self-contained MCPB installer plus a legacy DXT
-  compatibility artifact, generated with `npm run package:claude`.
-- The release-checked inventory is generated from the runtime manifest at
-  [`docs/tools.generated.md`](./docs/tools.generated.md).
+- **Saved scripts** stored as editable `.csx` files, runnable by the AI or by you with `MCPRUN`.
+- **One AI change = one undo**: each write is a single `UNDO` step, and reads
+  never add steps to your undo history.
+- **The view follows the work**: after a change, Civil 3D pans to show it, so
+  nothing happens off screen.
+
+Everything else from upstream still applies: the compact tool surface (39 public
+tools by default), local Autodesk help search (`civil3d_help`), native workflow
+handlers, Claude Code and Claude Desktop installers, and the generated inventory in
+[`docs/tools.generated.md`](./docs/tools.generated.md).
 
 ---
 
@@ -117,7 +127,32 @@ command line:
   `acad_command` blocks SHELL, NETLOAD, AutoLISP, and similar commands. **This is
   a guardrail, not a security boundary**, so work on copies of important drawings.
 - Scripts time out after 110 seconds (`CIVIL3D_SCRIPT_TIMEOUT_SECONDS`). For
-  cancellation to work, long loops must check `CancellationToken`.
+  cancellation to work, long loops must check `CancellationToken`. A tight loop
+  that never checks it can't be interrupted and will freeze Civil 3D.
+
+---
+
+## Working Alongside the AI
+
+The plugin is designed so you can keep Civil 3D open, and even keep working, while
+the AI makes changes.
+
+- **No focus needed.** Requests arrive over a local socket, so Civil 3D can be
+  behind other windows or minimized.
+- **It acts on the active drawing** of the Civil 3D session that loaded the plugin.
+  If you switch drawings while a request is queued, the request fails instead of
+  writing to the wrong file. Only one Civil 3D session can own port 8080.
+- **One change = one undo.** Each write from the AI (a fixed tool, `civil3d_execute`,
+  or a saved script) is recorded as one undo group, so `UNDO 1` reverts exactly that change.
+- **Reads leave no trace.** Read-only requests run on Civil 3D's main thread
+  outside command context, so they don't add steps to your undo history.
+  Set `CIVIL3D_READ_CONTEXT=command` to restore the old behavior.
+- **Your commands come first.** If you're in the middle of a command (for example
+  `LINE` waiting for a point), AI requests wait until you finish or cancel it.
+- **The view follows the work.** After each write, the view pans to show what
+  changed, and zooms out only if it doesn't fit. It never zooms in, and doesn't
+  move if the change is already visible. It's model space only. Type
+  `C3DMCPFOLLOW` to turn it on or off, or set `CIVIL3D_FOLLOW_VIEW=false`.
 
 ---
 
@@ -138,7 +173,7 @@ For example, an agent can search for grading guidance:
 {
   "action": "search",
   "query": "how do I create grading criteria?",
-  "version": "2026"
+  "version": "2027"
 }
 ```
 
@@ -223,8 +258,9 @@ For a source-based or Claude Code installation:
 
 ## Features
 
-- **Compact default MCP surface** with 34 public tools; all 219 registered
-  routes remain internally callable or available as opt-in aliases
+- **Live C# execution and saved scripts** covering effectively the entire AutoCAD and Civil 3D .NET API
+- **Compact default MCP surface** with 39 public tools; every registered
+  route remains internally callable or available as an opt-in alias
 - **Local Autodesk help in chat** — version-matched topics, screenshots,
   diagrams, citations, and playable Civil 3D tutorial videos
 - **Native workflow execution** for corridor QC, surface comparison, project startup, grading conversion, plan publish, data shortcuts, and hydrology pipelines
@@ -265,9 +301,9 @@ names for actions already available through a canonical domain tool.
 
 | Surface | Exposed tools | How to call an operation |
 |---|---:|---|
-| Default MCP client | 34 | Call a canonical domain tool and provide `action`. |
-| MCP client with aliases enabled | 219 | Use either canonical tools or specialized alias names. |
-| HTTP `/execute` and orchestration | 219 | All registered routes remain internally callable in either mode. |
+| Default MCP client | 39 | Call a canonical domain tool and provide `action`. |
+| MCP client with aliases enabled | 200+ | Use either canonical tools or specialized alias names. |
+| HTTP `/execute` and orchestration | 200+ | All registered routes remain internally callable in either mode. |
 
 For example, these calls are equivalent:
 
@@ -336,17 +372,25 @@ flowchart LR
     subgraph Civil3D ["Autodesk Civil 3D"]
         Plugin["Civil3DMcpPlugin.dll\nTCP Listener"]
         Queue["Bounded Host Queue"]
-        Context["ExecuteInCommandContextAsync"]
-        Safety["Document Lock + Transaction"]
+        Write["Writes: command context\n+ undo group + doc lock"]
+        Read["Reads: main-thread dispatcher\n(no undo step, no lock)"]
+        Roslyn["Roslyn C# scripts"]
         API["Civil 3D 2027 .NET API"]
 
-        Plugin --> Queue --> Context --> Safety --> API
+        Plugin --> Queue
+        Queue --> Write --> API
+        Queue --> Read --> API
+        Roslyn -.-> Write
+        Roslyn -.-> Read
     end
 ```
 
-Civil 3D database operations execute inside Autodesk command context under a
-bounded, serialized host gate. Mutations additionally use a document lock and a
-narrow transaction; callers never mutate a drawing directly from Node.js.
+Every request goes through one bounded, serialized host gate, so only one
+operation touches the drawing at a time. Writes run in Autodesk command context
+with a document lock, one transaction, and an undo group, then the view moves to
+show the result. Reads run on the AutoCAD main thread outside command context, so
+they leave no undo history. They fall back to command context while a user command is
+active. Nothing in Node.js touches the drawing directly.
 
 ---
 
@@ -367,8 +411,8 @@ narrow transaction; callers never mutate a drawing directly from Node.js.
 ### 1 — Build the MCP Server (TypeScript)
 
 ```bash
-git clone https://github.com/Sacred-G/Civil3D-mcp.git
-cd Civil3D-mcp
+git clone https://github.com/michaelwachter20/civil3d-mcp-unified.git
+cd civil3d-mcp-unified
 npm install
 npm run build
 ```
@@ -434,6 +478,14 @@ Each Autodesk DLL is resolved independently, and the first match wins:
 Keep the whole `bin\Release\net10.0-windows` folder together when you `NETLOAD`,
 because the Roslyn (`Microsoft.CodeAnalysis*`) DLLs next to the plugin are required.
 
+**Rebuilding while Civil 3D is open:** .NET can't unload a plugin, so Civil 3D
+locks the DLL until it closes. To test a change without closing it, build into a
+new folder and `NETLOAD` that copy in a fresh Civil 3D session:
+
+```powershell
+dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release -o .\Civil3D-MCP-Plugin\bin\Release-test2
+```
+
 The required DLLs are:
 
 ```text
@@ -459,6 +511,7 @@ Once loaded, these commands are available in the Civil 3D command line:
 | `C3DMCPSTART` | Start the JSON-RPC server (auto-starts on plugin load) |
 | `C3DMCPSTOP` | Stop the JSON-RPC server |
 | `C3DMCPSTATUS` | Show server status, port, and queue depth |
+| `C3DMCPFOLLOW` | Toggle whether the view moves to show AI changes (on by default) |
 | `MCPRUN` | Run a saved script by name, prompting for its parameters |
 | `MCPSCRIPTS` | List saved scripts |
 
@@ -480,7 +533,7 @@ development, `claude_desktop_config.json` remains supported:
   "mcpServers": {
     "civil3d-mcp": {
       "command": "node",
-      "args": ["C:/path/to/Civil3D-mcp/build/index.js"]
+      "args": ["C:/path/to/civil3d-mcp-unified/build/index.js"]
     }
   }
 }
@@ -514,6 +567,11 @@ Restart your client. When you see the **hammer icon**, the MCP connection is liv
 
 > *"Size the storm drain network for a 10-year storm and check all pipe velocities."*
 > → `civil3d_pipe` with `action: "size_network"`, then `action: "hydraulic_analysis"`
+
+> *"Move every polyline on C-TOPO-MINR to C-TOPO-MAJR if its elevation is a multiple of 5, and save that as a script."*
+> → no fixed tool does this, so the AI writes C#, tests it with `civil3d_query`,
+> runs it with `civil3d_execute`, then saves it with `civil3d_script action=save`.
+> Next time, it's `MCPRUN` → `relayer-index-contours`.
 
 > *"Calculate cut/fill volumes between the existing ground and proposed surface."*
 > → `civil3d_surface` with `action: "volume_calculate"`, then `action: "volume_report"`
@@ -965,7 +1023,7 @@ one or more operations; alias rows show an em dash in the **Operations** column.
 | 2024 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2025 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2026 | Validated upstream (Sacred-G/Civil3D-mcp) | This fork targets .NET 10, so 2026 needs the upstream .NET 8 build. |
-| 2027 | Target of this fork | Builds against the 2027 install by default. Live validation is in progress; report issues with your plugin log. |
+| 2027 | Target of this fork | Builds against the 2027 install by default. Live-tested on Civil 3D 2027: code execution, saved scripts, `MCPRUN`, `acad_command`, undo grouping, read context, and view following. The upstream fixed tools haven't been fully re-validated on 2027 yet; report issues with your plugin log. |
 
 For startup-suite and autoload registry details, use the version-specific guidance in [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
 
@@ -990,7 +1048,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 34-tool surface. |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 39-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of extra or replacement `*.skill.md` C# templates for `civil3d_skills`. |
 
@@ -1009,12 +1067,12 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 `civil3d_help` indexes the Autodesk Offline Help already installed with Civil 3D. It can search engineer phrasing such as “balance cut and fill” or “grading optimization,” return a cleaned Markdown topic, and attach the topic's useful screenshots and diagrams as MCP image content and `civil3d://help/images/...` resources. Matching Autodesk tutorial videos are returned as playable `civil3d://help/videos/...` player resources plus direct MP4 links. Decorative navigation icons are excluded. The drawing plugin does not need to be running for help searches.
 
-The first query builds a compressed local index under `%LOCALAPPDATA%\Civil3DMcp\help-index`; later starts reuse it until the Autodesk help files change. By default the server discovers folders named `Offline Help for Civil 3D <year> - <language>\Help` under Program Files and prefers 2026.
+The first query builds a compressed local index under `%LOCALAPPDATA%\Civil3DMcp\help-index`; later starts reuse it until the Autodesk help files change. By default the server discovers folders named `Offline Help for Civil 3D <year> - <language>\Help` under Program Files and prefers 2027, falling back to the newest installed version.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `CIVIL3D_HELP_ROOT` | Auto-discovered | Optional absolute path to a Civil 3D Offline Help `Help` folder. |
-| `CIVIL3D_HELP_VERSION` | `2026` | Preferred installed documentation version. |
+| `CIVIL3D_HELP_VERSION` | `2027` | Preferred installed documentation version. |
 | `CIVIL3D_HELP_CACHE_ROOT` | Local AppData | Override the generated search-index directory. |
 | `CIVIL3D_ENABLE_HELP_REINDEX` | `false` | Set to `true` to allow the tool's explicit `reindex` action. Automatic cache refresh remains enabled. |
 | `CIVIL3D_HELP_MAX_IMAGE_BYTES` | `6291456` | Maximum total bytes of inline image content returned by one topic request. |
@@ -1025,11 +1083,11 @@ The normal `search` and `get_topic` actions include the best matching video by d
 Example calls:
 
 ```json
-{ "action": "search", "query": "how do I use grading optimization?", "version": "2026" }
+{ "action": "search", "query": "how do I use grading optimization?", "version": "2027" }
 ```
 
 ```json
-{ "action": "get_topic", "id": "<id from search>", "version": "2026", "includeImages": true }
+{ "action": "get_topic", "id": "<id from search>", "version": "2027", "includeImages": true }
 ```
 
 ```json
@@ -1168,7 +1226,19 @@ use the default loopback endpoint.
 - Restart the MCP client connection after changing the environment; changing an unrelated terminal does not update an already-running client-managed server
 - Use `civil3d://catalog/tools` or [tools.generated.md](./docs/tools.generated.md) to map aliases to canonical actions
 
+**"Request timed out" while you're using Civil 3D**
+- AI requests wait while a command is active. Finish or cancel the command (Esc) and they continue.
+
+**The build fails with "file is locked" / "being used by another process"**
+- Civil 3D has the plugin loaded. Close it, or build to a new folder with `-o` (see [Build & Load the C# Plugin](#2--build--load-the-c-plugin)).
+
+**Antivirus flags `FileBoundaryHarness.exe` while tests run**
+- `npm run test:p2-boundaries` compiles and runs a small, unsigned test program that
+  writes temporary files and opens loopback sockets. Antivirus tools sometimes scan
+  it. Excluding the repo's `bin` folders avoids the popups.
+
 **Plugin won't load**
+- This fork targets Civil 3D 2027 (.NET 10). It won't load in 2026 or earlier.
 - Verify the DLL targets the correct Civil 3D version
 - Ensure Civil 3D and Visual Studio are running as the same Windows user (no elevation mismatch)
 - Check the DLL path passed to `NETLOAD` has no spaces or special characters
@@ -1189,13 +1259,14 @@ use the default loopback endpoint.
 
 ## Contributing
 
-Pull requests are welcome. For major changes, open an issue first to discuss what you'd like to change.
+This is a personal fork. Changes to the fixed tools that would benefit everyone
+belong upstream in [Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp).
+Work on this fork happens on feature branches and is merged into this repo's `main`.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/my-tool`)
-3. Commit your changes (`git commit -m 'Add civil3d_my_tool'`)
-4. Push to the branch (`git push origin feature/my-tool`)
-5. Open a Pull Request
+Before committing, run `npm test`, `npm run docs:check`, `npm run version:check`,
+and `dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release`. The
+tests enforce a few repo rules: plugin methods must match the dispatcher,
+reflection stays in `Civil3DCompatibility.cs`, and file writes go through `FileBoundary.cs`.
 
 ---
 
