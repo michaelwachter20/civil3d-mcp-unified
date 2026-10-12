@@ -5,6 +5,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { registerTools } from "../src/tools/register.js";
 import { getToolHandler, listRegisteredToolNames } from "../src/tools/toolHandlerRegistry.js";
 import { MIGRATED_DOMAIN_DEFINITIONS, selectManifestExposures } from "../src/tools/toolManifest.js";
+import { SCRIPTING_DOMAIN_DEFINITION } from "../src/tools/domains/scriptingDomain.js";
+
+// The scripting domain exposes all of its tools in compact mode (not just one canonical tool).
+const EXTRA_SCRIPTING_TOOLS = SCRIPTING_DOMAIN_DEFINITION.exposures.length - 1;
 
 describe("MCP server startup", () => {
   it("exposes typed contracts and resources through a real MCP client", async () => {
@@ -20,7 +24,7 @@ describe("MCP server startup", () => {
       const health = tools.tools.find((tool) => tool.name === "civil3d_health");
       const drawing = tools.tools.find((tool) => tool.name === "civil3d_drawing");
       const help = tools.tools.find((tool) => tool.name === "civil3d_help");
-      expect(tools.tools).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 4);
+      expect(tools.tools).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 4 + EXTRA_SCRIPTING_TOOLS);
       expect(health?.outputSchema).toBeDefined();
       expect(health?.inputSchema.properties).toHaveProperty("idempotencyKey");
       expect(health?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
@@ -48,7 +52,7 @@ describe("MCP server startup", () => {
     await expect(registerTools(server)).resolves.toBeUndefined();
 
     const publiclyRegistered = Object.keys((server as any)._registeredTools ?? {});
-    expect(publiclyRegistered).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 4);
+    expect(publiclyRegistered).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 4 + EXTRA_SCRIPTING_TOOLS);
 
     const names = listRegisteredToolNames();
     expect(names.length).toBeGreaterThan(200);
@@ -145,7 +149,7 @@ describe("MCP server startup", () => {
     ]));
   });
 
-  it("exposes one canonical tool per domain plus the orchestrator by default", () => {
+  it("exposes one canonical tool per domain plus the orchestrator and scripting tools by default", () => {
     const defaultExposures = MIGRATED_DOMAIN_DEFINITIONS.flatMap((definition) =>
       selectManifestExposures(definition, false),
     );
@@ -153,7 +157,7 @@ describe("MCP server startup", () => {
       selectManifestExposures(definition, true),
     );
 
-    expect(defaultExposures).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 1);
+    expect(defaultExposures).toHaveLength(MIGRATED_DOMAIN_DEFINITIONS.length + 1 + EXTRA_SCRIPTING_TOOLS);
     expect(new Set(defaultExposures.map((exposure) => exposure.toolName)).size)
       .toBe(defaultExposures.length);
     expect(defaultExposures.map((exposure) => exposure.toolName)).toContain("civil3d_orchestrate");
