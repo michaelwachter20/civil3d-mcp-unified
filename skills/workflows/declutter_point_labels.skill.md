@@ -1,7 +1,7 @@
 ---
 name: declutter_point_labels
 category: workflows
-description: De-overlap COGO point labels on a layout sheet - drag every label to a clear spot, hide repeat/older shots in a hide point group, never touch the points themselves. Saved script name declutter-labels.
+description: De-overlap COGO point labels on a layout sheet - drag every label to a clear spot, hide repeat/older shots in a hide point group, never touch the points themselves. Saved script name declutter-labels (undo helper: declutter-labels-undo).
 requires_write: true
 parameters:
   - name: primary
@@ -80,7 +80,8 @@ Proven on a real Civil 3D 2027 levee drawing (1"=30', viewport twisted -60 deg, 
 // visible within representRadiusIn, and as a last resort when no spot within lastOfTypeMaxIn avoids text and
 // leaders. Leaders may graze a point marker but never cross label text or another leader.
 // Geometry measured on a 1"=30' sheet: dragged label = 0.083" tall x (text width + 0.006"), vertically centered
-// on the leader end, 0.025" beyond it on the side away from the point; leader = point -> elbow -> 0.05" landing.var primary = Args.GetString("primary", "CLSM Display");
+// on the leader end, 0.025" beyond it on the side away from the point; leader = point -> elbow -> 0.05" landing.
+var primary = Args.GetString("primary", "CLSM Display");
 var secondaryGroups = Args.GetStringList("secondary");
 if (secondaryGroups.Count == 0) secondaryGroups = new List<string> { "PFP FFP Display", "BASE Display" };
 var hideGroupName = Args.GetString("hideGroup", "Secondary Filter");
