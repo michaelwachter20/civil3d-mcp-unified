@@ -47,6 +47,25 @@ try
     "CIVIL3D.PATH_NOT_ALLOWED",
     () => FileBoundary.ResolveImportPath(Path.Combine(outsideRoot, "outside.dem"), ".dem"));
 
+  var scriptsRoot = Path.Combine(testRoot, "scripts");
+  var scriptPath = FileBoundary.WriteFileWithinDirectoryAtomic(scriptsRoot, "relayer.csx", "v1", overwrite: false);
+  Assert(scriptPath == Path.Combine(Path.GetFullPath(scriptsRoot), "relayer.csx"), "Script write resolved to an unexpected path.");
+  Assert(File.ReadAllText(scriptPath) == "v1", "Script write content mismatch.");
+  Assert(!Directory.EnumerateFiles(scriptsRoot, ".*.tmp").Any(), "Script write left a temp file.");
+  ExpectCode("CIVIL3D.CONFLICT", () => FileBoundary.WriteFileWithinDirectoryAtomic(scriptsRoot, "relayer.csx", "v2", overwrite: false));
+  FileBoundary.WriteFileWithinDirectoryAtomic(scriptsRoot, "relayer.csx", "v2", overwrite: true);
+  Assert(File.ReadAllText(scriptPath) == "v2", "Script overwrite did not replace content.");
+  foreach (var badName in new[] { "../escape.csx", "a/b.csx", "a\\b.csx", "..", "", " ", Path.Combine(outsideRoot, "abs.csx") })
+  {
+    ExpectCode("CIVIL3D.INVALID_INPUT", () => FileBoundary.WriteFileWithinDirectoryAtomic(scriptsRoot, badName, "x", overwrite: true));
+  }
+  Assert(!File.Exists(Path.Combine(testRoot, "escape.csx")), "Traversal write escaped the directory.");
+  Assert(FileBoundary.DeleteFileWithinDirectory(scriptsRoot, "relayer.csx"), "Script delete reported missing file.");
+  Assert(!File.Exists(scriptPath), "Script delete left the file.");
+  Assert(!FileBoundary.DeleteFileWithinDirectory(scriptsRoot, "relayer.csx"), "Deleting a missing script reported success.");
+  ExpectCode("CIVIL3D.INVALID_INPUT", () => FileBoundary.DeleteFileWithinDirectory(scriptsRoot, "../allowed/terrain.dem"));
+  Assert(File.Exists(importPath), "Traversal delete removed a file outside the directory.");
+
   var rpcError = JsonNode.Parse(JsonRpcProtocol.SerializeError(
     JsonValue.Create("request-1"),
     JsonRpcProtocol.NumericErrorCode("CIVIL3D.OBJECT_NOT_FOUND"),

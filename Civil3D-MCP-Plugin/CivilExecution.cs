@@ -20,17 +20,7 @@ public static class CivilExecution
       {
         try
         {
-          var doc = App.DocumentManager.MdiActiveDocument ?? throw new JsonRpcDispatchException("CIVIL3D.NO_DRAWING", "No active drawing is open in Civil 3D.");
-          var expectedDrawingIdentity = PluginRuntime.GetExpectedDrawingIdentity();
-          var activeDrawingIdentity = PluginRuntime.GetDrawingIdentity(doc);
-          if (!string.IsNullOrWhiteSpace(expectedDrawingIdentity) &&
-              !string.Equals(expectedDrawingIdentity, activeDrawingIdentity, StringComparison.OrdinalIgnoreCase))
-          {
-            throw new JsonRpcDispatchException(
-              "CIVIL3D.CONFLICT",
-              $"The active drawing changed from '{expectedDrawingIdentity}' to '{activeDrawingIdentity}' while the operation was queued. No drawing changes were made.");
-          }
-          var civilDoc = CivilApplication.ActiveDocument ?? throw new JsonRpcDispatchException("CIVIL3D.NO_DRAWING", "No active Civil 3D document is available.");
+          var (doc, civilDoc) = GetVerifiedActiveDocuments();
           var database = doc.Database;
 
           using var documentLock = doc.LockDocument();
@@ -86,6 +76,27 @@ public static class CivilExecution
 
       return result!;
     });
+  }
+
+  /// <summary>
+  /// Returns the active AutoCAD and Civil 3D documents, failing if no drawing is
+  /// open or if the active drawing changed while the request was queued.
+  /// Must be called on the AutoCAD main thread (inside command context).
+  /// </summary>
+  internal static (Document Document, CivilDocument CivilDocument) GetVerifiedActiveDocuments()
+  {
+    var doc = App.DocumentManager.MdiActiveDocument ?? throw new JsonRpcDispatchException("CIVIL3D.NO_DRAWING", "No active drawing is open in Civil 3D.");
+    var expectedDrawingIdentity = PluginRuntime.GetExpectedDrawingIdentity();
+    var activeDrawingIdentity = PluginRuntime.GetDrawingIdentity(doc);
+    if (!string.IsNullOrWhiteSpace(expectedDrawingIdentity) &&
+        !string.Equals(expectedDrawingIdentity, activeDrawingIdentity, StringComparison.OrdinalIgnoreCase))
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.CONFLICT",
+        $"The active drawing changed from '{expectedDrawingIdentity}' to '{activeDrawingIdentity}' while the operation was queued. No drawing changes were made.");
+    }
+    var civilDoc = CivilApplication.ActiveDocument ?? throw new JsonRpcDispatchException("CIVIL3D.NO_DRAWING", "No active Civil 3D document is available.");
+    return (doc, civilDoc);
   }
 
   public static Task<T> ReadAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)

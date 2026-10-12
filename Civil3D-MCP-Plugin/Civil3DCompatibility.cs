@@ -402,4 +402,32 @@ internal static class Civil3DCompatibility
 
     return false;
   }
+
+  /// <summary>
+  /// File locations of every non-dynamic assembly loaded in the host process.
+  /// Used by <see cref="ScriptEngine"/> to give Roslyn scripts the same API
+  /// surface Civil 3D itself has loaded (AutoCAD, Civil 3D, BCL, add-ins).
+  /// </summary>
+  public static string[] GetLoadedAssemblyLocations()
+  {
+    return AppDomain.CurrentDomain.GetAssemblies()
+      .Where(assembly => !assembly.IsDynamic)
+      .Select(assembly =>
+      {
+        try
+        {
+          return assembly.Location;
+        }
+        catch (NotSupportedException)
+        {
+          return string.Empty;
+        }
+      })
+      .Where(location => !string.IsNullOrEmpty(location) && File.Exists(location))
+      .Distinct(StringComparer.OrdinalIgnoreCase)
+      .ToArray();
+  }
+
+  /// <summary>Number of assemblies currently loaded (cheap cache-invalidation signal).</summary>
+  public static int GetLoadedAssemblyCount() => AppDomain.CurrentDomain.GetAssemblies().Length;
 }

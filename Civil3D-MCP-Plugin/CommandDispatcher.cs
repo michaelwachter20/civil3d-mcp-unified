@@ -9,6 +9,17 @@ public static class CommandDispatcher
   return method switch
   {
       "getCivil3DHealth" => DrawingCommands.GetCivil3DHealthAsync(),
+      // Code execution, raw commands, and saved scripts (Roslyn)
+      "executeCode" => ScriptCommands.ExecuteCodeAsync(parameters),
+      "queryCode" => ScriptCommands.QueryCodeAsync(parameters),
+      "compileCode" => ScriptCommands.CompileCodeAsync(parameters),
+      "getScriptingStatus" => ScriptCommands.GetScriptingStatusAsync(),
+      "runAcadCommand" => ScriptCommands.RunAcadCommandAsync(parameters),
+      "scriptSave" => ScriptCommands.ScriptSaveAsync(parameters),
+      "scriptList" => ScriptCommands.ScriptListAsync(parameters),
+      "scriptGet" => ScriptCommands.ScriptGetAsync(parameters),
+      "scriptRun" => ScriptCommands.ScriptRunAsync(parameters),
+      "scriptDelete" => ScriptCommands.ScriptDeleteAsync(parameters),
       "getDrawingInfo" => DrawingCommands.GetDrawingInfoAsync(),
       "getProjectContext" => DrawingCommands.GetProjectContextAsync(parameters),
       "getDrawingSettings" => DrawingCommands.GetDrawingSettingsAsync(),

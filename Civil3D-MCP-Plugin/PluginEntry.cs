@@ -58,6 +58,20 @@ public sealed class PluginEntry : IExtensionApplication
     WriteMessage($"Civil3D MCP listener running: {status.IsRunning}; pending: {status.QueueDepth}; active: {status.OperationInProgress}; current: {status.CurrentOperation ?? "<none>"}");
   }
 
+  /// <summary>Runs a saved script by name, prompting for its parameters.</summary>
+  [CommandMethod("MCPRUN", CommandFlags.Modal)]
+  public void RunSavedScriptCommand()
+  {
+    ScriptCommands.RunSavedScriptInteractive();
+  }
+
+  /// <summary>Lists saved scripts.</summary>
+  [CommandMethod("MCPSCRIPTS", CommandFlags.Modal)]
+  public void ListSavedScriptsCommand()
+  {
+    ScriptCommands.ListSavedScriptsInteractive();
+  }
+
   private static void WriteMessage(string message)
   {
     var doc = App.DocumentManager.MdiActiveDocument;

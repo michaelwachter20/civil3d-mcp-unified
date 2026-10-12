@@ -101,6 +101,108 @@ internal static class FileBoundary
     }
   }
 
+  /// <summary>
+  /// Writes a file inside a plugin-owned directory (for example the saved-script
+  /// library). The file name must be a bare name: separators, traversal, and
+  /// reparse-point directories are rejected, and the write is atomic.
+  /// </summary>
+  public static string WriteFileWithinDirectoryAtomic(
+    string directory,
+    string fileName,
+    string content,
+    bool overwrite)
+  {
+    var path = ResolveFileWithinDirectory(directory, fileName, createDirectory: true);
+    if (File.Exists(path) && !overwrite)
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.CONFLICT",
+        $"File already exists: {path}. Set overwrite=true to replace it explicitly.");
+    }
+
+    var tempPath = Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+    try
+    {
+      File.WriteAllText(tempPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+      File.Move(tempPath, path, overwrite);
+      return path;
+    }
+    catch (JsonRpcDispatchException)
+    {
+      throw;
+    }
+    catch (Exception exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.FILE_IO_ERROR", $"Unable to write '{path}': {exception.Message}");
+    }
+    finally
+    {
+      try
+      {
+        if (File.Exists(tempPath))
+        {
+          File.Delete(tempPath);
+        }
+      }
+      catch
+      {
+        // Best effort cleanup of a hidden temp file.
+      }
+    }
+  }
+
+  /// <summary>Deletes a bare-named file inside a plugin-owned directory.</summary>
+  public static bool DeleteFileWithinDirectory(string directory, string fileName)
+  {
+    var path = ResolveFileWithinDirectory(directory, fileName, createDirectory: false);
+    if (!File.Exists(path))
+    {
+      return false;
+    }
+
+    try
+    {
+      File.Delete(path);
+      return true;
+    }
+    catch (Exception exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.FILE_IO_ERROR", $"Unable to delete '{path}': {exception.Message}");
+    }
+  }
+
+  /// <summary>Resolves a bare file name inside <paramref name="directory"/>, rejecting traversal.</summary>
+  public static string ResolveFileWithinDirectory(string directory, string fileName, bool createDirectory)
+  {
+    if (string.IsNullOrWhiteSpace(fileName) ||
+        fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+        fileName.Contains("..", StringComparison.Ordinal) ||
+        !string.Equals(Path.GetFileName(fileName), fileName, StringComparison.Ordinal))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Invalid file name: '{fileName}'.");
+    }
+
+    var root = Path.GetFullPath(directory);
+    if (createDirectory)
+    {
+      Directory.CreateDirectory(root);
+    }
+
+    if (Directory.Exists(root) && new DirectoryInfo(root).Attributes.HasFlag(FileAttributes.ReparsePoint))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.PATH_NOT_ALLOWED", $"Directory '{root}' is a reparse point and cannot be used.");
+    }
+
+    var path = Path.GetFullPath(Path.Combine(root, fileName));
+    var relative = Path.GetRelativePath(root, path);
+    if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.PATH_NOT_ALLOWED", $"'{fileName}' resolves outside '{root}'.");
+    }
+
+    return path;
+  }
+
   private static string ResolvePath(
     string rawPath,
     IReadOnlyCollection<string> roots,
