@@ -68,7 +68,9 @@ const SCRIPT_GLOBALS_HELP =
   "Get<T>(id, mode), AddToModelSpace(entity), FromHandle(hexHandle), IsWriteMode, CancellationToken (check it in long loops). " +
   "Auto-imported: System, System.Linq, System.Collections.Generic, System.IO, System.Text, System.Text.Json(.Nodes), System.Globalization, " +
   "Autodesk.AutoCAD.{ApplicationServices,DatabaseServices,EditorInput,Geometry,Colors}, Autodesk.Civil, Autodesk.Civil.{ApplicationServices,DatabaseServices,DatabaseServices.Styles,Settings}. " +
-  "Names that exist in both AutoCAD and Civil (Entity, Surface, Section) are ambiguous — fully qualify them or use TinSurface etc. " +
+  "Names that exist in both AutoCAD and Civil (Entity, Surface, Section, DBObject) are ambiguous — fully qualify them or use TinSurface etc. " +
+  "`dynamic` is not supported. Setting CogoPoint.LabelLocation on an already-dragged label is applied relative to the old drag: call ResetLabelLocation() first. " +
+  "Never move, explode or edit COGO points unless the user explicitly asks; label positions are separate. " +
   "Any exception rolls back the whole transaction. Prefer a dedicated civil3d_* tool when one exists; check civil3d_skills for working templates.";
 
 export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {

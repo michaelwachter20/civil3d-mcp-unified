@@ -41,3 +41,6 @@ return new { processed, problems = problems.Take(50), dryRun };   // return summ
 - Use `point` parameters for locations; MCPRUN lets the user pick them in the drawing.
 - Name scripts with lowercase-hyphenated verbs: `relayer-entities`, `export-cogo-points-csv`.
 - Write a description that says what it does and when to use it — that is how it is found later.
+- Once a script is proven on a real drawing, also add it to the repository's `skills/` folder as a
+  `.skill.md` (rules, gotchas, and the full script) so it is versioned and found by `civil3d_skills`.
+  See `declutter_point_labels` for an example.

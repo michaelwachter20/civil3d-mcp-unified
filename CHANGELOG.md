@@ -39,6 +39,15 @@
 - After a write, the view pans to the changed objects, zooming out only if they
   don't fit. Toggle it with `C3DMCPFOLLOW` or `CIVIL3D_FOLLOW_VIEW=false`.
 
+### Proven scripts in the skill library
+
+- Added `declutter_point_labels` (saved script `declutter-labels`): de-overlaps COGO point labels on a
+  layout sheet (labels only), with hide-group thinning. Proven on a live Civil 3D 2027 drawing.
+- Added `reset_declutter_run` to revert a declutter run without UNDO.
+- Scripts are compiled in Release mode (Debug-mode script code crashed the .NET 10 runtime in Civil 3D 2027).
+- Tool descriptions now warn about `DBObject` ambiguity, unsupported `dynamic`, and dragged-label
+  `LabelLocation` behavior.
+
 ### Fixes and housekeeping
 
 - Whole-number script arguments are no longer rejected as "not a number".
