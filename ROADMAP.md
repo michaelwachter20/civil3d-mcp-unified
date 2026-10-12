@@ -288,3 +288,82 @@ Live validation evidence:
   absent after the read transaction aborted.
 - The same suite live-proved query, mutation, parameter-bound approval, cleanup,
   and cancellation behavior.
+
+---
+
+## civil3d-mcp-unified (Civil 3D 2027 fork)
+
+The phases above were completed upstream in
+[Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) and validated
+against Civil 3D 2026. This section tracks the fork, which retargets to Civil 3D
+2027 and adds code execution from
+[barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp).
+
+One refinement to the guiding architecture: drawing **mutations** still run under
+command context, a document lock, and a narrow transaction. **Read-only** work now
+runs on the AutoCAD main thread outside command context, without a lock, so it
+leaves no undo history. It falls back to command context while a user command is active.
+
+### Fork phase A - Retarget and code execution
+
+Status: Complete and live-tested against Civil 3D 2027 on 2026-10-12.
+
+- Plugin targets `net10.0-windows` (required by AutoCAD/Civil 3D 2027) and
+  resolves each Autodesk assembly from the 2027 install or a configured folder.
+- Roslyn code execution: `civil3d_query` (read-only), `civil3d_execute`
+  (approval-gated), `acad_command`, `civil3d_skills`, and `civil3d_script`
+  (saved, parameterized `.csx` scripts), plus `MCPRUN` / `MCPSCRIPTS` in Civil 3D.
+- Script runs use the existing host gate, approval policy, logging, and
+  `FileBoundary`. `startJob` stays allowlisted so code can't bypass approval.
+
+Live evidence: queries, compile errors with line numbers, read-only sandbox
+blocks, write with rollback on exception, result serialization, `acad_command`
+(ZOOM allowed, SHELL blocked), saved-script save/list/get/run/delete, and
+`MCPRUN` with point and number prompts, all on disposable drawings.
+
+### Fork phase B - Working alongside the user
+
+Status: Complete and live-tested against Civil 3D 2027 on 2026-10-12.
+
+- **One write = one undo**: each write is grouped so `UNDO 1` reverts it.
+- **Reads leave no undo history**: before this change, every read was recorded as an
+  empty `EXECUTEFUNCTION` undo step, and each lock taken outside command
+  context as a blank one. `CIVIL3D_READ_CONTEXT=command` restores the old behavior.
+- **View follows the work**: after a write, the view pans to the changed objects,
+  zooming out only if they don't fit (`C3DMCPFOLLOW`, `CIVIL3D_FOLLOW_VIEW`).
+- Fixed whole-number script arguments being rejected as "not a number".
+
+Live evidence: five reads after a write, then one `UNDO 1` reverted the write
+(`GROUP`); reads issued during an active `LINE` waited for the command; the view
+panned, zoomed out, and stayed put as expected across three writes.
+
+### Fork phase C - Re-validate on 2027
+
+Status: Not started.
+
+- Run `npm run test:live-plugin`, `npm run test:live-host`, and
+  `npm run test:live-mcp-client` against Civil 3D 2027 on disposable drawings.
+- Fix any upstream fixed tools affected by the 2027 managed-API removal.
+- Connect a real MCP client (Claude Code / Claude Desktop) and complete the
+  preview → approval → execute flow for `civil3d_execute`.
+- Confirm the Docker path can reach the plugin. The plugin listens on loopback
+  only, so a container may not be able to connect.
+
+### Fork phase D - Script robustness
+
+Status: Not started.
+
+- Guard against runaway scripts: inject `CancellationToken` checks into loop
+  bodies before compiling, so the timeout can stop a tight loop.
+- Investigate the one observed `clrjit.dll` access-violation crash shortly
+  after a query (not reproduced; consider Release-mode script compilation).
+- Replace `.GetAwaiter().GetResult()` in `MCPRUN` with an async command pattern.
+- Convert the original barbosaihan skill templates from placeholder names to `Args`.
+
+### Fork phase E - CI and housekeeping
+
+Status: Not started.
+
+- Make the self-hosted `Civil3D-2027` plugin workflow manual-only (or register a
+  runner), so pull requests don't wait indefinitely for a machine that doesn't exist.
+- Bump the version once phase C passes.
