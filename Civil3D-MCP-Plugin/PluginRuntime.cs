@@ -155,7 +155,12 @@ public static class PluginRuntime
     catch (Exception ex)
     {
       PluginLog.Error("Dispatch", $"<- {method} [{CurrentRequestId.Value ?? "no-id"}] unhandled failure durationMs={timer.ElapsedMilliseconds} category={ex.GetType().Name}", ex);
-      return JsonRpcProtocol.SerializeError(id, -32603, "CIVIL3D.INTERNAL_ERROR", "The Civil 3D plugin encountered an unexpected error.");
+      // Loopback-only server: return the cause so callers can act on it; the stack trace is in the log.
+      return JsonRpcProtocol.SerializeError(
+        id,
+        -32603,
+        "CIVIL3D.INTERNAL_ERROR",
+        $"The Civil 3D plugin encountered an unexpected error ({ex.GetType().Name}: {ex.Message}). Stack trace: {PluginLog.LogFilePath}");
     }
     finally
     {
@@ -281,7 +286,7 @@ public static class PluginRuntime
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Missing required parameter '{name}'.");
     }
 
-    var stringValue = value.GetValue<string>();
+    var stringValue = ConvertParameter<string>(value, name, "a string");
     if (string.IsNullOrWhiteSpace(stringValue))
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Parameter '{name}' must be a non-empty string.");
@@ -298,7 +303,7 @@ public static class PluginRuntime
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Missing required parameter '{name}'.");
     }
 
-    return value.GetValue<double>();
+    return ConvertParameter<double>(value, name, "a number");
   }
 
   public static int GetRequiredInt(JsonObject? parameters, string name)
@@ -309,31 +314,58 @@ public static class PluginRuntime
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Missing required parameter '{name}'.");
     }
 
-    return value.GetValue<int>();
+    return ConvertParameter<int>(value, name, "an integer");
   }
 
   public static string? GetOptionalString(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
-    return value == null ? null : value.GetValue<string?>();
+    return value == null ? null : ConvertParameter<string>(value, name, "a string");
   }
 
   public static double? GetOptionalDouble(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
-    return value == null ? null : value.GetValue<double>();
+    return value == null ? null : ConvertParameter<double>(value, name, "a number");
   }
 
   public static int? GetOptionalInt(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
-    return value == null ? null : value.GetValue<int>();
+    return value == null ? null : ConvertParameter<int>(value, name, "an integer");
   }
 
   public static bool? GetOptionalBool(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
-    return value == null ? null : value.GetValue<bool>();
+    return value == null ? null : ConvertParameter<bool>(value, name, "true or false");
+  }
+
+  // Wrong JSON types become INVALID_INPUT ("Parameter 'code' must be a string, got an object")
+  // instead of an InvalidOperationException that surfaces as INTERNAL_ERROR.
+  private static T ConvertParameter<T>(JsonNode value, string name, string expected)
+  {
+    try
+    {
+      return value.GetValue<T>();
+    }
+    catch (System.Exception exception) when (exception is InvalidOperationException or FormatException)
+    {
+      var actual = value switch
+      {
+        JsonObject => "an object",
+        JsonArray => "an array",
+        JsonValue v => v.GetValueKind() switch
+        {
+          JsonValueKind.String => "a string",
+          JsonValueKind.Number => "a number",
+          JsonValueKind.True or JsonValueKind.False => "a boolean",
+          _ => "null",
+        },
+        _ => "an unsupported value",
+      };
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Parameter '{name}' must be {expected}, got {actual}.");
+    }
   }
 
 }

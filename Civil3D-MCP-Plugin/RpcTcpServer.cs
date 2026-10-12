@@ -70,7 +70,25 @@ public sealed class RpcTcpServer
       using (client)
       await using (var stream = client.GetStream())
       {
-        var request = await ReadSingleJsonObjectAsync(stream, cancellationToken);
+        string request;
+        try
+        {
+          request = await ReadSingleJsonObjectAsync(stream, cancellationToken);
+        }
+        catch (DecoderFallbackException)
+        {
+          // Reject instead of silently replacing bytes with U+FFFD (e.g. a Windows-1252 degree sign).
+          PluginLog.Warn("RpcTcpServer", "Rejected a request that is not valid UTF-8.");
+          var error = JsonRpcProtocol.SerializeError(
+            null,
+            -32700,
+            "CIVIL3D.INVALID_REQUEST",
+            "Request is not valid UTF-8. Send the JSON-RPC request encoded as UTF-8 (characters such as ° ± ² Ø are supported).");
+          await stream.WriteAsync(Encoding.UTF8.GetBytes(error), cancellationToken);
+          await stream.FlushAsync(cancellationToken);
+          return;
+        }
+
         if (string.IsNullOrWhiteSpace(request))
         {
           return;
@@ -119,6 +137,9 @@ public sealed class RpcTcpServer
     }
   }
 
+  // Throws DecoderFallbackException on invalid UTF-8 instead of substituting U+FFFD.
+  private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
   private static async Task<string> ReadSingleJsonObjectAsync(NetworkStream stream, CancellationToken cancellationToken)
   {
     var buffer = new byte[8192];
@@ -149,7 +170,7 @@ public sealed class RpcTcpServer
         {
           using var _ = JsonDocument.Parse(
             new ReadOnlyMemory<byte>(requestBytes, 0, requestLength));
-          return Encoding.UTF8.GetString(requestBytes, 0, requestLength);
+          return StrictUtf8.GetString(requestBytes, 0, requestLength);
         }
         catch (JsonException)
         {
@@ -161,7 +182,7 @@ public sealed class RpcTcpServer
       throw new TimeoutException("RPC request read timed out.");
     }
 
-    return Encoding.UTF8.GetString(
+    return StrictUtf8.GetString(
       requestBuffer.GetBuffer(),
       0,
       checked((int)requestBuffer.Length));

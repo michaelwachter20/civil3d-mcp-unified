@@ -176,7 +176,32 @@ try
     responseServer.Stop();
   }
 
-  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, and P4 bounded-job checks passed.");
+  // Non-UTF-8 bytes (a Windows-1252 degree sign) are rejected with a clear error instead of becoming U+FFFD.
+  var utf8Port = GetFreeTcpPort();
+  var handlerSawBadRequest = false;
+  var utf8Server = new RpcTcpServer(utf8Port, (request, _) => { handlerSawBadRequest = true; return Task.FromResult("{}"); });
+  utf8Server.Start();
+  try
+  {
+    using var utf8Client = new TcpClient();
+    await utf8Client.ConnectAsync(IPAddress.Loopback, utf8Port);
+    var badBytes = Encoding.UTF8.GetBytes("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"compileCode\",\"params\":{\"code\":\"return \\\"N89")
+      .Concat(new byte[] { 0xB0 })
+      .Concat(Encoding.UTF8.GetBytes("33\\\";\"}}"))
+      .ToArray();
+    await utf8Client.GetStream().WriteAsync(badBytes);
+    var buffer = new byte[1024];
+    var length = await utf8Client.GetStream().ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+    var reply = Encoding.UTF8.GetString(buffer, 0, length);
+    Assert(reply.Contains("not valid UTF-8") && reply.Contains("CIVIL3D.INVALID_REQUEST"), $"Invalid UTF-8 was not rejected clearly: {reply}");
+    Assert(!handlerSawBadRequest, "A request with invalid UTF-8 reached the dispatcher.");
+  }
+  finally
+  {
+    utf8Server.Stop();
+  }
+
+  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, and UTF-8 request checks passed.");
 }
 finally
 {
