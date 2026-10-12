@@ -260,7 +260,7 @@ public static class CogoCommands
     _ = PluginRuntime.GetRequiredString(parameters, "name");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not document a managed SurveyDatabase create API. No survey database was created; use the Survey toolspace workflow.");
+      "Civil 3D does not document a managed SurveyDatabase create API. No survey database was created; use the Survey toolspace workflow.");
   }
 
   // -------------------------------------------------------------------------
@@ -469,7 +469,7 @@ public static class CogoCommands
     _ = PluginRuntime.GetRequiredString(parameters, "networkName");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not document a managed survey-network adjustment API. No least-squares method, confidence level, or apply behavior was assumed; use the Survey Network Adjustment workflow.");
+      "Civil 3D does not document a managed survey-network adjustment API. No least-squares method, confidence level, or apply behavior was assumed; use the Survey Network Adjustment workflow.");
   }
 
   // -------------------------------------------------------------------------
@@ -488,7 +488,7 @@ public static class CogoCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Civil 3D 2026 does not document a managed survey-figure creation API. Figure '{figureName}' was not created from database '{databaseName}'.");
+      $"Civil 3D does not document a managed survey-figure creation API. Figure '{figureName}' was not created from database '{databaseName}'.");
   }
 
   // -------------------------------------------------------------------------
@@ -503,7 +503,7 @@ public static class CogoCommands
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Civil 3D 2026 does not document a managed survey-database LandXML import API. '{filePath}' was not imported into '{databaseName}'.");
+      $"Civil 3D does not document a managed survey-database LandXML import API. '{filePath}' was not imported into '{databaseName}'.");
   }
 
   // -------------------------------------------------------------------------

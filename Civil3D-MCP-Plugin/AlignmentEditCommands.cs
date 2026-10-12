@@ -57,7 +57,7 @@ public static class AlignmentEditCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Cannot add the requested radius-{radius} curve at ({passThroughX}, {passThroughY}): Civil 3D 2026 requires an explicit clockwise direction or additional geometry. " +
+      $"Cannot add the requested radius-{radius} curve at ({passThroughX}, {passThroughY}): Civil 3D requires an explicit clockwise direction or additional geometry. " +
       "The current tool schema does not provide enough information, so no curve was created.");
   }
 
@@ -76,7 +76,7 @@ public static class AlignmentEditCommands
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
       $"Cannot add {spiralType} spiral '{alignmentName}' from ({startX}, {startY}) with radii {startRadius}/{endRadius} and length {length}: " +
-      "the Civil 3D 2026 AddFixedSpiral overloads require a previous entity id and additional geometric constraints not present in this tool schema. No spiral was created.");
+      "the Civil 3D AddFixedSpiral overloads require a previous entity id and additional geometric constraints not present in this tool schema. No spiral was created.");
   }
 
   // ─── alignmentDeleteEntity ────────────────────────────────────────────────
@@ -276,6 +276,6 @@ public static class AlignmentEditCommands
   {
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not expose Alignment.CreateWideningAlignment in the managed API. No constant-offset substitute was created.");
+      "Civil 3D does not expose Alignment.CreateWideningAlignment in the managed API. No constant-offset substitute was created.");
   }
 }

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers every method for deploying the civil3d-mcp server: Claude
+This guide covers every method for deploying the civil3d-mcp-unified server (a Civil 3D 2027 fork of Sacred-G/Civil3D-mcp): Claude
 Desktop extension packaging, local development, npm package publishing, Docker,
 and Civil 3D plugin installation.
 
@@ -26,8 +26,8 @@ and Civil 3D plugin installation.
 |---|---|---|
 | Node.js | 18 or later | Required to run the MCP server |
 | npm | 8 or later | Comes with Node.js |
-| Autodesk Civil 3D | 2026 | Supported and live-validated plugin host |
-| .NET 8 SDK | 8.0 | Required to build the C# plugin |
+| Autodesk Civil 3D | 2027 | Plugin host. AutoCAD 2027 only loads .NET 10 plugins |
+| .NET 10 SDK | 10.0 | Required to build the C# plugin (Visual Studio 2022 cannot target AutoCAD 2027; use the `dotnet` CLI or VS 2026) |
 | Docker (optional) | 20+ | Only needed for container deployment |
 
 ---
@@ -83,8 +83,8 @@ on the same HTTP port while the extension is enabled.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/Sacred-G/Civil3D-mcp.git
-cd civil3d-mcp
+git clone https://github.com/michaelwachter20/civil3d-mcp-unified.git
+cd civil3d-mcp-unified
 npm install
 ```
 
@@ -109,7 +109,7 @@ Edit `claude_desktop_config.json`:
   "mcpServers": {
     "civil3d-mcp": {
       "command": "node",
-      "args": ["C:/path/to/civil3d-mcp/build/index.js"]
+      "args": ["C:/path/to/civil3d-mcp-unified/build/index.js"]
     }
   }
 }
@@ -202,18 +202,24 @@ The C# plugin (`Civil3D-MCP-Plugin/`) runs inside Civil 3D and acts as the bridg
 ### Build the plugin
 
 ```powershell
-# Requires .NET 8 SDK and licensed Civil 3D 2026 managed references
-cd Civil3D-MCP-Plugin
-dotnet build -c Release /p:Civil3DReferencesPath="C:\Program Files\Autodesk\AutoCAD 2026\C3D"
+# Requires the .NET 10 SDK and a licensed Civil 3D 2027 installation
+dotnet build .\Civil3D-MCP-Plugin\Civil3DMcpPlugin.csproj -c Release
 ```
 
-The output DLL is in `Civil3D-MCP-Plugin/bin/Release/net8.0-windows/`.
+The project finds the Autodesk DLLs in `C:\Program Files\Autodesk\AutoCAD 2027`
+(and its `C3D` / `ACA` subfolders). Override with `/p:Civil3DInstallPath=<folder>`
+or `/p:Civil3DReferencesPath=<folder>`.
+
+The output is in `Civil3D-MCP-Plugin/bin/Release/net10.0-windows/`. Keep the whole
+folder together: the Roslyn (`Microsoft.CodeAnalysis*`) DLLs next to the plugin are
+required for code execution. Civil 3D locks a loaded plugin until it closes, so to
+test a rebuild without closing it, build to a new folder with `-o` and `NETLOAD` that copy.
 
 ### Load into Civil 3D
 
 1. Open Autodesk Civil 3D.
 2. At the command prompt, type `NETLOAD` and press Enter.
-3. Browse to `Civil3D-MCP-Plugin/bin/Release/net8.0-windows/Civil3DMcpPlugin.dll`.
+3. Browse to `Civil3D-MCP-Plugin/bin/Release/net10.0-windows/Civil3DMcpPlugin.dll`.
 4. Click **Open**. The plugin registers its RPC server and starts listening.
 
 > **Auto-load on startup:** Add the plugin to the `APPLOAD` startup suite (Tools → Load Application → Startup Suite) so it loads automatically when Civil 3D opens.
@@ -234,7 +240,7 @@ C_References/
 └── AeccPressurePipesMgd.dll
 ```
 
-Use assemblies from the matching Civil 3D 2026 installation or licensed SDK.
+Use assemblies from the matching Civil 3D 2027 installation or licensed SDK.
 
 ---
 
@@ -249,14 +255,14 @@ All variables are optional; defaults work for a standard local setup.
 | `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Connection timeout in milliseconds |
 | `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Timeout for individual command execution (ms) |
 | `CIVIL3D_MAX_RESPONSE_BYTES` | `8388608` | Maximum plugin response buffered by Node.js |
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 34-tool surface |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 39-tool surface |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only for isolated disposable testing |
 | `CIVIL3D_HELP_ROOT` | Auto-discovered | Optional path to an Autodesk Civil 3D Offline Help `Help` folder |
-| `CIVIL3D_HELP_VERSION` | `2026` | Preferred installed offline-help version |
+| `CIVIL3D_HELP_VERSION` | `2027` | Preferred installed offline-help version |
 | `CIVIL3D_HELP_CACHE_ROOT` | Local AppData | Generated offline-help index directory |
 | `CIVIL3D_ENABLE_HELP_REINDEX` | `false` | Allow the `civil3d_help` explicit `reindex` action |
 | `CIVIL3D_HELP_MAX_IMAGE_BYTES` | `6291456` | Maximum inline help-image bytes per topic response |
-| `CIVIL3D_VIDEO_CATALOG` | Bundled 2026 catalog | Optional refreshed Autodesk video-catalog JSON path |
+| `CIVIL3D_VIDEO_CATALOG` | Bundled 2027 catalog | Optional refreshed Autodesk video-catalog JSON path |
 | `MCP_HTTP_PORT` | `3000` | HTTP bridge port for local HTTP clients |
 | `MCP_HTTP_HOST` | `127.0.0.1` | HTTP bridge bind address |
 | `MCP_HTTP_TOKEN` | *(unset)* | Shared secret required for non-loopback binds |
@@ -270,7 +276,11 @@ All variables are optional; defaults work for a standard local setup.
 | `CIVIL3D_MCP_LOG_DIR` | Local AppData | Native plugin rotating-log directory; set before Civil 3D starts |
 | `CIVIL3D_MCP_LOG_LEVEL` | `info` | Native plugin log threshold; set before Civil 3D starts |
 
-`CIVIL3D_MCP_LOG_DIR`, `CIVIL3D_MCP_LOG_LEVEL`, and plugin filesystem-root
+Code-execution variables (`CIVIL3D_SCRIPTS_DIR`, `CIVIL3D_SCRIPT_TIMEOUT_SECONDS`,
+`CIVIL3D_SCRIPT_UNDO_GROUP`, `CIVIL3D_SCRIPT_SANDBOX`, `CIVIL3D_READ_CONTEXT`,
+`CIVIL3D_FOLLOW_VIEW`) are documented in the README.
+
+`CIVIL3D_MCP_LOG_DIR`, `CIVIL3D_MCP_LOG_LEVEL`, code-execution, and plugin filesystem-root
 variables must be set in the environment that launches Civil 3D. The remaining
 connection, MCP, and HTTP variables belong to the Node.js server environment.
 
@@ -281,7 +291,7 @@ connection, MCP, and HTTP variables belong to the Node.js server environment.
   "mcpServers": {
     "civil3d-mcp": {
       "command": "node",
-      "args": ["C:/path/to/civil3d-mcp/build/index.js"],
+      "args": ["C:/path/to/civil3d-mcp-unified/build/index.js"],
       "env": {
         "CIVIL3D_HOST": "localhost",
         "CIVIL3D_PORT": "8080",
@@ -327,7 +337,7 @@ docker run --rm -it \
   civil3d-mcp
 ```
 
-> **Note:** When running in Docker, Civil 3D must be on the host machine. Use `host.docker.internal` (Docker Desktop) to reach it from inside the container. The MCP server still communicates via stdio, so use Docker's `-i` flag or pipe stdio from your MCP client.
+> **Note:** When running in Docker, Civil 3D must be on the host machine. Use `host.docker.internal` (Docker Desktop) to reach it from inside the container. The plugin listens on loopback (`127.0.0.1`) only, and this fork has not verified that a container can reach it. Running the Node server directly is the tested path. The MCP server still communicates via stdio, so use Docker's `-i` flag or pipe stdio from your MCP client.
 
 ### Local development with hot-reload
 

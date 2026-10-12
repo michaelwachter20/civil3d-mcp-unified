@@ -31,6 +31,27 @@
 - Added the `MCPRUN` and `MCPSCRIPTS` commands, which run saved scripts from the
   Civil 3D command line with interactive parameter prompts.
 
+### Working alongside the user
+
+- Read-only requests run on the AutoCAD main thread outside command context and
+  without a document lock, so they no longer add empty `EXECUTEFUNCTION` (or
+  blank) undo steps. `CIVIL3D_READ_CONTEXT=command` restores the old behavior.
+- After a write, the view pans to the changed objects, zooming out only if they
+  don't fit. Toggle it with `C3DMCPFOLLOW` or `CIVIL3D_FOLLOW_VIEW=false`.
+
+### Fixes and housekeeping
+
+- Whole-number script arguments are no longer rejected as "not a number".
+- `version:check` no longer fails on Windows checkouts with CRLF line endings.
+- `npm audit fix` patched vulnerable transitive dependencies.
+- Refreshed the bundled Autodesk video catalog from the 2027 help.
+- API-limit error messages no longer name a specific Civil 3D version.
+- Removed an unused drawing template, an empty `README!.md`, and two scripts for
+  an external project (`Civil3D-AI-CoPilot`) that isn't part of this repository.
+- Attribution: credited both upstream projects in the README, notices, package
+  metadata, and Claude Desktop manifest; pointed URLs at this fork; removed the
+  upstream banner image.
+
 ## v1.2.1 — 2026-07-14
 
 ### Production readiness

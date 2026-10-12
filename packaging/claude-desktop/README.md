@@ -6,7 +6,7 @@ user's machine.
 
 ## Required Civil 3D setup
 
-The extension installs the Claude-side MCP server. Autodesk Civil 3D 2026 must
+The extension installs the Claude-side MCP server. Autodesk Civil 3D 2027 must
 be open with `Civil3DMcpPlugin.dll` loaded separately:
 
 1. Build or download the native plugin.
@@ -43,4 +43,4 @@ compatibility copy for older Claude Desktop releases. Current releases use the
 `.mcpb` filename.
 
 Source, native plugin build instructions, and troubleshooting:
-https://github.com/Sacred-G/Civil3D-mcp
+https://github.com/michaelwachter20/civil3d-mcp-unified

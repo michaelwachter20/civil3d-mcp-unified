@@ -423,7 +423,7 @@ public static class PipeNetworkCommands
       ["centerlineEndElevation"] = pipe.EndPoint.Z,
       ["invertIn"] = null,
       ["invertOut"] = null,
-      ["invertNote"] = "The Civil 3D 2026 managed Pipe API does not expose endpoint invert elevations directly; centerline elevations are returned instead.",
+      ["invertNote"] = "The Civil 3D managed Pipe API does not expose endpoint invert elevations directly; centerline elevations are returned instead.",
     };
   }
 

@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="./image/civil3d_dynamic_mcp_blueprint/dffc9d11-a9c7-4794-bf73-ff1a39c72e3a.jpg" alt="Civil3D-MCP dynamic blueprint" width="420" />
-
   <h1>Civil 3D MCP Unified</h1>
 
   <p><strong>Let an AI assistant drive a live Autodesk Civil 3D 2027 drawing with the full AutoCAD and Civil 3D .NET API.</strong></p>
@@ -187,7 +185,7 @@ Or request only matching videos:
 }
 ```
 
-The bundled 2026 catalog currently contains 47 Civil 3D tutorial videos. See the
+The bundled 2027 catalog currently contains 47 Civil 3D tutorial videos. See the
 [Autodesk grading-criteria video](https://help.autodesk.com/videos/hmdXBmbDrmD4RJG46g4xxLXnNrBqHIIC/video.mp4)
 for an example. Topic and image retrieval remains local and works without the
 Civil 3D drawing plugin; Autodesk-hosted video playback requires internet access.
@@ -1076,7 +1074,7 @@ The first query builds a compressed local index under `%LOCALAPPDATA%\Civil3DMcp
 | `CIVIL3D_HELP_CACHE_ROOT` | Local AppData | Override the generated search-index directory. |
 | `CIVIL3D_ENABLE_HELP_REINDEX` | `false` | Set to `true` to allow the tool's explicit `reindex` action. Automatic cache refresh remains enabled. |
 | `CIVIL3D_HELP_MAX_IMAGE_BYTES` | `6291456` | Maximum total bytes of inline image content returned by one topic request. |
-| `CIVIL3D_VIDEO_CATALOG` | Bundled 2026 catalog | Optional path to a refreshed JSON catalog produced by `scripts/scrape_autodesk_videos.py`. |
+| `CIVIL3D_VIDEO_CATALOG` | Bundled 2027 catalog | Optional path to a refreshed JSON catalog produced by `scripts/scrape_autodesk_videos.py`. |
 
 The normal `search` and `get_topic` actions include the best matching video by default. Use `includeVideos: false` to suppress it, `maxVideos` to change the limit, or `search_videos` for a video-only lookup. Autodesk hosts these Civil 3D videos online, so playback requires internet access even though topic and image search remains local.
 
@@ -1272,6 +1270,8 @@ reflection stays in `Civil3DCompatibility.cs`, and file writes go through `FileB
 
 ## License
 
-This fork combines two MIT-licensed projects. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
-
-[MIT](./LICENSE) — Steven Bouldin
+[MIT](./LICENSE). This is a fork of
+[Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) by Steven Bouldin that
+incorporates [barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp)
+(Copyright lisiting01). The fork is maintained by Michael Wachter. All original copyright
+notices are kept in [LICENSE](./LICENSE) and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

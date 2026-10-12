@@ -8,7 +8,7 @@ using AcDbObject = Autodesk.AutoCAD.DatabaseServices.DBObject;
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// Assembly operations implemented with the documented Civil 3D 2026 API.
+/// Assembly operations implemented with the documented Civil 3D API.
 /// Dynamic stock-subassembly parameters are the only compatibility access.
 /// </summary>
 public static class AssemblyCreationCommands

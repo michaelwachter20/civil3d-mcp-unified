@@ -440,7 +440,7 @@ public static class ParcelEditingCommands
     }
 
     // Compatibility fallbacks are retained for older host variations, but
-    // de-duplicate anything already returned by the documented 2026 API.
+    // de-duplicate anything already returned by the documented API.
     foreach (var memberName in new[] { "Parcels", "ParcelCollection", "ParcelIds" })
     {
       var value = GetNamedMember(site, memberName) ?? CivilObjectUtils.InvokeMethod(site, memberName);

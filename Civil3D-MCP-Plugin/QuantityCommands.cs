@@ -11,7 +11,7 @@ namespace Civil3DMcpPlugin;
 
 /// <summary>
 /// Quantity takeoff commands — aggregate Civil 3D object data for cost estimation.
-/// Uses typed Civil 3D APIs wherever the 2026 API exposes the required data.
+/// Uses typed Civil 3D APIs wherever the managed API exposes the required data.
 /// </summary>
 public static class QuantityCommands
 {
@@ -487,7 +487,7 @@ public static class QuantityCommands
     _ = PluginRuntime.GetRequiredString(parameters, "corridorName");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 QTO material lists belong to SampleLineGroup objects. Corridor baselines do not expose GetMaterials/GetMaterialQuantities; no empty or zero-valued material list was fabricated.");
+      "Civil 3D QTO material lists belong to SampleLineGroup objects. Corridor baselines do not expose GetMaterials/GetMaterialQuantities; no empty or zero-valued material list was fabricated.");
   }
 
   // -------------------------------------------------------------------------

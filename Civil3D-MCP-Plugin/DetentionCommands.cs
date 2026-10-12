@@ -130,7 +130,7 @@ public static class DetentionCommands
     }
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Stage-storage for surface '{surfaceName}' is unavailable because the Civil 3D 2026 .NET surface API does not expose " +
+      $"Stage-storage for surface '{surfaceName}' is unavailable because the Civil 3D .NET surface API does not expose " +
       "the inundated plan area at an arbitrary elevation. Provide surveyed stage-area data or an explicit basin boundary workflow; " +
       "the server will not synthesize storage from a bounding box.");
   }

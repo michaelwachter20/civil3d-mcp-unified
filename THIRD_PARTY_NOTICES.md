@@ -1,11 +1,15 @@
 # Third-Party Notices
 
-civil3d-mcp-unified combines code from two MIT-licensed projects.
+civil3d-mcp-unified is a fork of Sacred-G/Civil3D-mcp, maintained by Michael Wachter,
+that incorporates code from barbosaihan/civil3d-mcp. Both are MIT-licensed; their
+copyright notices are kept in [LICENSE](./LICENSE) and below.
 
 ## Sacred-G/Civil3D-mcp
 
 The base of this repository: the Node MCP server, the Civil 3D plugin, 200+ tools, the approval policy, and host execution.
-Source: https://github.com/Sacred-G/Civil3D-mcp. License: [LICENSE](./LICENSE) (MIT, Copyright Steven Bouldin).
+Author: Steven Bouldin. Source: https://github.com/Sacred-G/Civil3D-mcp.
+License: MIT. Its LICENSE file, which this repository keeps, carries the notice
+"Copyright (c) 2025 lisiting01".
 
 ## barbosaihan/civil3d-mcp
 

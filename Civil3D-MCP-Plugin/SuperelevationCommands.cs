@@ -12,7 +12,7 @@ namespace Civil3DMcpPlugin;
 /// Civil 3D API notes:
 ///   Alignment.SuperelevationCurves exposes calculated curve groups and their
 ///   typed critical stations. Wizard calculation settings are not exposed by
-///   the managed 2026 API and therefore are never inferred.
+///   the managed API and therefore are never inferred.
 /// </summary>
 public static class SuperelevationCommands
 {
@@ -50,7 +50,7 @@ public static class SuperelevationCommands
         ["superelevationType"] = alignment.SuperelevationType.ToString(),
         ["curveCount"] = curves.Count,
         ["hasSuperelevation"] = curves.Count > 0,
-        ["managedApiLimit"] = "Civil 3D 2026 does not expose wizard attainment, crown, or pivot settings through the managed API.",
+        ["managedApiLimit"] = "Civil 3D does not expose wizard attainment, crown, or pivot settings through the managed API.",
       };
 
       if (includeRawData)
@@ -76,7 +76,7 @@ public static class SuperelevationCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not expose the superelevation wizard calculation settings through its managed API. Use the Civil 3D wizard or import reviewed superelevation data; no alignment data was modified.");
+      "Civil 3D does not expose the superelevation wizard calculation settings through its managed API. Use the Civil 3D wizard or import reviewed superelevation data; no alignment data was modified.");
   }
 
   // -------------------------------------------------------------------------
@@ -104,7 +104,7 @@ public static class SuperelevationCommands
       {
         throw new JsonRpcDispatchException(
           "CIVIL3D.API_ERROR",
-          "The managed Civil 3D 2026 API does not expose enough criteria data to verify attainment or runoff length. Set both checks to false to evaluate only the explicit maximum cross-slope limit.");
+          "The managed Civil 3D API does not expose enough criteria data to verify attainment or runoff length. Set both checks to false to evaluate only the explicit maximum cross-slope limit.");
       }
 
       var rawTable = ReadSuperelevationTable(alignment);

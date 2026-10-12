@@ -121,7 +121,7 @@ public static class ProfileEditCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      $"Cannot set grade {grade} on profile entity {entityIndex} in '{profileName}': ProfileTangent.Grade is read-only in the Civil 3D 2026 .NET API. " +
+      $"Cannot set grade {grade} on profile entity {entityIndex} in '{profileName}': ProfileTangent.Grade is read-only in the Civil 3D .NET API. " +
       "Edit the adjoining PVIs instead.");
   }
 

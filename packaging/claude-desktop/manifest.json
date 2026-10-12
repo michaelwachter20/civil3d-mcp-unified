@@ -3,19 +3,19 @@
   "name": "civil3d-mcp",
   "display_name": "Civil 3D MCP",
   "version": "1.2.1",
-  "description": "Connect Claude Desktop to a live Autodesk Civil 3D 2026 drawing.",
-  "long_description": "Civil 3D MCP gives Claude Desktop a compact set of tools for inspecting and modifying a live Civil 3D drawing, including alignments, surfaces, corridors, profiles, pipe networks, grading, hydrology, plan production, and QC. The native Civil3DMcpPlugin.dll must be loaded in Civil 3D before drawing tools can run.",
+  "description": "Connect Claude Desktop to a live Autodesk Civil 3D 2027 drawing, with live C# execution and saved scripts.",
+  "long_description": "Civil 3D MCP gives Claude Desktop a compact set of tools for inspecting and modifying a live Civil 3D drawing, including alignments, surfaces, corridors, profiles, pipe networks, grading, hydrology, plan production, and QC, plus live C# execution against the full AutoCAD and Civil 3D .NET API and reusable saved scripts. The native Civil3DMcpPlugin.dll must be loaded in Civil 3D before drawing tools can run. This build is the civil3d-mcp-unified fork of Sacred-G/Civil3D-mcp by Steven Bouldin, incorporating barbosaihan/civil3d-mcp (lisiting01); both MIT. Fork maintained by Michael Wachter.",
   "author": {
     "name": "Steven Bouldin",
     "url": "https://github.com/Sacred-G"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Sacred-G/Civil3D-mcp.git"
+    "url": "https://github.com/michaelwachter20/civil3d-mcp-unified.git"
   },
-  "homepage": "https://github.com/Sacred-G/Civil3D-mcp",
-  "documentation": "https://github.com/Sacred-G/Civil3D-mcp/blob/main/docs/DEPLOYMENT.md",
-  "support": "https://github.com/Sacred-G/Civil3D-mcp/issues",
+  "homepage": "https://github.com/michaelwachter20/civil3d-mcp-unified",
+  "documentation": "https://github.com/michaelwachter20/civil3d-mcp-unified/blob/main/docs/DEPLOYMENT.md",
+  "support": "https://github.com/michaelwachter20/civil3d-mcp-unified/issues",
   "server": {
     "type": "node",
     "entry_point": "server/index.js",
@@ -107,7 +107,7 @@
       "type": "string",
       "title": "Preferred offline help version",
       "description": "Civil 3D help version to prefer when more than one is installed.",
-      "default": "2026",
+      "default": "2027",
       "required": false
     },
     "enable_help_reindex": {

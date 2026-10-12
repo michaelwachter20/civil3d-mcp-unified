@@ -191,7 +191,7 @@ public static class SectionCommands
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.API_ERROR",
-        "Civil 3D 2026 SectionViewGroup draft placement uses drawing settings; per-call rows and gapBetweenViews are not exposed by the .NET API.");
+        "Civil 3D SectionViewGroup draft placement uses drawing settings; per-call rows and gapBetweenViews are not exposed by the .NET API.");
     }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -339,7 +339,7 @@ public static class SectionCommands
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.API_ERROR",
-        "Civil 3D 2026 SectionViewGroup draft placement uses drawing settings; per-call rows, columns, gapX, and gapY are not exposed by the .NET API.");
+        "Civil 3D SectionViewGroup draft placement uses drawing settings; per-call rows, columns, gapX, and gapY are not exposed by the .NET API.");
     }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>

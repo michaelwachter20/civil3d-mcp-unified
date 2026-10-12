@@ -5,7 +5,7 @@ using Autodesk.Civil.DatabaseServices;
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// Typed Civil 3D 2026 intersection queries. The managed API exposes
+/// Typed Civil 3D intersection queries. The managed API exposes
 /// Intersection inspection, but it does not expose an Intersection.Create
 /// factory; creation therefore returns an explicit capability error.
 /// </summary>
@@ -18,7 +18,7 @@ public static class IntersectionCommands
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.API_ERROR",
-        "Civil 3D 2026 intersections do not expose site membership through the managed API, so siteName cannot be used as an intersection filter.");
+        "Civil 3D intersections do not expose site membership through the managed API, so siteName cannot be used as an intersection filter.");
     }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -55,7 +55,7 @@ public static class IntersectionCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D 2026 does not expose an Intersection.Create method in the managed .NET API. No intersection or related corridor data was created; use the Civil 3D Create Intersection command for this operation.");
+      "Civil 3D does not expose an Intersection.Create method in the managed .NET API. No intersection or related corridor data was created; use the Civil 3D Create Intersection command for this operation.");
   }
 
   public static Task<object?> GetIntersectionAsync(JsonObject? parameters)
