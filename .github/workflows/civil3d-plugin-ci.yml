@@ -1,4 +1,4 @@
-name: Civil 3D 2026 plugin CI
+name: Civil 3D 2027 plugin CI
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   plugin:
-    runs-on: [self-hosted, Windows, Civil3D-2026]
+    runs-on: [self-hosted, Windows, Civil3D-2027]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,7 +18,7 @@ jobs:
           node-version: 22
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
       - run: npm run version:check
       - name: Compile against licensed Civil 3D references
         shell: powershell

@@ -73,7 +73,7 @@ export function selectHelpInstallation(
 ): HelpInstallation | undefined {
   const preferredVersion = requestedVersion
     ?? process.env.CIVIL3D_HELP_VERSION
-    ?? "2026";
+    ?? "2027";
   return installations.find((installation) => installation.version === preferredVersion)
     ?? installations[0];
 }

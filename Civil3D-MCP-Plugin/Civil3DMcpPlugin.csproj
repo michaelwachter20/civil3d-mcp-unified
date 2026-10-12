@@ -1,43 +1,103 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Civil 3D 2027 plugin. AutoCAD 2027 requires managed plugins to target .NET 10
+    and is not binary compatible with 2025/2026 builds.
+
+    Autodesk reference resolution (first match wins for each DLL):
+      1. /p:Civil3DReferencesPath=<folder containing all six managed DLLs>
+      2. /p:Civil3DInstallPath=<AutoCAD install root>  (default below), searching
+         the root, C3D\ and ACA\ subfolders where a standard install puts them.
+      3. ..\C_References (untracked local copy; never commit Autodesk binaries).
+  -->
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Civil3DReferencesPath Condition="'$(Civil3DReferencesPath)' == ''">..\C_References</Civil3DReferencesPath>
+    <!-- Roslyn ships many localized resource folders; English is enough here. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Civil3DInstallPath Condition="'$(Civil3DInstallPath)' == ''">C:\Program Files\Autodesk\AutoCAD 2027</Civil3DInstallPath>
+    <Civil3DLocalReferencesPath>$(MSBuildThisFileDirectory)..\C_References</Civil3DLocalReferencesPath>
   </PropertyGroup>
   <Import Project="GeneratedVersion.props" />
 
+  <!-- Resolve each Autodesk assembly independently. -->
+  <PropertyGroup>
+    <AcCoreMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\accoremgd.dll</AcCoreMgdPath>
+    <AcCoreMgdPath Condition="'$(AcCoreMgdPath)' == '' And Exists('$(Civil3DInstallPath)\accoremgd.dll')">$(Civil3DInstallPath)\accoremgd.dll</AcCoreMgdPath>
+    <AcCoreMgdPath Condition="'$(AcCoreMgdPath)' == ''">$(Civil3DLocalReferencesPath)\accoremgd.dll</AcCoreMgdPath>
+
+    <AcDbMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AcDbMgd.dll</AcDbMgdPath>
+    <AcDbMgdPath Condition="'$(AcDbMgdPath)' == '' And Exists('$(Civil3DInstallPath)\AcDbMgd.dll')">$(Civil3DInstallPath)\AcDbMgd.dll</AcDbMgdPath>
+    <AcDbMgdPath Condition="'$(AcDbMgdPath)' == ''">$(Civil3DLocalReferencesPath)\AcDbMgd.dll</AcDbMgdPath>
+
+    <AcMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\acmgd.dll</AcMgdPath>
+    <AcMgdPath Condition="'$(AcMgdPath)' == '' And Exists('$(Civil3DInstallPath)\acmgd.dll')">$(Civil3DInstallPath)\acmgd.dll</AcMgdPath>
+    <AcMgdPath Condition="'$(AcMgdPath)' == ''">$(Civil3DLocalReferencesPath)\acmgd.dll</AcMgdPath>
+
+    <AecBaseMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AecBaseMgd.dll</AecBaseMgdPath>
+    <AecBaseMgdPath Condition="'$(AecBaseMgdPath)' == '' And Exists('$(Civil3DInstallPath)\ACA\AecBaseMgd.dll')">$(Civil3DInstallPath)\ACA\AecBaseMgd.dll</AecBaseMgdPath>
+    <AecBaseMgdPath Condition="'$(AecBaseMgdPath)' == '' And Exists('$(Civil3DInstallPath)\C3D\AecBaseMgd.dll')">$(Civil3DInstallPath)\C3D\AecBaseMgd.dll</AecBaseMgdPath>
+    <AecBaseMgdPath Condition="'$(AecBaseMgdPath)' == '' And Exists('$(Civil3DInstallPath)\AecBaseMgd.dll')">$(Civil3DInstallPath)\AecBaseMgd.dll</AecBaseMgdPath>
+    <AecBaseMgdPath Condition="'$(AecBaseMgdPath)' == ''">$(Civil3DLocalReferencesPath)\AecBaseMgd.dll</AecBaseMgdPath>
+
+    <AeccDbMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AeccDbMgd.dll</AeccDbMgdPath>
+    <AeccDbMgdPath Condition="'$(AeccDbMgdPath)' == '' And Exists('$(Civil3DInstallPath)\C3D\AeccDbMgd.dll')">$(Civil3DInstallPath)\C3D\AeccDbMgd.dll</AeccDbMgdPath>
+    <AeccDbMgdPath Condition="'$(AeccDbMgdPath)' == ''">$(Civil3DLocalReferencesPath)\AeccDbMgd.dll</AeccDbMgdPath>
+
+    <AeccPressurePipesMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
+    <AeccPressurePipesMgdPath Condition="'$(AeccPressurePipesMgdPath)' == '' And Exists('$(Civil3DInstallPath)\C3D\AeccPressurePipesMgd.dll')">$(Civil3DInstallPath)\C3D\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
+    <AeccPressurePipesMgdPath Condition="'$(AeccPressurePipesMgdPath)' == ''">$(Civil3DLocalReferencesPath)\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
+  </PropertyGroup>
+
   <Target Name="ValidateCivil3DReferences" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(Civil3DReferencesPath)\accoremgd.dll') Or !Exists('$(Civil3DReferencesPath)\AcDbMgd.dll') Or !Exists('$(Civil3DReferencesPath)\acmgd.dll') Or !Exists('$(Civil3DReferencesPath)\AecBaseMgd.dll') Or !Exists('$(Civil3DReferencesPath)\AeccDbMgd.dll') Or !Exists('$(Civil3DReferencesPath)\AeccPressurePipesMgd.dll')"
-      Text="Civil 3D 2026 managed references were not found at '$(Civil3DReferencesPath)'. Set /p:Civil3DReferencesPath=&lt;licensed Civil 3D/ObjectARX reference directory&gt;. Autodesk assemblies must not be committed." />
+    <Error Condition="!Exists('$(AcCoreMgdPath)')" Text="accoremgd.dll not found (looked at '$(AcCoreMgdPath)'). Install Civil 3D 2027, pass /p:Civil3DInstallPath=&lt;AutoCAD 2027 folder&gt;, or /p:Civil3DReferencesPath=&lt;folder with the managed DLLs&gt;. Autodesk assemblies must not be committed." />
+    <Error Condition="!Exists('$(AcDbMgdPath)')" Text="AcDbMgd.dll not found (looked at '$(AcDbMgdPath)'). See accoremgd.dll guidance." />
+    <Error Condition="!Exists('$(AcMgdPath)')" Text="acmgd.dll not found (looked at '$(AcMgdPath)'). See accoremgd.dll guidance." />
+    <Error Condition="!Exists('$(AecBaseMgdPath)')" Text="AecBaseMgd.dll not found (looked at '$(AecBaseMgdPath)'). It normally lives in the ACA subfolder of the AutoCAD 2027 install." />
+    <Error Condition="!Exists('$(AeccDbMgdPath)')" Text="AeccDbMgd.dll not found (looked at '$(AeccDbMgdPath)'). It normally lives in the C3D subfolder of the AutoCAD 2027 install." />
+    <Error Condition="!Exists('$(AeccPressurePipesMgdPath)')" Text="AeccPressurePipesMgd.dll not found (looked at '$(AeccPressurePipesMgdPath)'). It normally lives in the C3D subfolder of the AutoCAD 2027 install." />
+    <Message Importance="high" Text="Civil 3D references: $(AcMgdPath); $(AeccDbMgdPath); $(AecBaseMgdPath)" />
   </Target>
+
+  <!-- WPF dispatcher marshals read-only requests onto the AutoCAD main thread.
+       A framework reference (not UseWPF) keeps the default implicit usings intact. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
+  <!-- Roslyn scripting powers civil3d_execute / civil3d_query / saved scripts. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.0.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="accoremgd">
-      <HintPath>$(Civil3DReferencesPath)\accoremgd.dll</HintPath>
+      <HintPath>$(AcCoreMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Acdbmgd">
-      <HintPath>$(Civil3DReferencesPath)\AcDbMgd.dll</HintPath>
+      <HintPath>$(AcDbMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Acmgd">
-      <HintPath>$(Civil3DReferencesPath)\acmgd.dll</HintPath>
+      <HintPath>$(AcMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AecBaseMgd">
-      <HintPath>$(Civil3DReferencesPath)\AecBaseMgd.dll</HintPath>
+      <HintPath>$(AecBaseMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AeccDbMgd">
-      <HintPath>$(Civil3DReferencesPath)\AeccDbMgd.dll</HintPath>
+      <HintPath>$(AeccDbMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="AeccPressurePipesMgd">
-      <HintPath>$(Civil3DReferencesPath)\AeccPressurePipesMgd.dll</HintPath>
+      <HintPath>$(AeccPressurePipesMgdPath)</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

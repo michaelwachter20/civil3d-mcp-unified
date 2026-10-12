@@ -13,6 +13,7 @@ public sealed class PluginEntry : IExtensionApplication
   {
     try
     {
+      CivilExecution.CaptureMainThreadContext();
       PluginRuntime.StartServer();
       PluginLog.Info("PluginEntry", $"Civil3D MCP plugin initialized on port {PluginRuntime.Port}. Log file: {PluginLog.LogFilePath}");
       WriteMessage("Civil3D MCP plugin initialized.");
@@ -56,6 +57,28 @@ public sealed class PluginEntry : IExtensionApplication
   {
     var status = PluginRuntime.GetStatus();
     WriteMessage($"Civil3D MCP listener running: {status.IsRunning}; pending: {status.QueueDepth}; active: {status.OperationInProgress}; current: {status.CurrentOperation ?? "<none>"}");
+  }
+
+  /// <summary>Toggles moving the view to show objects changed by MCP work.</summary>
+  [CommandMethod("C3DMCPFOLLOW")]
+  public void FollowViewCommand()
+  {
+    ViewFollower.Enabled = !ViewFollower.Enabled;
+    WriteMessage($"Civil3D MCP follow view: {(ViewFollower.Enabled ? "ON (the view moves to show MCP changes)" : "OFF")}.");
+  }
+
+  /// <summary>Runs a saved script by name, prompting for its parameters.</summary>
+  [CommandMethod("MCPRUN", CommandFlags.Modal)]
+  public void RunSavedScriptCommand()
+  {
+    ScriptCommands.RunSavedScriptInteractive();
+  }
+
+  /// <summary>Lists saved scripts.</summary>
+  [CommandMethod("MCPSCRIPTS", CommandFlags.Modal)]
+  public void ListSavedScriptsCommand()
+  {
+    ScriptCommands.ListSavedScriptsInteractive();
   }
 
   private static void WriteMessage(string message)
