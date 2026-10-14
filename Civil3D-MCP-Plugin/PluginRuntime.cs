@@ -50,8 +50,10 @@ public static class PluginRuntime
         return;
       }
 
-      _server = new RpcTcpServer(Port, HandleRawRequestAsync);
-      _server.Start();
+      // Only keep the server once it is listening, so a failed start (port in use) can be retried.
+      var server = new RpcTcpServer(Port, HandleRawRequestAsync);
+      server.Start();
+      _server = server;
     }
   }
 

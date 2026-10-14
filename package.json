@@ -30,6 +30,7 @@
     "package:inspect": "npm run build && node ./scripts/inspect-package.mjs",
     "package:claude": "npm run build && node ./scripts/package-claude-extension.mjs",
     "package:claude:validate": "node ./scripts/package-claude-extension.mjs --validate-only",
+    "package:release": "node ./scripts/package-release.mjs",
     "claude:add": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/install-claude-mcp.ps1 -Scope project",
     "claude:add:user": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/install-claude-mcp.ps1 -Scope user",
     "claude:print-add": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/install-claude-mcp.ps1 -Scope project -PrintOnly"

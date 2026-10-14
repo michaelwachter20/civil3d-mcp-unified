@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Autodesk application bundle for Civil 3D 2027 (R26.0), installed to %APPDATA%\Autodesk\ApplicationPlugins.
+     The plugin loads at startup to add the "Civil 3D MCP" ribbon tab; the AI connection stays OFF until the
+     user turns it on there (or with C3DMCPSTART). {{VERSION}} is filled in by package:release. -->
+<ApplicationPackage
+  SchemaVersion="1.0"
+  AutodeskProduct="AutoCAD"
+  ProductType="Application"
+  AppVersion="{{VERSION}}"
+  Name="Civil 3D MCP (civil3d-mcp-unified)"
+  Description="Connects AI assistants (Claude and other MCP clients) to Civil 3D through a local JSON-RPC server on port 8080."
+  Author="{{AUTHOR}}"
+  ProductCode="{6F0B2C7E-3D4A-4E8B-9C61-2A7D5E0F9B13}"
+  UpgradeCode="{C2D5A9E4-81B7-4F3C-A6E0-5B9D4C7E2F18}"
+  >
+  <CompanyDetails Name="civil3d-mcp-unified (fork of Sacred-G/Civil3D-mcp)" Url="{{URL}}" />
+  <RuntimeRequirements OS="Win64" Platform="Civil3D" SeriesMin="R26.0" SeriesMax="R26.0" />
+  <Components>
+    <ComponentEntry AppName="Civil3DMcpPlugin" ModuleName="./Contents/Civil3DMcpPlugin.dll" LoadOnAutoCADStartup="True" />
+  </Components>
+</ApplicationPackage>

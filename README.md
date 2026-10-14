@@ -135,6 +135,21 @@ command line:
 The plugin is designed so you can keep Civil 3D open, and even keep working, while
 the AI makes changes.
 
+### Turning the AI connection on and off
+
+The AI connection is **off** whenever Civil 3D starts; AI assistants can only reach a session after you turn
+it on there.
+
+- **Ribbon:** the **Civil 3D MCP** tab has an **AI Connection: ON / OFF** toggle, and under it a status line
+  with a green dot (**Running**) or red dot (**Off**). **Details** shows what it's doing.
+- **Commands:** `C3DMCPSTART` (on), `C3DMCPSTOP` (off), `C3DMCPSTATUS` (state).
+- Set `CIVIL3D_MCP_AUTOSTART=true` in the environment that launches Civil 3D to turn it on automatically
+  whenever the plugin loads (the old behavior).
+- On the AI side, Claude Desktop extensions can be switched off in **Settings → Extensions**, and Claude Code
+  servers with `/mcp`.
+
+### While it's on
+
 - **No focus needed.** Requests arrive over a local socket, so Civil 3D can be
   behind other windows or minimized.
 - **It acts on the active drawing** of the Civil 3D session that loaded the plugin.
@@ -199,27 +214,29 @@ for configuration and additional examples.
 
 ## Quick Start
 
-If you want the fastest path from clone to a working Claude + Civil 3D setup on Windows:
+### Install from a release (no build tools needed)
 
-For Claude Desktop, a release `.mcpb` is the easiest Node-side installation:
+Download `civil3d-mcp-unified-<version>.zip` from the
+[Releases page](https://github.com/michaelwachter20/civil3d-mcp-unified/releases), extract it, and follow
+its `INSTALL.md`. In short:
 
-1. Open **Settings > Extensions > Advanced settings > Install Extension**.
-2. Select `civil3d-mcp-<version>.mcpb` and keep ports `8080` and `3000` unless
-   your local setup uses different ports.
-3. Open Civil 3D and load the native plugin with `NETLOAD` or the `APPLOAD`
-   Startup Suite.
-4. Ask Claude to run `civil3d_health`.
+1. **Civil 3D plugin:** double-click `Install-Civil3DPlugin.cmd`. It installs the plugin as an Autodesk
+   bundle in `%APPDATA%\Autodesk\ApplicationPlugins`, so Civil 3D 2027 loads it automatically (no `NETLOAD`)
+   and shows a **Civil 3D MCP** ribbon tab.
+2. **AI app:**
+   - **Claude Desktop:** Settings → Extensions → Advanced settings → Install Extension → pick `civil3d-mcp-<version>.mcpb`.
+   - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
+   - **Other MCP clients:** a stdio server running `node <extracted>\mcp-server\server\index.js`.
+3. **Turn the AI connection on** when you want it: click **AI Connection** on the **Civil 3D MCP** ribbon tab
+   (or type `C3DMCPSTART`). It's **off** every time Civil 3D starts. See
+   [Turning the AI connection on and off](#turning-the-ai-connection-on-and-off).
+4. Ask your AI app to run `civil3d_health`.
 
-The extension installs the Node MCP server and its production dependencies. It
-does not install the native Autodesk plugin. Maintainers can build both the
-current `.mcpb` and legacy `.dxt` files with:
+Maintainers build that zip with `npm run package:release` (needs the .NET 10 SDK and Civil 3D 2027 for the
+plugin references). The command refuses to finish if any file contains the builder's user name or a local
+user-profile path.
 
-```powershell
-npm install
-npm run package:claude
-```
-
-For a source-based or Claude Code installation:
+### Install from source (Claude Code / development)
 
 1. Clone and build the Node side:
 
@@ -499,16 +516,17 @@ AeccPressurePipesMgd.dll
 
 | Method | Steps |
 |---|---|
-| **Manual (NETLOAD)** | Open Civil 3D → type `NETLOAD` → browse to `Civil3D-MCP-Plugin.dll` |
-| **Autoload (recommended)** | Add registry key — see [DEPLOYMENT.md](./docs/DEPLOYMENT.md) |
+| **Bundle (recommended)** | `npm run package:release`, then run `Install-Civil3DPlugin.cmd` from the zip. Civil 3D loads it at startup and shows the **Civil 3D MCP** ribbon tab |
+| **Manual (NETLOAD)** | Open Civil 3D → type `NETLOAD` → browse to `Civil3DMcpPlugin.dll` |
 
-Once loaded, these commands are available in the Civil 3D command line:
+Loading the plugin does **not** turn the AI connection on; use the ribbon toggle or `C3DMCPSTART`
+(or set `CIVIL3D_MCP_AUTOSTART=true`). These commands are available in the Civil 3D command line:
 
 | Command | Description |
 |---|---|
-| `C3DMCPSTART` | Start the JSON-RPC server (auto-starts on plugin load) |
-| `C3DMCPSTOP` | Stop the JSON-RPC server |
-| `C3DMCPSTATUS` | Show server status, port, and queue depth |
+| `C3DMCPSTART` | Turn the AI connection on for this session (starts the JSON-RPC listener on port 8080) |
+| `C3DMCPSTOP` | Turn the AI connection off |
+| `C3DMCPSTATUS` | Show whether it's on, and what it's doing |
 | `C3DMCPFOLLOW` | Toggle whether the view moves to show AI changes (on by default) |
 | `MCPRUN` | Run a saved script by name, prompting for its parameters |
 | `MCPSCRIPTS` | List saved scripts |

@@ -56,6 +56,11 @@
     <AeccPressurePipesMgdPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
     <AeccPressurePipesMgdPath Condition="'$(AeccPressurePipesMgdPath)' == '' And Exists('$(Civil3DInstallPath)\C3D\AeccPressurePipesMgd.dll')">$(Civil3DInstallPath)\C3D\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
     <AeccPressurePipesMgdPath Condition="'$(AeccPressurePipesMgdPath)' == ''">$(Civil3DLocalReferencesPath)\AeccPressurePipesMgd.dll</AeccPressurePipesMgdPath>
+
+    <!-- Ribbon API (Autodesk.Windows) for the Civil 3D MCP ribbon tab. -->
+    <AdWindowsPath Condition="'$(Civil3DReferencesPath)' != ''">$(Civil3DReferencesPath)\AdWindows.dll</AdWindowsPath>
+    <AdWindowsPath Condition="'$(AdWindowsPath)' == '' And Exists('$(Civil3DInstallPath)\AdWindows.dll')">$(Civil3DInstallPath)\AdWindows.dll</AdWindowsPath>
+    <AdWindowsPath Condition="'$(AdWindowsPath)' == ''">$(Civil3DLocalReferencesPath)\AdWindows.dll</AdWindowsPath>
   </PropertyGroup>
 
   <Target Name="ValidateCivil3DReferences" BeforeTargets="PrepareForBuild">
@@ -65,7 +70,8 @@
     <Error Condition="!Exists('$(AecBaseMgdPath)')" Text="AecBaseMgd.dll not found (looked at '$(AecBaseMgdPath)'). It normally lives in the ACA subfolder of the AutoCAD 2027 install." />
     <Error Condition="!Exists('$(AeccDbMgdPath)')" Text="AeccDbMgd.dll not found (looked at '$(AeccDbMgdPath)'). It normally lives in the C3D subfolder of the AutoCAD 2027 install." />
     <Error Condition="!Exists('$(AeccPressurePipesMgdPath)')" Text="AeccPressurePipesMgd.dll not found (looked at '$(AeccPressurePipesMgdPath)'). It normally lives in the C3D subfolder of the AutoCAD 2027 install." />
-    <Message Importance="high" Text="Civil 3D references: $(AcMgdPath); $(AeccDbMgdPath); $(AecBaseMgdPath)" />
+    <Error Condition="!Exists('$(AdWindowsPath)')" Text="AdWindows.dll not found (looked at '$(AdWindowsPath)'). It normally lives in the AutoCAD 2027 install root." />
+    <Message Importance="high" Text="Civil 3D references: $(AcMgdPath); $(AeccDbMgdPath); $(AecBaseMgdPath); $(AdWindowsPath)" />
   </Target>
 
   <!-- WPF dispatcher marshals read-only requests onto the AutoCAD main thread.
@@ -102,6 +108,10 @@
     </Reference>
     <Reference Include="AeccPressurePipesMgd">
       <HintPath>$(AeccPressurePipesMgdPath)</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AdWindows">
+      <HintPath>$(AdWindowsPath)</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>
