@@ -14,6 +14,38 @@ $bundleName = 'Civil3DMcpPlugin.bundle'
 $pluginsRoot = Join-Path $env:APPDATA 'Autodesk\ApplicationPlugins'
 $target = Join-Path $pluginsRoot $bundleName
 $appsKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Civil3DMcpPlugin'
+# Permanent copy of the MCP server used by Claude Desktop (so deleting the extracted zip doesn't break it).
+$serverHome = Join-Path $env:LOCALAPPDATA 'civil3d-mcp'
+
+function Get-Node {
+  $node = Get-Command node -ErrorAction SilentlyContinue
+  if (-not $node) { return $null }
+  $major = [int](((& $node.Source --version) -replace '^v', '') -split '\.')[0]
+  if ($major -lt 18) { return $null }
+  return $node.Source
+}
+
+function Wait-ClaudeDesktopClosed {
+  # Claude Desktop rewrites its settings file while running, so it must be closed when we change it.
+  for ($attempt = 1; Get-Process -Name 'Claude' -ErrorAction SilentlyContinue; $attempt++) {
+    if ($attempt -gt 5) {
+      Write-Host 'Claude Desktop is still open; skipped adding the Civil 3D tools. Run the installer again after quitting it.' -ForegroundColor Yellow
+      return $false
+    }
+    Write-Host 'Claude Desktop is open. Quit it completely (right-click its taskbar/tray icon > Quit), then press Enter.' -ForegroundColor Yellow
+    Write-Host '(Type skip and press Enter to skip the Claude Desktop step.)'
+    if ((Read-Host) -eq 'skip') { return $false }
+  }
+  return $true
+}
+
+function Invoke-ClaudeConfig([string[]]$arguments) {
+  $helper = Join-Path $PSScriptRoot 'claude-desktop-config.mjs'
+  $node = Get-Node
+  if (-not $node -or -not (Test-Path -LiteralPath $helper)) { return $false }
+  & $node $helper @arguments
+  return ($LASTEXITCODE -eq 0)
+}
 
 function Remove-Bundle {
   if (-not (Test-Path -LiteralPath $target)) { return }
@@ -28,7 +60,17 @@ function Remove-Bundle {
 }
 
 if ($Uninstall) {
-  $wasInstalled = (Test-Path -LiteralPath $target) -or (Test-Path $appsKey)
+  $wasInstalled = (Test-Path -LiteralPath $target) -or (Test-Path $appsKey) -or (Test-Path -LiteralPath $serverHome)
+  if (Test-Path -LiteralPath $serverHome) {
+    if (Get-Process -Name 'Claude' -ErrorAction SilentlyContinue) {
+      Write-Host 'Note: quit and reopen Claude Desktop afterwards so it drops the Civil 3D tools.' -ForegroundColor Yellow
+    }
+    if (-not (Invoke-ClaudeConfig @('remove'))) {
+      Write-Host 'Could not update Claude Desktop settings automatically (Node.js not found).' -ForegroundColor Yellow
+      Write-Host 'Remove "civil3d-mcp" from claude_desktop_config.json by hand if Claude Desktop still lists it.'
+    }
+    Remove-Item -LiteralPath $serverHome -Recurse -Force -ErrorAction SilentlyContinue
+  }
   Remove-Bundle
   Remove-Item -Path $appsKey -Recurse -Force -ErrorAction SilentlyContinue
   if ($wasInstalled) {
@@ -66,6 +108,8 @@ Copy-Item -LiteralPath $source -Destination $target -Recurse
 $uninstallDir = Join-Path $target 'Uninstall'
 New-Item -ItemType Directory -Force -Path $uninstallDir | Out-Null
 Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $uninstallDir 'Install-Civil3DPlugin.ps1')
+$configHelper = Join-Path $PSScriptRoot 'claude-desktop-config.mjs'
+if (Test-Path -LiteralPath $configHelper) { Copy-Item -LiteralPath $configHelper -Destination $uninstallDir }
 # Files from a downloaded zip are marked as coming from the internet; unblock so Civil 3D can load the DLLs.
 Get-ChildItem -LiteralPath $target -Recurse -File | Unblock-File
 
@@ -85,6 +129,34 @@ New-ItemProperty -Path $appsKey -Name NoModify -Value 1 -PropertyType DWord -For
 New-ItemProperty -Path $appsKey -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
 
 Write-Host "Civil 3D MCP plugin $version installed to $target" -ForegroundColor Green
+
+# ---------- optional: Claude Desktop ----------
+$claudeSettings = @(Join-Path $env:APPDATA 'Claude') +
+  @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -Filter 'Claude_*' -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName 'LocalCache\Roaming\Claude' }) | Where-Object { Test-Path -LiteralPath $_ }
+$serverSource = Join-Path $PSScriptRoot 'mcp-server'
+if ($claudeSettings -and (Test-Path -LiteralPath $serverSource)) {
+  Write-Host ''
+  $answer = Read-Host 'Add the Civil 3D tools to Claude Desktop now? [Y/n]'
+  if ($answer -notmatch '^(n|no)$') {
+    if (-not (Get-Node)) {
+      Write-Host 'Node.js 18 or newer is needed for this step and was not found.' -ForegroundColor Yellow
+      Write-Host 'Install it from https://nodejs.org (LTS) and run this installer again, or in Claude Desktop use'
+      Write-Host 'Settings > Extensions > Advanced settings > Install Extension and pick the .mcpb file from this zip.'
+    }
+    elseif (Wait-ClaudeDesktopClosed) {
+      if (Test-Path -LiteralPath $serverHome) { Remove-Item -LiteralPath $serverHome -Recurse -Force }
+      New-Item -ItemType Directory -Force -Path $serverHome | Out-Null
+      Copy-Item -LiteralPath $serverSource -Destination (Join-Path $serverHome 'mcp-server') -Recurse
+      Get-ChildItem -LiteralPath $serverHome -Recurse -File | Unblock-File
+      if (Invoke-ClaudeConfig @('add', (Join-Path $serverHome 'mcp-server\server\index.js'))) {
+        Write-Host 'Open Claude Desktop: the Civil 3D tools are listed under its connectors/tools.' -ForegroundColor Green
+      }
+    }
+  }
+}
+
+Write-Host ''
 Write-Host 'Start (or restart) Civil 3D 2027 and look for the Civil 3D MCP ribbon tab.'
 Write-Host 'The AI connection is OFF until you turn it on there (or with C3DMCPSTART).'
 Write-Host 'If Civil 3D asks whether to load the plugin, choose Always Load.'

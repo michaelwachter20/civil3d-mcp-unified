@@ -42,16 +42,21 @@ that is active in that window.
 ## Uninstalling
 
 Close Civil 3D, then either double-click **`Uninstall-Civil3DPlugin.cmd`**, or go to **Windows Settings → Apps →
-Installed apps → Civil 3D MCP plugin → Uninstall**. This removes the plugin and its Apps entry. Your saved
+Installed apps → Civil 3D MCP plugin → Uninstall**. This removes the plugin, its Apps entry, and the Civil 3D
+tools from Claude Desktop if the installer added them (restart Claude Desktop afterwards). Your saved
 scripts (`Documents\Civil3DMcp\scripts`) and the log (`%LOCALAPPDATA%\Civil3DMcpPlugin`) are kept; delete them by
 hand if you no longer want them. To remove the AI side, uninstall the extension in Claude Desktop or run
 `claude mcp remove civil3d-mcp` for Claude Code.
 
 ## 2. Connect your AI app (pick one)
 
-**Claude Desktop:** open **Settings → Extensions → Advanced settings → Install Extension**, select
-`civil3d-mcp-{{VERSION}}.mcpb`, and accept the defaults (Civil 3D host `localhost`, port `8080`).
-You can switch the extension off and on in **Settings → Extensions** whenever you like.
+**Claude Desktop (automatic):** the installer from step 1 asks *"Add the Civil 3D tools to Claude Desktop
+now?"*. Answer **Y**, quit Claude Desktop when asked, and reopen it: the Civil 3D tools are there. It needs
+[Node.js](https://nodejs.org) 18 or newer, keeps a copy of the server in `%LOCALAPPDATA%\civil3d-mcp`, and
+backs up Claude's settings file before adding the one `civil3d-mcp` entry.
+
+**Claude Desktop (manual, no Node.js needed):** open **Settings → Extensions → Advanced settings → Install
+Extension**, select `civil3d-mcp-{{VERSION}}.mcpb`, and accept the defaults (host `localhost`, port `8080`).
 
 **Claude Code:** needs Node.js 18 or newer. To make it available only in one project folder, run this inside
 that folder (use `--scope user` instead to have it in every project):

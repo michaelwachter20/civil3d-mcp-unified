@@ -231,7 +231,8 @@ its `INSTALL.md`. In short:
    and shows a **Civil 3D MCP** ribbon tab. It also appears in **Windows Settings → Apps**; remove it there or
    with `Uninstall-Civil3DPlugin.cmd` (saved scripts and logs are kept). No admin rights needed.
 2. **AI app:**
-   - **Claude Desktop:** Settings → Extensions → Advanced settings → Install Extension → pick `civil3d-mcp-<version>.mcpb`.
+   - **Claude Desktop:** the installer offers to add the tools for you (needs Node.js 18+). Or install
+     `civil3d-mcp-<version>.mcpb` via Settings → Extensions → Advanced settings → Install Extension.
    - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
    - **Other MCP clients:** a stdio server running `node <extracted>\mcp-server\server\index.js`.
 3. **Turn the AI connection on** when you want it: click **AI Connection** on the **Civil 3D MCP** ribbon tab
