@@ -11,6 +11,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pluginSourceHash } from "./plugin-source-hash.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8"));
@@ -40,8 +41,21 @@ const fill = (text) => text.replaceAll("{{VERSION}}", version).replaceAll("{{URL
 await rm(releaseRoot, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
 
-// 1. Civil 3D plugin as an Autodesk application bundle
-run("dotnet", ["build", path.join("Civil3D-MCP-Plugin", "Civil3DMcpPlugin.csproj"), "-c", "Release", "-o", pluginBuild, "--no-incremental", "-v:minimal"]);
+// 1. Civil 3D plugin as an Autodesk application bundle. --prebuilt uses prebuilt/Civil3DMcpPlugin
+//    (from npm run plugin:prebuild) instead of compiling, for machines without Civil 3D.
+if (process.argv.includes("--prebuilt")) {
+  const prebuilt = path.join(repositoryRoot, "prebuilt", "Civil3DMcpPlugin");
+  const info = JSON.parse(await readFile(path.join(prebuilt, "BUILD-INFO.json"), "utf8").catch(() => "{}"));
+  if (info.version !== version) {
+    throw new Error(`prebuilt plugin is version ${info.version ?? "(none)"}, package.json is ${version}. Run npm run plugin:prebuild and commit it.`);
+  }
+  if (info.sourceHash !== await pluginSourceHash()) {
+    throw new Error("prebuilt plugin doesn't match the plugin source. Run npm run plugin:prebuild and commit it.");
+  }
+  await cp(prebuilt, pluginBuild, { recursive: true });
+} else {
+  run("dotnet", ["build", path.join("Civil3D-MCP-Plugin", "Civil3DMcpPlugin.csproj"), "-c", "Release", "-o", pluginBuild, "--no-incremental", "-v:minimal"]);
+}
 const bundle = path.join(stage, "Civil3DMcpPlugin.bundle");
 await mkdir(path.join(bundle, "Contents"), { recursive: true });
 for (const file of await readdir(pluginBuild)) {

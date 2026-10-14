@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag like v2.0.0 (matching package.json) to publish a GitHub Release with the install zip.
+# GitHub's machines don't have Civil 3D, so the plugin comes from prebuilt/Civil3DMcpPlugin
+# (compiled locally with npm run plugin:prebuild); the build fails if it doesn't match the source.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tag matches package.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} doesn't match package.json version $version." }
+      - run: npm run version:check
+      - run: npm run build
+      - run: npm test
+      - name: Package (prebuilt plugin, privacy and Autodesk-DLL checks)
+        run: npm run package:release -- --prebuilt
+      - name: Release notes from CHANGELOG
+        shell: pwsh
+        run: node ./scripts/release-notes.mjs | Out-File -Encoding utf8 "$env:RUNNER_TEMP/notes.md"
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          gh release create "${{ github.ref_name }}" "dist/release/civil3d-mcp-unified-$version.zip" "dist/release/SHA256SUMS.txt" `
+            --repo "${{ github.repository }}" `
+            --title "civil3d-mcp-unified $version" `
+            --notes-file "$env:RUNNER_TEMP/notes.md"

@@ -8,6 +8,9 @@ dist/
 **/obj/
 *.dll
 *.pdb
+# The locally compiled plugin used by the release workflow (never Autodesk assemblies)
+!prebuilt/Civil3DMcpPlugin/*.dll
+!prebuilt/Civil3DMcpPlugin/*.pdb
 
 # IDE
 .vs/
