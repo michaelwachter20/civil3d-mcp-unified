@@ -2,6 +2,10 @@
 
 Requires **Autodesk Civil 3D 2027** on Windows. Everything below runs locally on your PC.
 
+> **Tested only with Civil 3D 2027 (English), build 13.9.1308 / AutoCAD R26.0.118, .NET 10.0.12, on
+> Windows 11.** It has not been tested with any other Civil 3D version, update, language or build, or with
+> plain AutoCAD. Civil 3D 2026 and earlier can't load it. On any other setup, try it on a copy of a drawing first.
+
 | In this zip | What it is |
 |---|---|
 | `Install-Civil3DPlugin.cmd` | Installs the Civil 3D plugin so it loads automatically |

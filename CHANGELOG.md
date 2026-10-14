@@ -2,6 +2,19 @@
 
 ## Unreleased: civil3d-mcp-unified
 
+> Tested only with Autodesk Civil 3D 2027 (English), build 13.9.1308 / AutoCAD R26.0.118, .NET 10.0.12,
+> on Windows 11. Not tested with any other Civil 3D version, update, language or build, or with plain AutoCAD.
+
+### Release packaging and AI connection control
+
+- `npm run package:release` builds one zip: the Civil 3D plugin as an Autodesk auto-load bundle with a
+  one-click installer, the Claude Desktop `.mcpb`, the MCP server for other clients, and `INSTALL.md`.
+  It fails if any file contains the builder's user name or a user-profile path.
+- The AI connection is opt-in per Civil 3D session: loading the plugin no longer starts the listener.
+  Turn it on from the new **Civil 3D MCP** ribbon tab (ON/OFF toggle with a green/red status line) or
+  `C3DMCPSTART`. `CIVIL3D_MCP_AUTOSTART=true` restores the old behavior.
+- Local build paths are no longer embedded in the plugin DLL/PDB.
+
 ### Civil 3D 2027
 
 - Retargeted the plugin to `net10.0-windows`, as AutoCAD 2027 requires. 2025 and 2026

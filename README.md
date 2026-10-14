@@ -46,6 +46,12 @@ So the AI has three ways to get work done, from safest to most flexible:
 When a piece of C# proves useful, the AI can save it as a **named, parameterized
 script** that it, or you through `MCPRUN`, can rerun later.
 
+> [!IMPORTANT]
+> **Tested only with Autodesk Civil 3D 2027 (English), Civil 3D build 13.9.1308 / AutoCAD R26.0.118,
+> .NET runtime 10.0.12, on Windows 11.** It has not been tested with any other Civil 3D version, update,
+> language pack or build, or with plain AutoCAD. Civil 3D 2026 and earlier can't load it (they use .NET 8).
+> If you run it elsewhere, try it on a copy of a drawing first, and please report what you find.
+
 ```text
 MCP client  <-- stdio ----------->  civil3d-mcp (Node.js)
 HTTP client <-- HTTP :3000 ------>  civil3d-mcp (Node.js)
@@ -414,7 +420,7 @@ active. Nothing in Node.js touches the drawing directly.
 | Component | Version |
 |---|---|
 | Node.js | 18+ |
-| Civil 3D | 2027 (AutoCAD 2027 requires .NET 10 plugins; 2025/2026 builds will not load) |
+| Civil 3D | 2027 (AutoCAD 2027 requires .NET 10 plugins; 2025/2026 builds will not load). Tested only on 2027 English build 13.9.1308 |
 | .NET SDK | 10.0 |
 | Civil 3D API refs | Licensed local installation or untracked reference directory |
 | Visual Studio | 2026 (optional; VS 2022 cannot target AutoCAD 2027) |
@@ -1039,7 +1045,7 @@ one or more operations; alias rows show an em dash in the **Operations** column.
 | 2024 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2025 | Not currently validated | Requires a separate compatibility review and a build against matching licensed assemblies. |
 | 2026 | Validated upstream (Sacred-G/Civil3D-mcp) | This fork targets .NET 10, so 2026 needs the upstream .NET 8 build. |
-| 2027 | Target of this fork | Builds against the 2027 install by default. Live-tested on Civil 3D 2027: code execution, saved scripts, `MCPRUN`, `acad_command`, undo grouping, read context, and view following. The upstream fixed tools haven't been fully re-validated on 2027 yet; report issues with your plugin log. |
+| 2027 | Target of this fork | Builds against the 2027 install by default. Live-tested **only** on Civil 3D 2027 English, build 13.9.1308 (AutoCAD R26.0.118, .NET 10.0.12, Windows 11): code execution, saved scripts, `MCPRUN`, `acad_command`, undo grouping, read context, and view following. Other 2027 updates, languages and builds are untested. The upstream fixed tools haven't been fully re-validated on 2027 yet; report issues with your plugin log. |
 
 For startup-suite and autoload registry details, use the version-specific guidance in [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md).
 
