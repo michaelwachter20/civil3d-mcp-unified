@@ -223,14 +223,19 @@ public static class ScriptCommands
   public static Task<object?> ScriptDeleteAsync(JsonObject? parameters)
   {
     var name = ScriptLibrary.NormalizeName(PluginRuntime.GetRequiredString(parameters, "name"));
-    var deleted = ScriptLibrary.Delete(name);
-    if (!deleted)
+    var archivedTo = ScriptLibrary.Delete(name);
+    if (archivedTo == null)
     {
       throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Saved script '{name}' was not found.");
     }
 
-    PluginLog.Info("Script", $"deleted script '{name}'");
-    return Task.FromResult<object?>(new Dictionary<string, object?> { ["success"] = true, ["deleted"] = name });
+    PluginLog.Info("Script", $"retired script '{name}' to the archive");
+    return Task.FromResult<object?>(new Dictionary<string, object?>
+    {
+      ["success"] = true,
+      ["deleted"] = name,
+      ["archivedTo"] = archivedTo,
+    });
   }
 
   private static Dictionary<string, object?> Describe(ScriptRunResult run, string mode, string? scriptName)

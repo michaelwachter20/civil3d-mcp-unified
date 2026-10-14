@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
-import { listSkills, readSkill, searchSkills } from "../skillsLibrary.js";
+import {
+  appendVersionSection, listSkills, readSkill, retireSkill, searchSkills, writeSkill, type SkillParameter,
+} from "../skillsLibrary.js";
+import {
+  addPreference, currentRelease, lessonsRelevantTo, listPreferences, preferencesFile, recordLesson, removeLesson,
+  removePreference, searchLessons, updatePreference,
+} from "../knowledgeBase.js";
 
 /**
  * Code execution domain: Roslyn C# scripts with full AutoCAD + Civil 3D .NET
@@ -44,6 +50,30 @@ const CommandArgs = z.object({ action: z.literal("command"), command: CommandSch
 const SkillsListArgs = z.object({ action: z.literal("skills_list"), category: z.string().optional() });
 const SkillsSearchArgs = z.object({ action: z.literal("skills_search"), query: z.string().min(1) });
 const SkillsReadArgs = z.object({ action: z.literal("skills_read"), skillName: z.string().min(1) });
+const SkillParameterSchema = z.object({
+  name: z.string().min(1).max(64),
+  type: z.string().max(32).default("string"),
+  required: z.boolean().default(false),
+  description: z.string().max(300).optional(),
+});
+const SkillsWriteArgs = z.object({
+  action: z.literal("skills_write"),
+  skillName: z.string().min(1).max(64),
+  category: z.string().max(64).optional(),
+  description: z.string().min(1).max(500),
+  content: z.string().min(1).max(200_000),
+  requiresWrite: z.boolean().optional(),
+  parameters: z.array(SkillParameterSchema).max(30).optional(),
+});
+const SkillsAppendArgs = z.object({ action: z.literal("skills_append_version_section"), skillName: z.string().min(1).max(64), content: z.string().min(1).max(100_000) });
+const SkillsRetireArgs = z.object({ action: z.literal("skills_retire"), skillName: z.string().min(1).max(64) });
+const PreferencesListArgs = z.object({ action: z.literal("preferences_list") });
+const PreferencesAddArgs = z.object({ action: z.literal("preferences_add"), rule: z.string().min(1).max(1_000) });
+const PreferencesUpdateArgs = z.object({ action: z.literal("preferences_update"), id: z.string().min(1), rule: z.string().min(1).max(1_000) });
+const PreferencesRemoveArgs = z.object({ action: z.literal("preferences_remove"), id: z.string().min(1) });
+const MemoryRecordArgs = z.object({ action: z.literal("memory_record"), lesson: z.string().min(1).max(2_000), topics: z.array(z.string().min(1).max(120)).min(1).max(12) });
+const MemorySearchArgs = z.object({ action: z.literal("memory_search"), query: z.string().optional() });
+const MemoryRemoveArgs = z.object({ action: z.literal("memory_remove"), id: z.string().min(1) });
 const ScriptSaveArgs = z.object({
   action: z.literal("script_save"),
   name: ScriptNameSchema,
@@ -57,6 +87,17 @@ const ScriptListArgs = z.object({ action: z.literal("script_list"), query: z.str
 const ScriptGetArgs = z.object({ action: z.literal("script_get"), name: ScriptNameSchema });
 const ScriptRunArgs = z.object({ action: z.literal("script_run"), name: ScriptNameSchema, args: ScriptArgsSchema.optional() });
 const ScriptDeleteArgs = z.object({ action: z.literal("script_delete"), name: ScriptNameSchema });
+
+/** Adds lessons whose topics appear in the code, so known pitfalls surface right where they matter. */
+async function withLessons(code: string, result: unknown) {
+  try {
+    const lessons = lessonsRelevantTo(code, await currentRelease());
+    if (lessons.length && result && typeof result === "object") return { ...(result as object), relatedLessons: lessons };
+  } catch {
+    // Lessons are advice; never fail the run because of them.
+  }
+  return result;
+}
 
 const sendCommand = (method: string, params: Record<string, unknown>) =>
   withApplicationConnection(async (appClient) => await appClient.sendCommand(method, params));
@@ -83,12 +124,12 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
     execute: {
       action: "execute", inputSchema: ExecuteArgs, responseSchema: GenericResponseSchema,
       capabilities: ["create", "edit"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["executeCode"],
-      execute: async (args) => await sendCommand("executeCode", { code: args.code, args: args.args ?? {}, description: args.description ?? null }),
+      execute: async (args) => withLessons(args.code as string, await sendCommand("executeCode", { code: args.code, args: args.args ?? {}, description: args.description ?? null })),
     },
     query: {
       action: "query", inputSchema: QueryArgs, responseSchema: GenericResponseSchema,
       capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["queryCode"],
-      execute: async (args) => await sendCommand("queryCode", { code: args.code, args: args.args ?? {}, description: args.description ?? null }),
+      execute: async (args) => withLessons(args.code as string, await sendCommand("queryCode", { code: args.code, args: args.args ?? {}, description: args.description ?? null })),
     },
     compile: {
       action: "compile", inputSchema: CompileArgs, responseSchema: GenericResponseSchema,
@@ -108,17 +149,81 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
     skills_list: {
       action: "skills_list", inputSchema: SkillsListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
-      execute: async (args) => listSkills(args.category as string | undefined),
+      execute: async (args) => listSkills(args.category as string | undefined, await currentRelease()),
     },
     skills_search: {
       action: "skills_search", inputSchema: SkillsSearchArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
-      execute: async (args) => searchSkills(args.query as string),
+      execute: async (args) => searchSkills(args.query as string, await currentRelease()),
     },
     skills_read: {
       action: "skills_read", inputSchema: SkillsReadArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
-      execute: async (args) => readSkill(args.skillName as string),
+      execute: async (args) => {
+        const release = await currentRelease();
+        const skill = readSkill(args.skillName as string, release);
+        const lessons = lessonsRelevantTo(`${skill.name} ${skill.content}`, release);
+        return lessons.length ? { ...skill, relatedLessons: lessons } : skill;
+      },
+    },
+    // Learning actions only change the user's knowledge-base files (never the drawing), so they don't use the
+    // drawing approval flow; the tool descriptions tell the assistant to ask the user first.
+    skills_write: {
+      action: "skills_write", inputSchema: SkillsWriteArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => writeSkill({
+        name: args.skillName as string,
+        category: args.category as string | undefined,
+        description: args.description as string,
+        content: args.content as string,
+        requiresWrite: args.requiresWrite as boolean | undefined,
+        parameters: args.parameters as SkillParameter[] | undefined,
+      }, await currentRelease()),
+    },
+    skills_append_version_section: {
+      action: "skills_append_version_section", inputSchema: SkillsAppendArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: false,
+      execute: async (args) => appendVersionSection(args.skillName as string, args.content as string, await currentRelease()),
+    },
+    skills_retire: {
+      action: "skills_retire", inputSchema: SkillsRetireArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => retireSkill(args.skillName as string),
+    },
+    preferences_list: {
+      action: "preferences_list", inputSchema: PreferencesListArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async () => ({ path: preferencesFile(), preferences: listPreferences() }),
+    },
+    preferences_add: {
+      action: "preferences_add", inputSchema: PreferencesAddArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => addPreference(args.rule as string),
+    },
+    preferences_update: {
+      action: "preferences_update", inputSchema: PreferencesUpdateArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => updatePreference(args.id as string, args.rule as string),
+    },
+    preferences_remove: {
+      action: "preferences_remove", inputSchema: PreferencesRemoveArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => removePreference(args.id as string),
+    },
+    memory_record: {
+      action: "memory_record", inputSchema: MemoryRecordArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => recordLesson(args.lesson as string, args.topics as string[], await currentRelease()),
+    },
+    memory_search: {
+      action: "memory_search", inputSchema: MemorySearchArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => searchLessons(args.query as string | undefined, await currentRelease()),
+    },
+    memory_remove: {
+      action: "memory_remove", inputSchema: MemoryRemoveArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => removeLesson(args.id as string, await currentRelease()),
     },
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
@@ -198,20 +303,70 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
     {
       toolName: "civil3d_skills",
-      displayName: "Civil 3D Code Skills",
+      displayName: "Civil 3D Skills",
       description:
-        "Browses the skills library: documented, proven C# templates for Civil 3D/AutoCAD tasks, with the rules and pitfalls learned on real drawings. " +
-        "Search it BEFORE writing new code for civil3d_execute/civil3d_query. " +
-        "action=list (optional category), search (query), or read (skillName) to get the full template, then adapt it for civil3d_query or civil3d_execute.",
+        "Verified, step-by-step recipes for Civil 3D work: when to use each one, the user's rules, the pitfalls found on real drawings, " +
+        "and the C# script. At the start of each chat read basics 'working_safely_in_civil3d'. Search BEFORE writing new code for " +
+        "civil3d_execute/civil3d_query. Read: action=list (optional category), search (query), read (skillName). " +
+        "Learn (the user's library, survives releases; add, never delete): write (skillName, description, content = markdown with " +
+        "when-to-use, rules, pitfalls and a ```csharp block; optional category, requiresWrite, parameters) creates or improves a skill " +
+        "verified on the running Civil 3D release (the previous version is archived; writing a built-in skill's name saves the user's version, " +
+        "which then replaces it); append_version_section (skillName, content) adds what's different on this release to a skill verified on another " +
+        "release (overwriting such a skill is refused); retire (skillName) archives a user skill. " +
+        "Ask the user before learning; offer it when a multi-step task worked and the user is happy. Learning never changes the drawing.",
       inputShape: {
-        action: z.enum(["list", "search", "read"]),
+        action: z.enum(["list", "search", "read", "write", "append_version_section", "retire"]),
         category: z.string().optional(),
         query: z.string().optional(),
         skillName: z.string().optional(),
+        description: z.string().optional(),
+        content: z.string().optional(),
+        requiresWrite: z.boolean().optional(),
+        parameters: z.array(SkillParameterSchema).optional(),
       },
-      supportedActions: ["skills_list", "skills_search", "skills_read"],
+      supportedActions: ["skills_list", "skills_search", "skills_read", "skills_write", "skills_append_version_section", "skills_retire"],
       resolveAction: (rawArgs) => {
         const action = `skills_${String(rawArgs.action ?? "")}`;
+        return { action, args: { ...rawArgs, action } };
+      },
+    },
+    {
+      toolName: "civil3d_preferences",
+      displayName: "Civil 3D Preferences",
+      description:
+        "The user's standing rules (e.g. 'we plot at 1\" = 30\''; 'never move COGO points'; 'hide group is Secondary Filter'). They are " +
+        "included in the instructions every chat receives. action=list; add (rule) when the user states a standing rule or standard; " +
+        "update (id, rule); remove (id) when the user retracts one. Ask before adding or changing.",
+      inputShape: {
+        action: z.enum(["list", "add", "update", "remove"]),
+        rule: z.string().optional(),
+        id: z.string().optional(),
+      },
+      supportedActions: ["preferences_list", "preferences_add", "preferences_update", "preferences_remove"],
+      resolveAction: (rawArgs) => {
+        const action = `preferences_${String(rawArgs.action ?? "")}`;
+        return { action, args: { ...rawArgs, action } };
+      },
+    },
+    {
+      toolName: "civil3d_memory",
+      displayName: "Civil 3D Lessons",
+      description:
+        "Lessons: short gotchas and facts learned while working (e.g. 'setting CogoPoint.LabelLocation on a dragged label is applied " +
+        "relative to the old drag; call ResetLabelLocation first'). Each is stamped with the Civil 3D release and tagged with topics " +
+        "(API names, tools, subjects); matching lessons are returned automatically with civil3d_execute/civil3d_query results and skill " +
+        "reads. action=record (lesson, topics) right after you discover something non-obvious; search (query, optional); remove (id) only " +
+        "for a wrong lesson from the running release (lessons from other releases and built-in lessons are kept).",
+      inputShape: {
+        action: z.enum(["record", "search", "remove"]),
+        lesson: z.string().optional(),
+        topics: z.array(z.string()).optional(),
+        query: z.string().optional(),
+        id: z.string().optional(),
+      },
+      supportedActions: ["memory_record", "memory_search", "memory_remove"],
+      resolveAction: (rawArgs) => {
+        const action = `memory_${String(rawArgs.action ?? "")}`;
         return { action, args: { ...rawArgs, action } };
       },
     },
@@ -224,7 +379,8 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "list (optional query), get (name, returns code), run (name, args), delete (name), compile (code, mode — check code without running), " +
         "status (scripts folder, sandbox, timeout). Save a script once a civil3d_execute/civil3d_query snippet works and the task is likely to recur; " +
         "search with action=list before writing new code. Users can also run saved scripts in Civil 3D by typing MCPRUN. " +
-        "save, run and delete are protected actions (approval flow).",
+        "Nothing is lost: save with overwrite=true archives the previous version (scripts/_archive) and bumps its version, and delete " +
+        "retires the script to the archive. save, run and delete are protected actions (approval flow).",
       inputShape: {
         action: z.enum(["save", "list", "get", "run", "delete", "compile", "status"]),
         name: z.string().optional(),

@@ -20,7 +20,9 @@ internal sealed record SavedScript(
   IReadOnlyList<ScriptParameter> Parameters,
   string Code,
   string Path,
-  DateTime UpdatedUtc)
+  DateTime UpdatedUtc,
+  int Version = 1,
+  string? ArchivedPrevious = null)
 {
   public bool IsWrite => Mode == "write";
 }
@@ -156,9 +158,35 @@ internal static class ScriptLibrary
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A description is required so the script can be found and reused later.");
     }
 
-    var content = Serialize(name, description.Trim(), mode, parameters, code);
+    // Add, never delete: replacing a script keeps the previous version in _archive.
+    var existingPath = FileBoundary.ResolveFileWithinDirectory(Directory, name + Extension, createDirectory: false);
+    var version = 1;
+    string? archived = null;
+    if (File.Exists(existingPath))
+    {
+      if (!overwrite)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.CONFLICT",
+          $"Saved script '{name}' already exists. Set overwrite=true to replace it (the current version is archived).");
+      }
+
+      version = (TryLoad(existingPath)?.Version ?? 1) + 1;
+      archived = Archive(existingPath, name, "replaced");
+    }
+
+    var content = Serialize(name, description.Trim(), mode, parameters, code, version);
     var path = FileBoundary.WriteFileWithinDirectoryAtomic(Directory, name + Extension, content, overwrite);
-    return new SavedScript(name, description.Trim(), mode, parameters, code, path, DateTime.UtcNow);
+    return new SavedScript(name, description.Trim(), mode, parameters, code, path, DateTime.UtcNow, version, archived);
+  }
+
+  public static string ArchiveDirectory => System.IO.Path.Combine(Directory, "_archive");
+
+  private static string Archive(string path, string name, string reason)
+  {
+    var stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
+    return FileBoundary.WriteFileWithinDirectoryAtomic(
+      ArchiveDirectory, $"{name}.{stamp}.{reason}{Extension}", File.ReadAllText(path), overwrite: true);
   }
 
   public static IReadOnlyList<SavedScript> List()
@@ -199,10 +227,19 @@ internal static class ScriptLibrary
       $"'{path}' is not a valid saved script (missing '{Marker}' header).");
   }
 
-  public static bool Delete(string rawName)
+  /// <summary>Retires a script: it is copied to _archive, then removed from the active library.</summary>
+  public static string? Delete(string rawName)
   {
     var name = NormalizeName(rawName);
-    return FileBoundary.DeleteFileWithinDirectory(Directory, name + Extension);
+    var path = FileBoundary.ResolveFileWithinDirectory(Directory, name + Extension, createDirectory: false);
+    if (!File.Exists(path))
+    {
+      return null;
+    }
+
+    var archived = Archive(path, name, "retired");
+    FileBoundary.DeleteFileWithinDirectory(Directory, name + Extension);
+    return archived;
   }
 
   /// <summary>Merges defaults, enforces required parameters, and coerces simple types.</summary>
@@ -259,9 +296,15 @@ internal static class ScriptLibrary
         ["default"] = parameter.Default?.DeepClone(),
         ["description"] = parameter.Description,
       }).ToList(),
+      ["version"] = script.Version,
       ["updatedUtc"] = script.UpdatedUtc.ToString("o", CultureInfo.InvariantCulture),
       ["path"] = script.Path,
     };
+
+    if (script.ArchivedPrevious != null)
+    {
+      summary["previousVersionArchived"] = script.ArchivedPrevious;
+    }
 
     if (includeCode)
     {
@@ -322,7 +365,7 @@ internal static class ScriptLibrary
     }
   }
 
-  private static string Serialize(string name, string description, string mode, IReadOnlyList<ScriptParameter> parameters, string code)
+  private static string Serialize(string name, string description, string mode, IReadOnlyList<ScriptParameter> parameters, string code, int version)
   {
     var parameterJson = new JsonArray(parameters.Select(parameter =>
     {
@@ -343,6 +386,7 @@ internal static class ScriptLibrary
     builder.AppendLine($"// description: {SingleLine(description)}");
     builder.AppendLine($"// mode: {mode}");
     builder.AppendLine($"// parameters: {parameterJson.ToJsonString()}");
+    builder.AppendLine($"// script_version: {version}");
     builder.AppendLine($"// updated: {DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)}");
     builder.AppendLine(HeaderEnd);
     builder.Append(code.Replace("\r\n", "\n").TrimEnd()).Append('\n');
@@ -390,7 +434,10 @@ internal static class ScriptLibrary
         parameters,
         code,
         path,
-        File.GetLastWriteTimeUtc(path));
+        File.GetLastWriteTimeUtc(path),
+        fields.TryGetValue("script_version", out var v) && int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
+          ? parsed
+          : 1);
     }
     catch (System.Exception exception) when (exception is IOException or JsonException or JsonRpcDispatchException or UnauthorizedAccessException or InvalidOperationException or FormatException)
     {

@@ -106,6 +106,38 @@ var result = Editor.SelectAll(filter);
 return new { count = result.Status == PromptStatus.OK ? result.Value.Count : 0 };
 ```
 
+### Learning on the job
+
+The assistant keeps what it learns in plain files on your PC (`Documents\Civil3DMcp` by default), so it improves
+with use instead of waiting for a new release:
+
+| What | Where | How it grows |
+| --- | --- | --- |
+| **Preferences**: your standing rules and standards ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
+| **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
+| **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
+| **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
+
+- **Every new chat starts informed.** Your preferences and the list of your own skills are sent with the server's
+  instructions, and the assistant first reads the built-in `working_safely_in_civil3d` skill.
+- **Lessons find themselves.** When the assistant runs code with `civil3d_execute` or `civil3d_query`, lessons whose topics
+  appear in that code come back with the result (`relatedLessons`), and reading a skill returns the lessons related
+  to it. The release ships with a set of seed lessons learned on real drawings.
+- **Add, never delete.** Improving a skill or re-saving a script archives the previous version (`skills\_archive`,
+  `scripts\_archive`), and saved scripts carry a `script_version` that goes up on each save. Retiring a skill or
+  deleting a script moves it to the archive.
+- **Versions are tracked.** Skills record the Civil 3D releases they were verified on (`civil3d_versions`), and lessons
+  record the release they were learned on (the release only, never the licensee name). On a different release the
+  assistant gets a note to verify before trusting them. A skill verified on another release is never overwritten:
+  the new release's steps are added as their own section (`append_version_section`).
+- **Your versions win.** A skill you write with the same name as a built-in one replaces it for you; retiring yours
+  brings the built-in one back. Updates never overwrite your files.
+- The assistant **asks before** saving, changing or removing anything. Learning only changes these files, never a
+  drawing, so it doesn't use the drawing approval flow (removing a preference or lesson still asks for approval).
+- Everything is plain text: open the files in Notepad to review or edit them.
+- To share with a team, point `CIVIL3D_KNOWLEDGE_DIR` (and the plugin's `CIVIL3D_SCRIPTS_DIR`) at a shared folder.
+  Scripts run code inside Civil 3D, so only people you trust should be able to write there.
+
 ### Saved scripts for repetitive tasks
 
 When a snippet works and the task is likely to come up again, the AI saves it with
@@ -1074,7 +1106,10 @@ The Node MCP server reads the following variables at startup. All are optional; 
 |---|---|---|
 | `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 39-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
-| `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of extra or replacement `*.skill.md` C# templates for `civil3d_skills`. |
+| `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
+| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |
+| `CIVIL3D_USER_SKILLS_DIR` | `<knowledge dir>\skills` | Optional override for the learned-skills folder only. |
+| `CIVIL3D_RELEASE` | asked from the plugin, else `2027` | Civil 3D release used to stamp skills and lessons when Civil 3D can't be reached. |
 
 ### Code execution (set where Civil 3D is launched)
 

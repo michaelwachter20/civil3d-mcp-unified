@@ -78,7 +78,11 @@ With a drawing open in Civil 3D, ask your AI app to run `civil3d_health`, or som
 ## Good to know
 
 - Changes that edit the drawing ask for approval first, and each one is a single `UNDO` step.
-- Saved scripts live in `Documents\Civil3DMcp\scripts` and can be run in Civil 3D with `MCPRUN`.
+- The assistant learns as you work. With your OK it saves, under `Documents\Civil3DMcp`: your preferences and rules
+  (`preferences.json`, loaded into every new chat), lessons about the Civil 3D API (`memory\lessons.jsonl`), skills
+  (`skills\`) and scripts (`scripts\`, runnable in Civil 3D with `MCPRUN`). Nothing is thrown away: older versions of
+  skills and scripts go to an `_archive` folder. These are plain files you can open and edit, and updates never
+  overwrite them.
 - The plugin log is at `%LOCALAPPDATA%\Civil3DMcpPlugin\plugin.log`.
 - If you also `NETLOAD` the plugin from another folder, only one copy can use port 8080. Use one or the other.
 - Full documentation: {{URL}}

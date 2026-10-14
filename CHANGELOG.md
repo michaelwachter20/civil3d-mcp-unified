@@ -5,6 +5,20 @@
 > Tested only with Autodesk Civil 3D 2027 (English), build 13.9.1308 / AutoCAD R26.0.118, .NET 10.0.12,
 > on Windows 11. Not tested with any other Civil 3D version, update, language or build, or with plain AutoCAD.
 
+### Knowledge base that grows with use
+
+- New tools `civil3d_preferences` (standing user rules, sent with every chat's instructions) and
+  `civil3d_memory` (lessons tagged with API topics). Lessons that match the code are returned with
+  `civil3d_execute` / `civil3d_query` results and with `civil3d_skills action=read`. The release includes seed lessons.
+- `civil3d_skills` can now `write`, `append_version_section` and `retire` skills. Skills record the Civil 3D
+  releases they were verified on, replaced versions are archived, and a skill from another release gets a new
+  section instead of being overwritten.
+- Saved scripts carry a `script_version`. Re-saving archives the previous version to `scripts\_archive`, and
+  deleting retires the script to the archive.
+- New built-in skill `working_safely_in_civil3d`, read at the start of each chat.
+- The knowledge base lives in `CIVIL3D_KNOWLEDGE_DIR` (default `Documents\Civil3DMcp`). This replaces
+  `CIVIL3D_KNOWLEDGE_FILE`.
+
 ### Release packaging and AI connection control
 
 - `npm run package:release` builds one zip: the Civil 3D plugin as an Autodesk auto-load bundle with a
