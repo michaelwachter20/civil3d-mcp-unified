@@ -64,13 +64,16 @@ civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 AP
 - **Code execution**: `civil3d_execute` (write, approval-gated), `civil3d_query`
   (read-only), `acad_command`, `civil3d_skills`, and `civil3d_script`. See
   [Code Execution and Saved Scripts](#code-execution-and-saved-scripts).
+- **A knowledge base that grows with use**: `civil3d_preferences` (your standing rules), `civil3d_memory`
+  (lessons about the API), and skills and scripts the assistant can learn and version. See
+  [Learning on the job](#learning-on-the-job).
 - **Saved scripts** stored as editable `.csx` files, runnable by the AI or by you with `MCPRUN`.
 - **One AI change = one undo**: each write is a single `UNDO` step, and reads
   never add steps to your undo history.
 - **The view follows the work**: after a change, Civil 3D pans to show it, so
   nothing happens off screen.
 
-Everything else from upstream still applies: the compact tool surface (39 public
+Everything else from upstream still applies: the compact tool surface (41 public
 tools by default), local Autodesk help search (`civil3d_help`), native workflow
 handlers, Claude Code and Claude Desktop installers, and the generated inventory in
 [`docs/tools.generated.md`](./docs/tools.generated.md).
@@ -90,7 +93,9 @@ this repo's serialized host queue, approval flow, and logging.
 | `civil3d_query` | Runs **read-only** C#: the transaction is always rolled back, and commands, saves, commits, and file writes are blocked. | Not required |
 | `civil3d_execute` | Runs C# with **write** access. Commits on success, rolls back on any exception, and groups all changes into **one undo step**. | Required |
 | `acad_command` | Runs a native command with its prompt responses, e.g. `["_.-LAYER","_M","C-ROAD",""]`. | Required |
-| `civil3d_skills` | Lists, searches, and reads documented C# templates in [`skills/`](./skills). | Not required |
+| `civil3d_skills` | Lists, searches, and reads skills (built-in ones in [`skills/`](./skills), plus the user's own); `write`, `append_version_section` and `retire` let the assistant learn new ones. | Not required |
+| `civil3d_preferences` | `list` / `add` / `update` / `remove` the user's standing rules, which are sent with every new chat. | remove |
+| `civil3d_memory` | `record` / `search` / `remove` lessons tagged with API topics; matching lessons come back with code results. | remove |
 | `civil3d_script` | `save` / `list` / `get` / `run` / `delete` reusable scripts, `compile` to check code without running it, and `status`. | save, run, delete |
 
 **Script globals:** `Document`, `CivilDoc`, `Database`, `Transaction`, `Editor`,
@@ -192,7 +197,10 @@ it on there.
   behind other windows or minimized.
 - **It acts on the active drawing** of the Civil 3D session that loaded the plugin.
   If you switch drawings while a request is queued, the request fails instead of
-  writing to the wrong file. Only one Civil 3D session can own port 8080.
+  writing to the wrong file.
+- **One Civil 3D window at a time.** The connection holds port 8080 exclusively. With several Civil 3D windows
+  open, only one can have it on; turning it on in another reports that the port is in use. Turn it off in the
+  first window, then on in the one you want (its status turns green).
 - **One change = one undo.** Each write from the AI (a fixed tool, `civil3d_execute`,
   or a saved script) is recorded as one undo group, so `UNDO 1` reverts exactly that change.
 - **Reads leave no trace.** Read-only requests run on Civil 3D's main thread
@@ -314,7 +322,7 @@ user-profile path.
 ## Features
 
 - **Live C# execution and saved scripts** covering effectively the entire AutoCAD and Civil 3D .NET API
-- **Compact default MCP surface** with 39 public tools; every registered
+- **Compact default MCP surface** with 41 public tools; every registered
   route remains internally callable or available as an opt-in alias
 - **Local Autodesk help in chat** — version-matched topics, screenshots,
   diagrams, citations, and playable Civil 3D tutorial videos
@@ -356,7 +364,7 @@ names for actions already available through a canonical domain tool.
 
 | Surface | Exposed tools | How to call an operation |
 |---|---:|---|
-| Default MCP client | 39 | Call a canonical domain tool and provide `action`. |
+| Default MCP client | 41 | Call a canonical domain tool and provide `action`. |
 | MCP client with aliases enabled | 200+ | Use either canonical tools or specialized alias names. |
 | HTTP `/execute` and orchestration | 200+ | All registered routes remain internally callable in either mode. |
 
@@ -1094,7 +1102,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | Variable | Default | Purpose |
 |---|---|---|
 | `CIVIL3D_HOST` | `localhost` | Host the Civil 3D plugin's JSON-RPC TCP server binds to. |
-| `CIVIL3D_PORT` | `8080` | TCP port the plugin listens on (see `PluginRuntime.Port`). |
+| `CIVIL3D_PORT` | `8080` | TCP port the MCP server connects to. The plugin always listens on 8080 (`PluginRuntime.Port`). |
 | `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Milliseconds the server waits for a TCP connection to the plugin before giving up. |
 | `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Milliseconds any single JSON-RPC command may run before the Node side rejects the call. Increase for heavy corridor rebuilds. |
 | `CIVIL3D_MAX_RESPONSE_BYTES` | `8388608` | Maximum buffered response size accepted from the Civil 3D plugin. |
@@ -1104,7 +1112,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 39-tool surface. |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 41-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
 | `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |

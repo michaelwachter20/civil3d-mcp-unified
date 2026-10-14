@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: civil3d-mcp-unified
+## v2.0.0 — 2026-10-14: civil3d-mcp-unified
 
 > Tested only with Autodesk Civil 3D 2027 (English), build 13.9.1308 / AutoCAD R26.0.118, .NET 10.0.12,
 > on Windows 11. Not tested with any other Civil 3D version, update, language or build, or with plain AutoCAD.
@@ -27,6 +27,8 @@
 - The AI connection is opt-in per Civil 3D session: loading the plugin no longer starts the listener.
   Turn it on from the new **Civil 3D MCP** ribbon tab (ON/OFF toggle with a green/red status line) or
   `C3DMCPSTART`. `CIVIL3D_MCP_AUTOSTART=true` restores the old behavior.
+- The listener claims port 8080 exclusively. Only one Civil 3D window can have the AI connection on; turning it
+  on in a second window reports that the port is in use and leaves the first one working.
 - Local build paths are no longer embedded in the plugin DLL/PDB.
 
 ### Civil 3D 2027

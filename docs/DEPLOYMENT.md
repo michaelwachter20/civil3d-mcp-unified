@@ -154,7 +154,7 @@ The package is configured for npm publishing as-is. The `files` field in `packag
 ```json
 {
   "name": "civil3d-mcp",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "main": "build/index.js",
   "bin": {
     "civil3d-mcp": "./build/index.js"
@@ -255,7 +255,7 @@ All variables are optional; defaults work for a standard local setup.
 | `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Connection timeout in milliseconds |
 | `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Timeout for individual command execution (ms) |
 | `CIVIL3D_MAX_RESPONSE_BYTES` | `8388608` | Maximum plugin response buffered by Node.js |
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 39-tool surface |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 41-tool surface |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only for isolated disposable testing |
 | `CIVIL3D_HELP_ROOT` | Auto-discovered | Optional path to an Autodesk Civil 3D Offline Help `Help` folder |
 | `CIVIL3D_HELP_VERSION` | `2027` | Preferred installed offline-help version |
@@ -363,7 +363,7 @@ Expected response when Civil 3D is connected:
 ```json
 {
   "connected": true,
-  "pluginVersion": "1.2.1.0",
+  "pluginVersion": "2.0.0.0",
   "drawingLoaded": true,
   "queueDepth": 0,
   "queueCapacity": 64,

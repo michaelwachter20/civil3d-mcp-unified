@@ -24,7 +24,8 @@ public sealed class RpcTcpServer
 
   public void Start()
   {
-    _listener = new TcpListener(IPAddress.Loopback, _port);
+    // Exclusive: no other process (or second Civil 3D window) can bind or share this port while we hold it.
+    _listener = new TcpListener(IPAddress.Loopback, _port) { ExclusiveAddressUse = true };
     _listener.Start();
     _acceptLoop = Task.Run(AcceptLoopAsync, _cts.Token);
   }

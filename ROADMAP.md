@@ -311,7 +311,7 @@ Status: Complete and live-tested against Civil 3D 2027 on 2026-10-12.
 - Plugin targets `net10.0-windows` (required by AutoCAD/Civil 3D 2027) and
   resolves each Autodesk assembly from the 2027 install or a configured folder.
 - Roslyn code execution: `civil3d_query` (read-only), `civil3d_execute`
-  (approval-gated), `acad_command`, `civil3d_skills`, and `civil3d_script`
+  (approval-gated), `acad_command`, `civil3d_skills`, `civil3d_preferences`, `civil3d_memory`, and `civil3d_script`
   (saved, parameterized `.csx` scripts), plus `MCPRUN` / `MCPSCRIPTS` in Civil 3D.
 - Script runs use the existing host gate, approval policy, logging, and
   `FileBoundary`. `startJob` stays allowlisted so code can't bypass approval.

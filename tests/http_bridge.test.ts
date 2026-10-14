@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
-// ─── Hoisted mocks ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Hoisted mocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const {
   hasToolHandlerMock,
@@ -30,7 +30,7 @@ import { startHttpBridge } from "../src/httpBridge.js";
 import { Civil3DRpcError } from "../src/utils/SocketClient.js";
 import { currentAbortSignal } from "../src/utils/requestContext.js";
 
-// ─── Test helpers ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Test helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface BridgeHandle {
   server: Server;
@@ -84,7 +84,7 @@ async function request(
   return { status: response.status, body };
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("httpBridge", () => {
   let handle: BridgeHandle | null = null;
@@ -123,7 +123,7 @@ describe("httpBridge", () => {
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
         bridge: "ok",
-        versions: { application: "1.2.1", mcpSdk: expect.any(String), node: expect.any(String) },
+        versions: { application: "2.0.0", mcpSdk: expect.any(String), node: expect.any(String) },
       });
       expect(executeOrchestratorMock).not.toHaveBeenCalled();
     });
