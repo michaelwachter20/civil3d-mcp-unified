@@ -20,6 +20,10 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <!-- Roslyn ships many localized resource folders; English is enough here. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Don't embed this machine's folder paths (which include the Windows user name) in the DLL/PDB. -->
+    <PathMap>$(MSBuildProjectDirectory)=/civil3d-mcp-unified/Civil3D-MCP-Plugin</PathMap>
+    <!-- Source Link would store the local repo path in the PDB; not needed for a plugin. -->
+    <EnableSourceLink>false</EnableSourceLink>
     <Civil3DInstallPath Condition="'$(Civil3DInstallPath)' == ''">C:\Program Files\Autodesk\AutoCAD 2027</Civil3DInstallPath>
     <Civil3DLocalReferencesPath>$(MSBuildThisFileDirectory)..\C_References</Civil3DLocalReferencesPath>
   </PropertyGroup>
