@@ -284,6 +284,13 @@ Maintainers build that zip with `npm run package:release` (needs the .NET 10 SDK
 plugin references). The command refuses to finish if any file contains the builder's user name or a local
 user-profile path.
 
+To publish a release, bump the version (`npm version <x.y.z> --no-git-tag-version`, then `npm run version:sync`),
+add a `## v<x.y.z>` section to `CHANGELOG.md`, commit and push. Then run `npm run release:publish` (add `-- --draft` to
+review it on GitHub first). It runs the tests and builds the zip on your machine, then creates the GitHub Release and
+its tag on your fork, using that CHANGELOG section as the release notes. Nothing is built on GitHub's servers, so
+Autodesk's DLLs never leave your PC. It needs the [GitHub CLI](https://cli.github.com/) (`winget install --id GitHub.cli`,
+then `gh auth login` once).
+
 ### Install from source (Claude Code / development)
 
 1. Clone and build the Node side:
