@@ -1,21 +1,21 @@
 ---
 name: declutter_point_labels
 category: workflows
-description: De-overlap COGO point labels on a layout sheet - drag every label to a clear spot, hide repeat/older shots in a hide point group, never touch the points themselves. Saved script name declutter-labels (undo helper: declutter-labels-undo).
+description: De-overlap COGO point labels on a layout sheet - drag every label to a clear spot, hide repeat/older shots in a hide point group, never touch the points themselves. Suggested saved script name declutter-labels (undo helper declutter-labels-undo).
 requires_write: true
 parameters:
   - name: primary
     type: string
-    required: false
-    description: Display group placed first (default CLSM Display)
+    required: true
+    description: Display point group whose labels are placed first (the material or type that matters most on this sheet)
   - name: secondary
     type: string[]
     required: false
-    description: Display groups placed second (default PFP FFP Display, BASE Display)
+    description: Other display point groups, placed after the primary group
   - name: hideGroup
     type: string
-    required: false
-    description: Point group that hides marker and label (default Secondary Filter)
+    required: true
+    description: Point group whose style override hides marker and label; thinned points are added to its include list
   - name: maxOffsetIn
     type: number
     required: false
@@ -36,33 +36,43 @@ parameters:
 
 ## When to use
 The user has COGO point labels overlapping on a plotted sheet (layout viewport) and wants them dragged apart,
-with dense spots thinned by adding points to a point group whose style override is <none> (e.g. "Secondary Filter").
-Proven on a real Civil 3D 2027 levee drawing (1"=30', viewport twisted -60 deg, ~500 visible labels): ~0.5 s, one undo step.
+with dense spots thinned by adding points to a point group whose style override is `<none>`.
+Proven on a live Civil 3D 2027 drawing (twisted layout viewport, ~500 visible labels): ~0.5 s, one undo step.
 
-## Hard rules (from the user)
+## Hard rules
 - Never explode a point (not even in memory), never move a point, never edit point data. Only label positions
   and the hide group's include list change.
-- Primary type first, then secondary types. Hand-dragged labels have priority to stay but may move if they overlap.
+- Primary group first, then secondary groups. Hand-dragged labels have priority to stay but may move if they overlap.
 - Thinning keeps the newest survey and keeps each type represented nearby.
 
 ## How to run
-1. User opens the layout and activates the viewport (double-click inside it).
-2. Run with dryRun: true (civil3d_query) and report the counts. Then run dryRun: false with civil3d_execute,
-   or save it with civil3d_script (mode write) so the user can run MCPRUN declutter-labels.
-3. Before a real run, record which labels are already dragged and their LabelLocation (the result's estore
-   list covers hand-dragged labels the run moved) so the run can be reverted after UNDO history is gone
-   (see eset_declutter_run).
+1. Ask the user for their point group names: the display groups (`primary`, `secondary`) and the hide group.
+   `civil3d_query` can list the drawing's point groups and their style overrides to help.
+2. The user opens the layout and activates the viewport (double-click inside it).
+3. Run with `dryRun: true` (`civil3d_query`) and report the counts. Then run `dryRun: false` with `civil3d_execute`,
+   or save it with `civil3d_script` (mode write, the user's group names as defaults) so they can run `MCPRUN`.
+4. Keep the run result's `movedNums`, `hiddenNums` and `restore` list: `restore` holds the original
+   `LabelLocation` of every hand-dragged label the run moved, so the run can be reverted after UNDO history
+   is gone (see `reset_declutter_run`).
+
+## Adapting to other drawings
+- Label size is measured for an elevation-only label with 0.075" text. For other label styles, have the user draw a
+  rectangle just around one dragged label and a line from its side to the leader end, read them with
+  `Editor.SelectImplied()`, and set `labelBoxHeightIn`, `labelExtraWidthIn`, `leaderGapIn` and
+  `leaderLandingIn` from the measurements.
+- The survey date is read from layer names containing "yyyy mm dd". Without one, all points rank equally (most
+  crowded first).
 
 ## Civil 3D gotchas this script handles
-- Setting CogoPoint.LabelLocation on an ALREADY-DRAGGED label is applied relative to the old drag. Call
-  ResetLabelLocation() first, then set it, then verify (writesOffTarget must be 0).
+- Setting `CogoPoint.LabelLocation` on an ALREADY-DRAGGED label is applied relative to the old drag. Call
+  `ResetLabelLocation()` first, then set it, then verify (`writesOffTarget` must be 0).
 - Undragged labels are rotated by their label style; dragged ones are horizontal on the sheet. Drag every label
   you place so its geometry is known.
 - Dragged label geometry (measured): 0.083" tall x (text width + 0.006"), centered vertically on the leader end,
   0.025" beyond it on the side away from the point. Leader = point -> elbow -> 0.05" horizontal landing.
 - Ignore labels whose label layer is frozen, off or frozen in the viewport (they block good spots otherwise).
 - Points stacked within a marker width: a leader leaving one unavoidably crosses the other's marker; allow it.
-- CogoPoint.Bounds excludes dragged labels, and Explode returns nothing - don't rely on either.
+- `CogoPoint.Bounds` excludes dragged labels, and `Explode` returns nothing - don't rely on either.
 
 ## Script
 ```csharp
@@ -70,8 +80,9 @@ Proven on a real Civil 3D 2027 levee drawing (1"=30', viewport twisted -60 deg, 
 // LABELS ONLY: never moves, explodes, or edits a point. It sets CogoPoint.LabelLocation (resetting an
 // already-dragged label first) and adds point numbers to the hide group's include list.
 //
-// Pass 1  primary group (CLSM) placed first, newest survey first (date read from layer "NODE yyyy mm dd XXX").
-// Pass 2  secondary groups (FFP, BASE) placed around them.
+// Pass 1  primary display group placed first, newest survey first (survey date read from the point's layer
+//         name when it contains "yyyy mm dd", e.g. "SURVEY 2026 01 15").
+// Pass 2  secondary display groups placed around them.
 // Pass 3  hand-dragged labels move only if they overlap something (never hidden here).
 // Pass 4  stuck labels retry once space has been freed.
 // Every label that isn't hand-dragged gets dragged: default labels are rotated by their style, dragged ones
@@ -79,12 +90,12 @@ Proven on a real Civil 3D 2027 levee drawing (1"=30', viewport twisted -60 deg, 
 // Hiding (hide group): repeat shots (same type within repeatShotIn), then older shots when the same type stays
 // visible within representRadiusIn, and as a last resort when no spot within lastOfTypeMaxIn avoids text and
 // leaders. Leaders may graze a point marker but never cross label text or another leader.
-// Geometry measured on a 1"=30' sheet: dragged label = 0.083" tall x (text width + 0.006"), vertically centered
+// Geometry measured on a plotted sheet: dragged label = 0.083" tall x (text width + 0.006"), vertically centered
 // on the leader end, 0.025" beyond it on the side away from the point; leader = point -> elbow -> 0.05" landing.
-var primary = Args.GetString("primary", "CLSM Display");
-var secondaryGroups = Args.GetStringList("secondary");
-if (secondaryGroups.Count == 0) secondaryGroups = new List<string> { "PFP FFP Display", "BASE Display" };
-var hideGroupName = Args.GetString("hideGroup", "Secondary Filter");
+// Point group names differ per company/template, so they are required inputs.
+var primary = Args.GetString("primary");                // display group whose labels are placed first
+var secondaryGroups = Args.GetStringList("secondary");  // other display groups, placed second (may be empty)
+var hideGroupName = Args.GetString("hideGroup");        // group whose style override hides marker + label
 var maxOffsetIn = Args.GetDouble("maxOffsetIn", 0.30);
 var dryRun = Args.GetBool("dryRun", true);
 
@@ -338,7 +349,7 @@ if (!dryRun) {
   }
 }
 
-string Short(string t) => t.Replace(" Display", "").Replace("PFP ", "");
+string Short(string t) => t.Replace(" Display", "");
 return new {
   dryRun, scale = $"1\" = {mpp:0.##}'", labelsInView = L.Count, skippedInvisible, overlappingBefore,
   overlappingAmongHandDragged = L.Count(l => l.Fixed && Conflicts(l, l.Box, l.Leader, o => true).Any(h => h != l && h.Fixed)),

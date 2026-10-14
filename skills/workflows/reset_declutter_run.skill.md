@@ -18,18 +18,18 @@ parameters:
     description: restore list from the run result (original positions of hand-dragged labels it moved)
   - name: hideGroup
     type: string
-    required: false
-    description: Point group the run added points to (default Secondary Filter)
+    required: true
+    description: Point group the run added points to
 ---
 
 ## When to use
 After a declutter run whose result the user rejects, when UNDO is no longer available. Pass the run result's
-movedNums as moved, hiddenNums as hidden, and its estore list (original LabelLocation of each
-hand-dragged label the run moved) as estore. Labels in estore go back to the user's own spot; all other
+`movedNums` as `moved`, `hiddenNums` as `hidden`, and its `restore` list (original `LabelLocation` of each
+hand-dragged label the run moved) as `restore`. Labels in `restore` go back to the user's own spot; all other
 moved labels are reset to their style default.
 
-Always keep a copy of estore from every run: once a hand-dragged label is reset, its original position is gone.
-Restoring uses reset-then-set, because a new LabelLocation on a dragged label is applied relative to the old drag.
+Always keep a copy of `restore` from every run: once a hand-dragged label is reset, its original position is gone.
+Restoring uses reset-then-set, because a new `LabelLocation` on a dragged label is applied relative to the old drag.
 
 ## Script
 ```csharp
@@ -56,7 +56,7 @@ foreach (var n in moved.Where(n => !restoreNums.Contains(n))) {
   Get<CogoPoint>(id, OpenMode.ForWrite).ResetLabelLocation();
   reset++;
 }
-var sf = CivilDoc.PointGroups.Cast<ObjectId>().Select(id => Get<PointGroup>(id)).First(g => g.Name == Args.GetString("hideGroup", "Secondary Filter"));
+var sf = CivilDoc.PointGroups.Cast<ObjectId>().Select(id => Get<PointGroup>(id)).First(g => g.Name == Args.GetString("hideGroup"));
 var q = (StandardPointGroupQuery)sf.GetQuery();
 var keep = (q.IncludeNumbers ?? "").Split(',').Select(s => s.Trim()).Where(s => s.Length > 0 && !hiddenNums.Contains(s)).ToList();
 q.IncludeNumbers = string.Join(",", keep);
