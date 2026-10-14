@@ -51,7 +51,7 @@ if ((await readdir(path.join(bundle, "Contents"))).some((f) => /^(ac|aec|aecc)\w
   throw new Error("Autodesk assemblies ended up in the bundle; they must never be redistributed.");
 }
 await writeFile(path.join(bundle, "PackageContents.xml"), fill(await readFile(path.join(bundleSource, "PackageContents.xml"), "utf8")));
-for (const file of ["Install-Civil3DPlugin.ps1", "Install-Civil3DPlugin.cmd"]) {
+for (const file of ["Install-Civil3DPlugin.ps1", "Install-Civil3DPlugin.cmd", "Uninstall-Civil3DPlugin.cmd"]) {
   await cp(path.join(bundleSource, file), path.join(stage, file));
 }
 await writeFile(path.join(stage, "INSTALL.md"), fill(await readFile(path.join(bundleSource, "INSTALL.md"), "utf8")));

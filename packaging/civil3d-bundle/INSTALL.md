@@ -8,7 +8,8 @@ Requires **Autodesk Civil 3D 2027** on Windows. Everything below runs locally on
 
 | In this zip | What it is |
 |---|---|
-| `Install-Civil3DPlugin.cmd` | Installs the Civil 3D plugin so it loads automatically |
+| `Install-Civil3DPlugin.cmd` | Installs (or updates) the Civil 3D plugin so it loads automatically |
+| `Uninstall-Civil3DPlugin.cmd` | Removes the plugin again |
 | `Civil3DMcpPlugin.bundle\` | The Civil 3D plugin (Autodesk auto-load bundle) |
 | `civil3d-mcp-{{VERSION}}.mcpb` | One-click install for the **Claude Desktop** app |
 | `mcp-server\` | The same MCP server, for **Claude Code**, Cursor and other MCP clients |
@@ -18,7 +19,8 @@ Requires **Autodesk Civil 3D 2027** on Windows. Everything below runs locally on
 1. Extract the whole zip to a folder (for example `Documents\civil3d-mcp`). Don't run anything from inside the zip.
 2. Close Civil 3D if you're updating an older version of this plugin.
 3. Double-click **`Install-Civil3DPlugin.cmd`**. It copies the plugin to
-   `%APPDATA%\Autodesk\ApplicationPlugins\Civil3DMcpPlugin.bundle`.
+   `%APPDATA%\Autodesk\ApplicationPlugins\Civil3DMcpPlugin.bundle` and adds "Civil 3D MCP plugin" to
+   **Windows Settings → Apps → Installed apps**. No admin rights are needed; it only affects your Windows user.
 4. Start Civil 3D 2027. A **Civil 3D MCP** tab appears on the ribbon; no `NETLOAD` needed. If Civil 3D asks
    whether to load the plugin, choose **Always Load**.
 
@@ -37,7 +39,13 @@ Prefer the old behavior (on as soon as Civil 3D starts)? Set the Windows environ
 Only one Civil 3D window can have the connection on at a time (it uses port 8080). AI tools act on the drawing
 that is active in that window.
 
-To remove the plugin: close Civil 3D and run `Install-Civil3DPlugin.cmd /uninstall` from a command prompt.
+## Uninstalling
+
+Close Civil 3D, then either double-click **`Uninstall-Civil3DPlugin.cmd`**, or go to **Windows Settings → Apps →
+Installed apps → Civil 3D MCP plugin → Uninstall**. This removes the plugin and its Apps entry. Your saved
+scripts (`Documents\Civil3DMcp\scripts`) and the log (`%LOCALAPPDATA%\Civil3DMcpPlugin`) are kept; delete them by
+hand if you no longer want them. To remove the AI side, uninstall the extension in Claude Desktop or run
+`claude mcp remove civil3d-mcp` for Claude Code.
 
 ## 2. Connect your AI app (pick one)
 

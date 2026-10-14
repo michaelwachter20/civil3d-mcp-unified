@@ -228,7 +228,8 @@ its `INSTALL.md`. In short:
 
 1. **Civil 3D plugin:** double-click `Install-Civil3DPlugin.cmd`. It installs the plugin as an Autodesk
    bundle in `%APPDATA%\Autodesk\ApplicationPlugins`, so Civil 3D 2027 loads it automatically (no `NETLOAD`)
-   and shows a **Civil 3D MCP** ribbon tab.
+   and shows a **Civil 3D MCP** ribbon tab. It also appears in **Windows Settings → Apps**; remove it there or
+   with `Uninstall-Civil3DPlugin.cmd` (saved scripts and logs are kept). No admin rights needed.
 2. **AI app:**
    - **Claude Desktop:** Settings → Extensions → Advanced settings → Install Extension → pick `civil3d-mcp-<version>.mcpb`.
    - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
