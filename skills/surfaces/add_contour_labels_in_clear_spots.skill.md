@@ -98,6 +98,9 @@ label line across exactly one contour.
 - Users eyeball the last few. Let them hand-place those rather than chasing every spot.
 
 ## Dense contours (ditches, steep slopes)
+- For a ditch or channel the user wants the `contour_label_ladder` skill instead: one contour per stop, reading in
+  sequence down one slope and up the other. Filling every clear spot on dense contours gave far too many labels.
+
 - Neighbouring contours are only ~1 ft apart, so every label box crosses them and nothing qualifies. Do what a finished
   go-by did: `allowOtherContours: true`, short label lines (`labelLineHalfFt: 0.5` = 1 ft), labels about every 20 ft
   along each slope (`spacingIn: 0.65`, `minGapIn: 0.25` at 1"=30'), and `ignoreLayers` for no-display alignments.
