@@ -31,6 +31,9 @@
   empty slot that breaks reordering in the Point Groups dialog.
 - Scripts: `FocusOn(min,max | points | ids)` names the area a write worked on, and the view zooms there after the
   change instead of to everything it touched.
+- Scripts: `SampleLineGroup.GetSectionSources()` is blocked in every mode. It updates the group, and on a group
+  opened for read it crashes Civil 3D (`eNotOpenForWrite`). The new `SectionSources(groupId)` helper (write mode)
+  opens the group for write first and returns a copy of the sources.
 - Scripts no longer fail when Civil 3D has loaded an assembly with a malformed `InternalsVisibleTo` attribute.
   Such assemblies are left out of the script references and logged.
 

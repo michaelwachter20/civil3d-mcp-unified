@@ -134,6 +134,7 @@ const SCRIPT_GLOBALS_HELP =
   "FocusOn(min, max) / FocusOn(points) / FocusOn(ids) names the area a write is about: afterwards the view zooms to it (otherwise it pans to everything " +
   "the change touched, which for surfaces and point groups can be the whole drawing). Always call it in write scripts. " +
   "Delete point groups with RemovePointGroup(name), never PointGroup.Erase() (that leaves an empty slot in the display order). " +
+  "Read a sample line group's sources with SectionSources(groupId) in civil3d_execute; SampleLineGroup.GetSectionSources() is blocked (it updates the group and crashes Civil 3D on a group opened for read). " +
   "Auto-imported: System, System.Linq, System.Collections.Generic, System.IO, System.Text, System.Text.Json(.Nodes), System.Globalization, " +
   "Autodesk.AutoCAD.{ApplicationServices,DatabaseServices,EditorInput,Geometry,Colors}, Autodesk.Civil, Autodesk.Civil.{ApplicationServices,DatabaseServices,DatabaseServices.Styles,Settings}. " +
   "Names that exist in both AutoCAD and Civil (Entity, Surface, Section, DBObject) are ambiguous — fully qualify them or use TinSurface etc. " +

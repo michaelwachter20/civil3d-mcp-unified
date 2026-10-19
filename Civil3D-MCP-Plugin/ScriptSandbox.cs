@@ -42,6 +42,13 @@ public static class ScriptSandbox
     (@"\bSetSystemVariable\b", "changing system variables"),
   });
 
+  // Civil 3D calls that crash the host (fatal eNotOpenForWrite) when misused; blocked in every mode, with a safe
+  // ScriptContext helper to use instead.
+  private static readonly (Regex Pattern, string Reason)[] CrashRules = Compile(new[]
+  {
+    (@"\.\s*GetSectionSources\s*\(", "SampleLineGroup.GetSectionSources() updates the group and crashes Civil 3D on a group opened for read; use the SectionSources(groupId) helper in civil3d_execute"),
+  });
+
   public static bool HostProtectionEnabled =>
     !string.Equals(Environment.GetEnvironmentVariable("CIVIL3D_SCRIPT_SANDBOX"), "disabled", StringComparison.OrdinalIgnoreCase);
 
@@ -59,6 +66,7 @@ public static class ScriptSandbox
     }
 
     var scanned = StripComments(code);
+    Check(scanned, CrashRules, "is blocked because it can crash Civil 3D");
 
     if (HostProtectionEnabled)
     {

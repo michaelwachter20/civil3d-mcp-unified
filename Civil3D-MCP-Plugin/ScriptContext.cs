@@ -160,6 +160,35 @@ public sealed class ScriptContext
     return true;
   }
 
+  /// <summary>
+  /// The sources a sample line group samples (surfaces, corridors, ...), read safely.
+  /// SampleLineGroup.GetSectionSources() updates the group internally, so calling it on a group opened
+  /// for read crashes Civil 3D (eNotOpenForWrite). This opens the group for write first and returns a copy.
+  /// </summary>
+  public IReadOnlyList<SectionSourceInfo> SectionSources(ObjectId sampleLineGroupId)
+  {
+    if (!IsWriteMode)
+    {
+      throw new InvalidOperationException("SectionSources requires write mode (civil3d_execute): reading a sample line group's sources updates the group.");
+    }
+
+    var group = Get<Autodesk.Civil.DatabaseServices.SampleLineGroup>(sampleLineGroupId, OpenMode.ForWrite);
+    var result = new List<SectionSourceInfo>();
+    foreach (Autodesk.Civil.DatabaseServices.SectionSource source in group.GetSectionSources())
+    {
+      string? name = null;
+      if (!source.SourceId.IsNull)
+      {
+        var item = Get<DBObject>(source.SourceId);
+        name = item is Autodesk.Civil.DatabaseServices.Entity civilEntity ? civilEntity.Name : null;
+      }
+
+      result.Add(new SectionSourceInfo(source.SourceId, name, source.SourceType.ToString(), source.IsSampled, source.StyleId));
+    }
+
+    return result;
+  }
+
   /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
   public IReadOnlyList<OpenDrawingInfo> OpenDrawings => ReferenceDrawing.ListOpen();
 
@@ -382,3 +411,6 @@ internal static class ScriptOutputFormatter
     return builder.ToString();
   }
 }
+
+/// <summary>One source a sample line group samples (see ScriptContext.SectionSources).</summary>
+public sealed record SectionSourceInfo(ObjectId SourceId, string? Name, string SourceType, bool IsSampled, ObjectId StyleId);
