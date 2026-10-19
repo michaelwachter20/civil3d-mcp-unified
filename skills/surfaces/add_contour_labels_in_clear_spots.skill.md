@@ -41,6 +41,18 @@ parameters:
     type: string[]
     required: false
     description: "Debug: label-line spots 'x1,y1 x2,y2' (e.g. labels the user added by hand) - explains what blocks each one"
+  - name: allowOtherContours
+    type: boolean
+    required: false
+    description: Let labels cross neighbouring contours (dense contours such as ditch side slopes; default false)
+  - name: ignoreLayers
+    type: string[]
+    required: false
+    description: Layers whose entities are not obstacles (e.g. an alignment drawn with a no-display style)
+  - name: labelLineHalfFt
+    type: number
+    required: false
+    description: Half length of the hidden label line in feet (default 0.3; a 1 ft line crosses only one contour)
   - name: dryRun
     type: boolean
     required: false
@@ -85,6 +97,12 @@ label line across exactly one contour.
   window, or a long straight segment through the label counts as a conflict.
 - Users eyeball the last few. Let them hand-place those rather than chasing every spot.
 
+## Dense contours (ditches, steep slopes)
+- Neighbouring contours are only ~1 ft apart, so every label box crosses them and nothing qualifies. Do what a finished
+  go-by did: `allowOtherContours: true`, short label lines (`labelLineHalfFt: 0.5` = 1 ft), labels about every 20 ft
+  along each slope (`spacingIn: 0.65`, `minGapIn: 0.25` at 1"=30'), and `ignoreLayers` for no-display alignments.
+  Point labels, sample lines and other linework still block spots.
+
 ## API notes
 - `SurfaceContourLabelGroup.Create(surfaceId, Point2dCollection labelLine, majorStyleId, minorStyleId, userStyleId)`
   creates one group; set `IsLabelLineVisible = false`. A 0.6 ft label line crosses only the target contour.
@@ -106,6 +124,8 @@ var minGapIn = Args.GetDouble("minGapIn", 0.5);               // min distance be
 var minContourIn = Args.GetDouble("minContourIn", 0.6);       // skip contour pieces shorter than this on the sheet
 var clearIn = Args.GetDouble("clearanceIn", 0.02);
 var dryRun = Args.GetBool("dryRun", true);
+var allowOtherContours = Args.GetBool("allowOtherContours", false);   // dense contours (ditch slopes): labels may cross neighbouring contours
+var ignoreLayers = new HashSet<string>(Args.GetStringList("ignoreLayers"), StringComparer.OrdinalIgnoreCase);   // e.g. a no-display alignment's layer
 
 var vp = Get<Viewport>(Database.GetObjectId(false, new Handle(Convert.ToInt64(Args.GetString("viewport"), 16)), 0));
 if (Math.Abs(vp.TwistAngle) > 1e-6) throw new InvalidOperationException("Twisted viewports are not handled yet.");
@@ -173,7 +193,7 @@ foreach (ObjectId id in ms) {
   if (dxf == "AECC_COGO_POINT") { pointIds.Add(id); continue; }
   if (dxf == "AECC_TIN_SURFACE" || dxf == "VIEWPORT") continue;
   var e = Get<Autodesk.AutoCAD.DatabaseServices.Entity>(id);
-  if (!e.Visible || !LayerVisible(e.Layer)) continue;
+  if (!e.Visible || !LayerVisible(e.Layer) || ignoreLayers.Contains(e.Layer)) continue;
   Extents3d ex; try { ex = e.GeometricExtents; } catch { continue; }
   if (ex.MaxPoint.X < vc.X - hw || ex.MinPoint.X > vc.X + hw || ex.MaxPoint.Y < vc.Y - hh || ex.MinPoint.Y > vc.Y + hh) continue;
   obstacleEntities++; curTag = dxf + " " + e.Layer;
@@ -329,7 +349,7 @@ foreach (var ci in Enumerable.Range(0, chains.Count).OrderByDescending(i => Math
         int k = segK[i];
         if (cum[k] >= s - halfL - 0.1 * mpp && cum[k - 1] <= s + halfL + 0.1 * mpp) continue;
       }
-      if (SegHitsRect(segA[i], segB[i], c, u, halfL, halfH)) { hit = true; break; }
+      if (allowOtherContours && segOwner[i] >= 0 && segOwner[i] != ci) continue;
     }
     if (hit) { rejectedCrowded++; continue; }
     placed.Add((c, u, halfL, z, ci)); lastS = s;
