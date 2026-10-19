@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.1.0 — 2026-10-19
+
+> Tested only with Autodesk Civil 3D 2027 (English) on Windows 11, like v2.0.0.
+
+### Working with several drawings
+
+- Scripts can read other drawings: `OpenDrawings` lists the open tabs and `Reference(nameOrPath)` opens
+  another open drawing, or reads a `.dwg` in the background. Reads only: the transaction is always aborted,
+  and changes still go to the active drawing. Useful for comparing a drawing against a finished "go-by".
+- `civil3d_drawing` actions `list_open` and `switch` (changes the active tab; no approval needed).
+- New skill `compare_to_goby`.
+
+### Seeing what Civil 3D is doing, and never hanging
+
+- `civil3d_drawing action=command_line` returns the last command-line lines (oldest first, like F2), active
+  commands and the recent command history. It works even while a request is stuck.
+- Reads no longer fall back to `ExecuteInCommandContextAsync` while a command is active. That call could stay
+  pending forever and block every later request. Reads now retry until Civil 3D is idle and fail with
+  `CIVIL3D.HOST_BUSY` after `CIVIL3D_IDLE_WAIT_SECONDS` (default 30).
+- Writes are queued in command context from the main thread. If one hasn't started in time, it is cancelled
+  atomically, so it never runs after its caller gave up.
+- Health reports active commands, and the Civil 3D version without the licensee name.
+
+### Safer edits
+
+- `civil3d_drawing undo` refuses when the user ran commands after the AI's last change, because UNDO would revert
+  the user's work. `force=true` overrides it once the user agrees.
+- Scripts: `RemovePointGroup(name)` deletes a point group through the collection. `PointGroup.Erase()` leaves an
+  empty slot that breaks reordering in the Point Groups dialog.
+- Scripts: `FocusOn(min,max | points | ids)` names the area a write worked on, and the view zooms there after the
+  change instead of to everything it touched.
+- Scripts no longer fail when Civil 3D has loaded an assembly with a malformed `InternalsVisibleTo` attribute.
+  Such assemblies are left out of the script references and logged.
+
+### Knowledge
+
+- New tool `civil3d_project_notes` (list/link/unlink/add/update/remove) for facts about one project. They are
+  stored on this computer in `<knowledge dir>\projects\<project>.json`, matched to the active drawing by folder
+  (a project can have several folders), and returned with the first code result of a session.
+- Lessons, skills and scripts are kept general. The server instructions and the `working_safely_in_civil3d`
+  skill say to keep project specifics in project notes instead.
+- New skill `swap_edges_to_follow_lines`: make a TIN surface follow top/toe lines using edge swaps only.
+
 ## v2.0.0 — 2026-10-14: civil3d-mcp-unified
 
 > Tested only with Autodesk Civil 3D 2027 (English), build 13.9.1308 / AutoCAD R26.0.118, .NET 10.0.12,

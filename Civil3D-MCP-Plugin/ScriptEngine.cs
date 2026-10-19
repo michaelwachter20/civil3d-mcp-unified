@@ -277,7 +277,7 @@ internal static class ScriptEngine
       _references = Civil3DCompatibility.GetLoadedAssemblyLocations()
         .GroupBy(location => Path.GetFileNameWithoutExtension(location), StringComparer.OrdinalIgnoreCase)
         .Select(group => group.First())
-        .Where(IsUsableReference)
+        .Where(Civil3DCompatibility.IsUsableScriptReference)
         .Select(location =>
         {
           try
@@ -295,67 +295,6 @@ internal static class ScriptEngine
       _referenceAssemblyCount = count;
       return _references;
     }
-  }
-
-  /// <summary>
-  /// Some third-party assemblies loaded into Civil 3D carry malformed InternalsVisibleTo attributes;
-  /// Roslyn throws a NullReferenceException on them while binding ANY script. Skip those (logged).
-  /// </summary>
-  private static bool IsUsableReference(string path)
-  {
-    try
-    {
-      using var stream = File.OpenRead(path);
-      using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
-      if (!pe.HasMetadata) return false;
-      var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
-      if (!md.IsAssembly) return false;
-      foreach (var handle in md.GetAssemblyDefinition().GetCustomAttributes())
-      {
-        var attribute = md.GetCustomAttribute(handle);
-        if (!IsInternalsVisibleTo(md, attribute)) continue;
-        var blob = md.GetBlobReader(attribute.Value);
-        if (blob.Length < 2 || blob.ReadUInt16() != 1 || blob.ReadSerializedString() == null)
-        {
-          PluginLog.Warn("Script", $"Skipping script reference with a malformed InternalsVisibleTo attribute: {path}");
-          return false;
-        }
-      }
-
-      return true;
-    }
-    catch (System.Exception exception)
-    {
-      PluginLog.Warn("Script", $"Skipping unreadable script reference {path}: {exception.Message}");
-      return false;
-    }
-  }
-
-  private static bool IsInternalsVisibleTo(System.Reflection.Metadata.MetadataReader md, System.Reflection.Metadata.CustomAttribute attribute)
-  {
-    System.Reflection.Metadata.EntityHandle type = default;
-    if (attribute.Constructor.Kind == System.Reflection.Metadata.HandleKind.MemberReference)
-    {
-      type = md.GetMemberReference((System.Reflection.Metadata.MemberReferenceHandle)attribute.Constructor).Parent;
-    }
-    else if (attribute.Constructor.Kind == System.Reflection.Metadata.HandleKind.MethodDefinition)
-    {
-      type = md.GetMethodDefinition((System.Reflection.Metadata.MethodDefinitionHandle)attribute.Constructor).GetDeclaringType();
-    }
-
-    if (type.Kind == System.Reflection.Metadata.HandleKind.TypeReference)
-    {
-      var reference = md.GetTypeReference((System.Reflection.Metadata.TypeReferenceHandle)type);
-      return md.GetString(reference.Name) == "InternalsVisibleToAttribute";
-    }
-
-    if (type.Kind == System.Reflection.Metadata.HandleKind.TypeDefinition)
-    {
-      var definition = md.GetTypeDefinition((System.Reflection.Metadata.TypeDefinitionHandle)type);
-      return md.GetString(definition.Name) == "InternalsVisibleToAttribute";
-    }
-
-    return false;
   }
 
   private static async Task<bool> TryRunUndoAsync(Document document, string option)
