@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
-// â”€â”€â”€ Hoisted mocks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Hoisted mocks ────────────────────────────────────────────────────────────
 
 const {
   hasToolHandlerMock,
@@ -30,7 +30,7 @@ import { startHttpBridge } from "../src/httpBridge.js";
 import { Civil3DRpcError } from "../src/utils/SocketClient.js";
 import { currentAbortSignal } from "../src/utils/requestContext.js";
 
-// â”€â”€â”€ Test helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Test helpers ─────────────────────────────────────────────────────────────
 
 interface BridgeHandle {
   server: Server;
@@ -84,7 +84,7 @@ async function request(
   return { status: response.status, body };
 }
 
-// â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe("httpBridge", () => {
   let handle: BridgeHandle | null = null;
