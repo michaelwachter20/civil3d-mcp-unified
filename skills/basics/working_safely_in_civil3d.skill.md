@@ -16,6 +16,7 @@ parameters: []
 - You act on the drawing that is active in that Civil 3D window. Confirm which drawing it is (`civil3d_health` or a
   `civil3d_query` returning `Document.Name`) before changing anything, and say which drawing you're about to change.
 - Check `civil3d_preferences action=list` and follow the user's standing rules.
+- Check `civil3d_project_notes action=list` for what is already known about this drawing's project.
 
 ## Finding the right way to do something
 
@@ -54,9 +55,15 @@ Read them: they are mistakes someone already made.
 | You found | Save it as |
 |---|---|
 | A standing rule or standard from the user | `civil3d_preferences action=add` |
-| A non-obvious gotcha or fact | `civil3d_memory action=record` with topics (API names) |
+| A fact about this job (what a point group or survey date is for, which drawing is the go-by, a decision) | `civil3d_project_notes action=add` (this computer only) |
+| A non-obvious gotcha or fact that applies to any project | `civil3d_memory action=record` with topics (API names) |
 | A multi-step task that worked and the user is happy with | `civil3d_skills action=write` (when to use, rules, pitfalls, script) |
 | Something the user will re-run | also `civil3d_script action=save` (runnable with `MCPRUN`) |
+
+Lessons, skills and scripts must be general: write the technique, not this job. No drawing or file names,
+point numbers, coordinates, elevations, dates, crew initials, point group or layer names, company details or
+site features. Make project-specific values parameters, or steps that ask the user. Those facts belong in
+project notes.
 
 Add, never delete: improving a skill archives the old version; a skill verified on another Civil 3D release gets a
 new section (`append_version_section`) instead of being overwritten.

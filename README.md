@@ -12,10 +12,10 @@
   [![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
 
   <p>
-    <a href="#quick-start">Quick Start</a> •
-    <a href="#code-execution-and-saved-scripts">Code Execution</a> •
-    <a href="#working-alongside-the-ai">Working Alongside the AI</a> •
-    <a href="#installation">Installation</a> •
+    <a href="#quick-start">Quick Start</a> â€¢
+    <a href="#code-execution-and-saved-scripts">Code Execution</a> â€¢
+    <a href="#working-alongside-the-ai">Working Alongside the AI</a> â€¢
+    <a href="#installation">Installation</a> â€¢
     <a href="./docs/tools.generated.md">Tool Reference</a>
   </p>
 
@@ -26,7 +26,7 @@
 ## What Is This?
 
 An [MCP](https://modelcontextprotocol.io) server and Civil 3D plugin that connect
-AI assistants (Claude Code, Claude Desktop, Cursor, Cline…) to the drawing you
+AI assistants (Claude Code, Claude Desktop, Cursor, Clineâ€¦) to the drawing you
 have open in **Civil 3D 2027**. The AI can read the drawing, run calculations, and
 make changes while you watch.
 
@@ -34,7 +34,7 @@ It merges two open-source projects:
 
 | From | What it contributes |
 | --- | --- |
-| [Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) (base of this fork) | The MCP server, the Civil 3D plugin, 200+ fixed tools (alignments, surfaces, corridors, pipes, grading, QC, plan production, hydrology…), approvals for destructive actions, a serialized host queue, jobs, logging, and the HTTP bridge. |
+| [Sacred-G/Civil3D-mcp](https://github.com/Sacred-G/Civil3D-mcp) (base of this fork) | The MCP server, the Civil 3D plugin, 200+ fixed tools (alignments, surfaces, corridors, pipes, grading, QC, plan production, hydrologyâ€¦), approvals for destructive actions, a serialized host queue, jobs, logging, and the HTTP bridge. |
 | [barbosaihan/civil3d-mcp](https://github.com/barbosaihan/civil3d-mcp) | The Roslyn engine that compiles and runs AI-written C# inside Civil 3D, plus a library of C# templates. |
 
 So the AI has three ways to get work done, from safest to most flexible:
@@ -73,7 +73,7 @@ civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 AP
 - **The view follows the work**: after a change, Civil 3D pans to show it, so
   nothing happens off screen.
 
-Everything else from upstream still applies: the compact tool surface (41 public
+Everything else from upstream still applies: the compact tool surface (42 public
 tools by default), local Autodesk help search (`civil3d_help`), native workflow
 handlers, Claude Code and Claude Desktop installers, and the generated inventory in
 [`docs/tools.generated.md`](./docs/tools.generated.md).
@@ -119,12 +119,16 @@ with use instead of waiting for a new release:
 | What | Where | How it grows |
 | --- | --- | --- |
 | **Preferences**: your standing rules and standards ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
-| **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
+| **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about (general, never project-specific) | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
+| **Project notes**: facts about one job (what its point groups are for, which drawing is the go-by, decisions made), matched to the project by folder | `projects\<project>.json` | `civil3d_project_notes action=link / add / list` |
 | **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
 | **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
 
 - **Every new chat starts informed.** Your preferences and the list of your own skills are sent with the server's
   instructions, and the assistant first reads the built-in `working_safely_in_civil3d` skill.
+- **General and project knowledge stay apart.** Lessons and skills are written to help on any project. Facts about one
+  job go in that project's notes, which stay on your computer and come back with the first code result whenever the
+  active drawing is in one of the project's folders.
 - **Lessons find themselves.** When the assistant runs code with `civil3d_execute` or `civil3d_query`, lessons whose topics
   appear in that code come back with the result (`relatedLessons`), and reading a skill returns the lessons related
   to it. The release ships with a set of seed lessons learned on real drawings.
@@ -188,7 +192,7 @@ it on there.
 - **Commands:** `C3DMCPSTART` (on), `C3DMCPSTOP` (off), `C3DMCPSTATUS` (state).
 - Set `CIVIL3D_MCP_AUTOSTART=true` in the environment that launches Civil 3D to turn it on automatically
   whenever the plugin loads (the old behavior).
-- On the AI side, Claude Desktop extensions can be switched off in **Settings → Extensions**, and Claude Code
+- On the AI side, Claude Desktop extensions can be switched off in **Settings â†’ Extensions**, and Claude Code
   servers with `/mcp`.
 
 ### While it's on
@@ -268,11 +272,11 @@ its `INSTALL.md`. In short:
 
 1. **Civil 3D plugin:** double-click `Install-Civil3DPlugin.cmd`. It installs the plugin as an Autodesk
    bundle in `%APPDATA%\Autodesk\ApplicationPlugins`, so Civil 3D 2027 loads it automatically (no `NETLOAD`)
-   and shows a **Civil 3D MCP** ribbon tab. It also appears in **Windows Settings → Apps**; remove it there or
+   and shows a **Civil 3D MCP** ribbon tab. It also appears in **Windows Settings â†’ Apps**; remove it there or
    with `Uninstall-Civil3DPlugin.cmd` (saved scripts and logs are kept). No admin rights needed.
 2. **AI app:**
    - **Claude Desktop:** the installer offers to add the tools for you (needs Node.js 18+). Or install
-     `civil3d-mcp-<version>.mcpb` via Settings → Extensions → Advanced settings → Install Extension.
+     `civil3d-mcp-<version>.mcpb` via Settings â†’ Extensions â†’ Advanced settings â†’ Install Extension.
    - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
    - **Other MCP clients:** a stdio server running `node <extracted>\mcp-server\server\index.js`.
 3. **Turn the AI connection on** when you want it: click **AI Connection** on the **Civil 3D MCP** ribbon tab
@@ -339,21 +343,21 @@ Alternatively, `npm run release:publish` builds and publishes from your PC using
 ## Features
 
 - **Live C# execution and saved scripts** covering effectively the entire AutoCAD and Civil 3D .NET API
-- **Compact default MCP surface** with 41 public tools; every registered
+- **Compact default MCP surface** with 42 public tools; every registered
   route remains internally callable or available as an opt-in alias
-- **Local Autodesk help in chat** — version-matched topics, screenshots,
+- **Local Autodesk help in chat** â€” version-matched topics, screenshots,
   diagrams, citations, and playable Civil 3D tutorial videos
 - **Native workflow execution** for corridor QC, surface comparison, project startup, grading conversion, plan publish, data shortcuts, and hydrology pipelines
-- **Full road design pipeline** — alignments, profiles, corridors, cross-sections, superelevation
-- **Surface analysis** — elevation bands, slope distribution, aspect, watershed, cut/fill volumes
+- **Full road design pipeline** â€” alignments, profiles, corridors, cross-sections, superelevation
+- **Surface analysis** â€” elevation bands, slope distribution, aspect, watershed, cut/fill volumes
 - **Pipe & pressure network** design, validation, and hydraulic analysis
-- **Plan production** — sheet sets, Plan/Profile sheets, PDF export
-- **QC checks** — alignment, profile, corridor, surface, pipe network, drawing standards
-- **Quantity takeoff** — earthwork, corridor materials, pipe lengths, parcel areas, CSV export
-- **Cost estimation** — pay items, material costs, construction estimates
-- **Hydrology** — flow path tracing, watershed delineation, Rational Method runoff, time of concentration
-- **Grading** — feature lines, grading groups, grading criteria, surface generation
-- **COGO/Survey** — inverse, traverse, curve solve, survey figures, LandXML import
+- **Plan production** â€” sheet sets, Plan/Profile sheets, PDF export
+- **QC checks** â€” alignment, profile, corridor, surface, pipe network, drawing standards
+- **Quantity takeoff** â€” earthwork, corridor materials, pipe lengths, parcel areas, CSV export
+- **Cost estimation** â€” pay items, material costs, construction estimates
+- **Hydrology** â€” flow path tracing, watershed delineation, Rational Method runoff, time of concentration
+- **Grading** â€” feature lines, grading groups, grading criteria, surface generation
+- **COGO/Survey** â€” inverse, traverse, curve solve, survey figures, LandXML import
 - **Storm & Sanitary Analysis (SSA)** integration and detention basin sizing
 - **Intersection design** and corridor target mapping
 - **Sight distance** calculations and AASHTO stopping sight distance checks
@@ -381,7 +385,7 @@ names for actions already available through a canonical domain tool.
 
 | Surface | Exposed tools | How to call an operation |
 |---|---:|---|
-| Default MCP client | 41 | Call a canonical domain tool and provide `action`. |
+| Default MCP client | 42 | Call a canonical domain tool and provide `action`. |
 | MCP client with aliases enabled | 200+ | Use either canonical tools or specialized alias names. |
 | HTTP `/execute` and orchestration | 200+ | All registered routes remain internally callable in either mode. |
 
@@ -488,7 +492,7 @@ active. Nothing in Node.js touches the drawing directly.
 
 ## Installation
 
-### 1 — Build the MCP Server (TypeScript)
+### 1 â€” Build the MCP Server (TypeScript)
 
 ```bash
 git clone https://github.com/michaelwachter20/civil3d-mcp-unified.git
@@ -497,7 +501,7 @@ npm install
 npm run build
 ```
 
-### 1.5 — One-Line Claude Code Setup
+### 1.5 â€” One-Line Claude Code Setup
 
 From the repo root on Windows, this project-scoped command adds the MCP server to Claude Code and creates the repo `.mcp.json` entry automatically:
 
@@ -520,7 +524,7 @@ npm run claude:add:user
 npm run claude:print-add
 ```
 
-### 1.6 — Claude Desktop Extension Package
+### 1.6 â€” Claude Desktop Extension Package
 
 Current Claude Desktop releases install MCP extensions from `.mcpb` files. The
 former DXT format was renamed to MCPB, so the packaging command also emits a
@@ -536,7 +540,7 @@ Advanced settings > Install Extension**. The package exposes installer fields
 for the Civil 3D host and plugin port, alias mode, log level, and the local HTTP
 bridge port (default `3000`).
 
-### 2 — Build & Load the C# Plugin
+### 2 â€” Build & Load the C# Plugin
 
 **Prerequisites:** Civil 3D 2027, the .NET 10 SDK, and licensed local Civil 3D
 managed API assemblies. This repository intentionally does not track or publish
@@ -582,7 +586,7 @@ AeccPressurePipesMgd.dll
 | Method | Steps |
 |---|---|
 | **Bundle (recommended)** | `npm run package:release`, then run `Install-Civil3DPlugin.cmd` from the zip. Civil 3D loads it at startup and shows the **Civil 3D MCP** ribbon tab |
-| **Manual (NETLOAD)** | Open Civil 3D → type `NETLOAD` → browse to `Civil3DMcpPlugin.dll` |
+| **Manual (NETLOAD)** | Open Civil 3D â†’ type `NETLOAD` â†’ browse to `Civil3DMcpPlugin.dll` |
 
 Loading the plugin does **not** turn the AI connection on; use the ribbon toggle or `C3DMCPSTART`
 (or set `CIVIL3D_MCP_AUTOSTART=true`). These commands are available in the Civil 3D command line:
@@ -596,7 +600,7 @@ Loading the plugin does **not** turn the AI connection on; use the ribbon toggle
 | `MCPRUN` | Run a saved script by name, prompting for its parameters |
 | `MCPSCRIPTS` | List saved scripts |
 
-### 3 — Configure Your AI Client
+### 3 â€” Configure Your AI Client
 
 **Recommended for Claude Code**
 
@@ -606,7 +610,7 @@ npm run claude:add
 
 That command registers the bootstrap launcher in Claude Code and keeps the repo self-contained. Use `npm run claude:print-add` if you want to inspect the exact `claude mcp add` command without modifying config.
 
-**Claude Desktop** — install the generated `.mcpb` package. For source-based
+**Claude Desktop** â€” install the generated `.mcpb` package. For source-based
 development, `claude_desktop_config.json` remains supported:
 
 ```json
@@ -620,7 +624,7 @@ development, `claude_desktop_config.json` remains supported:
 }
 ```
 
-**Claude Code** — add via CLI:
+**Claude Code** â€” add via CLI:
 
 ```powershell
 claude mcp add --scope project --transport stdio civil3d-mcp -- powershell -NoProfile -ExecutionPolicy Bypass -File "$PWD\scripts\claude-bootstrap-and-run.ps1"
@@ -635,27 +639,27 @@ Restart your client. When you see the **hammer icon**, the MCP connection is liv
 ## Example Conversations
 
 > *"What alignments are in this drawing and how long is each one?"*
-> → `civil3d_alignment` → returns names, station ranges, lengths
+> â†’ `civil3d_alignment` â†’ returns names, station ranges, lengths
 
 > *"Run a full QC check on the corridor and give me a report."*
-> → `civil3d_workflow` with `action: "corridor_qc_report"`
+> â†’ `civil3d_workflow` with `action: "corridor_qc_report"`
 
 > *"Trace the flow path from coordinate (5000, 3200) and estimate the peak runoff using the Rational Method."*
-> → `civil3d_hydrology` with `action: "watershed_runoff_workflow"`
+> â†’ `civil3d_hydrology` with `action: "watershed_runoff_workflow"`
 
 > *"Publish the existing Plan Production sheet set to PDF."*
-> → `civil3d_workflow` with `action: "plan_production_publish"`
+> â†’ `civil3d_workflow` with `action: "plan_production_publish"`
 
 > *"Size the storm drain network for a 10-year storm and check all pipe velocities."*
-> → `civil3d_pipe` with `action: "size_network"`, then `action: "hydraulic_analysis"`
+> â†’ `civil3d_pipe` with `action: "size_network"`, then `action: "hydraulic_analysis"`
 
 > *"Move every polyline on C-TOPO-MINR to C-TOPO-MAJR if its elevation is a multiple of 5, and save that as a script."*
-> → no fixed tool does this, so the AI writes C#, tests it with `civil3d_query`,
+> â†’ no fixed tool does this, so the AI writes C#, tests it with `civil3d_query`,
 > runs it with `civil3d_execute`, then saves it with `civil3d_script action=save`.
-> Next time, it's `MCPRUN` → `relayer-index-contours`.
+> Next time, it's `MCPRUN` â†’ `relayer-index-contours`.
 
 > *"Calculate cut/fill volumes between the existing ground and proposed surface."*
-> → `civil3d_surface` with `action: "volume_calculate"`, then `action: "volume_report"`
+> â†’ `civil3d_surface` with `action: "volume_calculate"`, then `action: "volume_report"`
 
 ---
 
@@ -855,7 +859,7 @@ one or more operations; alias rows show an em dash in the **Operations** column.
 </details>
 
 <details>
-<summary><strong>Pipe Networks — Gravity (3 tools)</strong></summary>
+<summary><strong>Pipe Networks â€” Gravity (3 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -1114,7 +1118,7 @@ For startup-suite and autoload registry details, use the version-specific guidan
 
 The Node MCP server reads the following variables at startup. All are optional; defaults are shown in the **Default** column and are suitable for a local Civil 3D plus Copilot install.
 
-### Plugin connection (Node → Civil 3D plugin)
+### Plugin connection (Node â†’ Civil 3D plugin)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -1129,7 +1133,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 41-tool surface. |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 42-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
 | `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |
@@ -1149,7 +1153,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 ### Local Autodesk help search
 
-`civil3d_help` indexes the Autodesk Offline Help already installed with Civil 3D. It can search engineer phrasing such as “balance cut and fill” or “grading optimization,” return a cleaned Markdown topic, and attach the topic's useful screenshots and diagrams as MCP image content and `civil3d://help/images/...` resources. Matching Autodesk tutorial videos are returned as playable `civil3d://help/videos/...` player resources plus direct MP4 links. Decorative navigation icons are excluded. The drawing plugin does not need to be running for help searches.
+`civil3d_help` indexes the Autodesk Offline Help already installed with Civil 3D. It can search engineer phrasing such as â€œbalance cut and fillâ€ or â€œgrading optimization,â€ return a cleaned Markdown topic, and attach the topic's useful screenshots and diagrams as MCP image content and `civil3d://help/images/...` resources. Matching Autodesk tutorial videos are returned as playable `civil3d://help/videos/...` player resources plus direct MP4 links. Decorative navigation icons are excluded. The drawing plugin does not need to be running for help searches.
 
 The first query builds a compressed local index under `%LOCALAPPDATA%\Civil3DMcp\help-index`; later starts reuse it until the Autodesk help files change. By default the server discovers folders named `Offline Help for Civil 3D <year> - <language>\Help` under Program Files and prefers 2027, falling back to the newest installed version.
 
@@ -1178,7 +1182,7 @@ Example calls:
 { "action": "search_videos", "query": "create grading criteria", "maxVideos": 2 }
 ```
 
-### HTTP bridge (Copilot / local HTTP clients → Node)
+### HTTP bridge (Copilot / local HTTP clients â†’ Node)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -1232,7 +1236,7 @@ failure cannot remain silent.
 | `GET` | `/health/queue` | Host queue and background-job health. |
 | `GET` | `/health/version` | Package, MCP SDK, and Node dependency versions without probing Civil 3D. |
 | `GET` | `/tools` | Full internal route catalog (219 names), independent of compact MCP exposure. |
-| `POST` | `/execute` | `{ "tool": "<name>", "parameters": { ... } }` — invokes any registered tool or legacy alias. |
+| `POST` | `/execute` | `{ "tool": "<name>", "parameters": { ... } }` â€” invokes any registered tool or legacy alias. |
 
 ### Example: enable the shared-secret token
 
@@ -1293,7 +1297,7 @@ use the default loopback endpoint.
 
 **"Cannot connect to Civil 3D plugin"**
 - Civil 3D must be open with a drawing loaded
-- Type `C3DMCPSTATUS` in Civil 3D — confirm the server shows as running on port 8080
+- Type `C3DMCPSTATUS` in Civil 3D â€” confirm the server shows as running on port 8080
 - Check Windows Firewall is not blocking `localhost:8080`
 - If you moved the plugin to a non-default port, set `CIVIL3D_PORT` on the Node side to match
 
@@ -1302,7 +1306,7 @@ use the default loopback endpoint.
 
 **"Alignment/Surface not found"**
 - Names are case-insensitive but must otherwise match exactly
-- Use the corresponding list tool first (e.g. `civil3d_alignment` → `list` action)
+- Use the corresponding list tool first (e.g. `civil3d_alignment` â†’ `list` action)
 
 **"I cannot see a specialized alias in my MCP client"**
 - This is expected with the recommended compact 34-tool surface

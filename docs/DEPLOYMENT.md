@@ -10,7 +10,7 @@ and Civil 3D plugin installation.
 
 1. [Prerequisites](#prerequisites)
 2. [Claude Desktop Extension (MCPB / DXT)](#claude-desktop-extension-mcpb--dxt)
-3. [Local Installation (clone → running)](#local-installation)
+3. [Local Installation (clone â†’ running)](#local-installation)
 4. [npm Package Publishing](#npm-package-publishing)
 5. [Civil 3D Plugin Installation](#civil-3d-plugin-installation)
 6. [Environment Variables](#environment-variables)
@@ -50,9 +50,9 @@ dependencies, validates the manifest with the official MCPB CLI, and writes:
 
 ```text
 dist/claude-desktop/
-├── civil3d-mcp-<version>.mcpb
-├── civil3d-mcp-<version>.dxt
-└── SHA256SUMS.txt
+â”œâ”€â”€ civil3d-mcp-<version>.mcpb
+â”œâ”€â”€ civil3d-mcp-<version>.dxt
+â””â”€â”€ SHA256SUMS.txt
 ```
 
 Revalidate existing artifacts without rebuilding them:
@@ -222,7 +222,7 @@ test a rebuild without closing it, build to a new folder with `-o` and `NETLOAD`
 3. Browse to `Civil3D-MCP-Plugin/bin/Release/net10.0-windows/Civil3DMcpPlugin.dll`.
 4. Click **Open**. The plugin registers its RPC server and starts listening.
 
-> **Auto-load on startup:** Add the plugin to the `APPLOAD` startup suite (Tools → Load Application → Startup Suite) so it loads automatically when Civil 3D opens.
+> **Auto-load on startup:** Add the plugin to the `APPLOAD` startup suite (Tools â†’ Load Application â†’ Startup Suite) so it loads automatically when Civil 3D opens.
 
 ### Civil 3D reference DLLs
 
@@ -232,12 +232,12 @@ untracked `C_References/` directory remains the local fallback and must include:
 
 ```
 C_References/
-├── accoremgd.dll
-├── AcDbMgd.dll
-├── Acmgd.dll
-├── AecBaseMgd.dll
-├── AeccDbMgd.dll
-└── AeccPressurePipesMgd.dll
+â”œâ”€â”€ accoremgd.dll
+â”œâ”€â”€ AcDbMgd.dll
+â”œâ”€â”€ Acmgd.dll
+â”œâ”€â”€ AecBaseMgd.dll
+â”œâ”€â”€ AeccDbMgd.dll
+â””â”€â”€ AeccPressurePipesMgd.dll
 ```
 
 Use assemblies from the matching Civil 3D 2027 installation or licensed SDK.
@@ -255,7 +255,7 @@ All variables are optional; defaults work for a standard local setup.
 | `CIVIL3D_CONNECT_TIMEOUT` | `5000` | Connection timeout in milliseconds |
 | `CIVIL3D_COMMAND_TIMEOUT` | `120000` | Timeout for individual command execution (ms) |
 | `CIVIL3D_MAX_RESPONSE_BYTES` | `8388608` | Maximum plugin response buffered by Node.js |
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 41-tool surface |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Expose specialized drawing aliases instead of the compact 42-tool surface |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only for isolated disposable testing |
 | `CIVIL3D_HELP_ROOT` | Auto-discovered | Optional path to an Autodesk Civil 3D Offline Help `Help` folder |
 | `CIVIL3D_HELP_VERSION` | `2027` | Preferred installed offline-help version |
@@ -309,17 +309,17 @@ connection, MCP, and HTTP variables belong to the Node.js server environment.
 
 End-to-end flow once everything is running:
 
-1. **Civil 3D** opens with the plugin loaded — plugin starts RPC server on port `8080`.
-2. **MCP server** (`node build/index.js`) starts — connects to Civil 3D on `localhost:8080`, starts HTTP bridge on `127.0.0.1:3000`.
+1. **Civil 3D** opens with the plugin loaded â€” plugin starts RPC server on port `8080`.
+2. **MCP server** (`node build/index.js`) starts â€” connects to Civil 3D on `localhost:8080`, starts HTTP bridge on `127.0.0.1:3000`.
 3. **Claude Desktop** connects to the MCP server via stdio.
-4. You ask Claude to do something in Civil 3D — Claude calls the MCP tool — MCP server forwards to Civil 3D plugin — result returns to Claude.
+4. You ask Claude to do something in Civil 3D â€” Claude calls the MCP tool â€” MCP server forwards to Civil 3D plugin â€” result returns to Claude.
 
 ### Checklist
 
 - [ ] Civil 3D is open with the plugin loaded (`NETLOAD` or auto-load)
 - [ ] `node build/index.js` process is running (or Claude Desktop launched it)
 - [ ] Hammer icon visible in Claude Desktop toolbar
-- [ ] Test: ask Claude "run civil3d_health" — should return plugin status
+- [ ] Test: ask Claude "run civil3d_health" â€” should return plugin status
 
 ---
 

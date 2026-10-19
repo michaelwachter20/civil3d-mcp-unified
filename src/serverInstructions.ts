@@ -18,6 +18,9 @@ export const SERVER_INSTRUCTIONS = [
     "preference (civil3d_preferences action=add); a non-obvious gotcha or fact becomes a lesson (civil3d_memory action=record, with topics); " +
     "a multi-step task that worked and the user is happy with becomes a skill (civil3d_skills action=write) and, if it will be re-run, a " +
     "saved script (civil3d_script action=save, runnable with MCPRUN). Improve skills that turned out wrong or incomplete.",
+  "Keep lessons, skills and scripts GENERAL so they help on any project: no drawing names, point numbers, coordinates, dates, " +
+    "point group or layer names, or site features. Facts about the current job go in civil3d_project_notes (kept only on this " +
+    "computer, matched to the project by folder); check them with civil3d_project_notes action=list when you start on a drawing.",
 ].join("\n");
 
 const MAX_PREFERENCES_CHARS = 8_000;

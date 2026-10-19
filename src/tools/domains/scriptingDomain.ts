@@ -8,6 +8,9 @@ import {
   addPreference, currentRelease, lessonsRelevantTo, listPreferences, preferencesFile, recordLesson, removeLesson,
   removePreference, searchLessons, updatePreference,
 } from "../knowledgeBase.js";
+import {
+  addProjectNote, linkProjectFolder, listProjectNotes, projectNotesOnce, removeProjectNote, updateProjectNote,
+} from "../projectNotes.js";
 
 /**
  * Code execution domain: Roslyn C# scripts with full AutoCAD + Civil 3D .NET
@@ -74,6 +77,12 @@ const PreferencesRemoveArgs = z.object({ action: z.literal("preferences_remove")
 const MemoryRecordArgs = z.object({ action: z.literal("memory_record"), lesson: z.string().min(1).max(2_000), topics: z.array(z.string().min(1).max(120)).min(1).max(12) });
 const MemorySearchArgs = z.object({ action: z.literal("memory_search"), query: z.string().optional() });
 const MemoryRemoveArgs = z.object({ action: z.literal("memory_remove"), id: z.string().min(1) });
+const ProjectNameSchema = z.string().min(1).max(120);
+const ProjectListArgs = z.object({ action: z.literal("project_list"), project: ProjectNameSchema.optional() });
+const ProjectLinkArgs = z.object({ action: z.literal("project_link"), project: ProjectNameSchema, folder: z.string().min(1).max(260).optional() });
+const ProjectAddArgs = z.object({ action: z.literal("project_add"), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
+const ProjectUpdateArgs = z.object({ action: z.literal("project_update"), id: z.string().min(1), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
+const ProjectRemoveArgs = z.object({ action: z.literal("project_remove"), id: z.string().min(1), project: ProjectNameSchema.optional() });
 const ScriptSaveArgs = z.object({
   action: z.literal("script_save"),
   name: ScriptNameSchema,
@@ -88,15 +97,22 @@ const ScriptGetArgs = z.object({ action: z.literal("script_get"), name: ScriptNa
 const ScriptRunArgs = z.object({ action: z.literal("script_run"), name: ScriptNameSchema, args: ScriptArgsSchema.optional() });
 const ScriptDeleteArgs = z.object({ action: z.literal("script_delete"), name: ScriptNameSchema });
 
-/** Adds lessons whose topics appear in the code, so known pitfalls surface right where they matter. */
+/**
+ * Adds lessons whose topics appear in the code, so known pitfalls surface right where they matter, and
+ * (once per session) the notes of the project the active drawing belongs to.
+ */
 async function withLessons(code: string, result: unknown) {
+  if (!result || typeof result !== "object") return result;
+  let enriched = result as Record<string, unknown>;
   try {
     const lessons = lessonsRelevantTo(code, await currentRelease());
-    if (lessons.length && result && typeof result === "object") return { ...(result as object), relatedLessons: lessons };
+    if (lessons.length) enriched = { ...enriched, relatedLessons: lessons };
   } catch {
     // Lessons are advice; never fail the run because of them.
   }
-  return result;
+  const notes = await projectNotesOnce();
+  if (notes) enriched = { ...enriched, projectNotes: notes };
+  return enriched;
 }
 
 const sendCommand = (method: string, params: Record<string, unknown>) =>
@@ -230,6 +246,31 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => removeLesson(args.id as string, await currentRelease()),
     },
+    project_list: {
+      action: "project_list", inputSchema: ProjectListArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => listProjectNotes(args.project as string | undefined),
+    },
+    project_link: {
+      action: "project_link", inputSchema: ProjectLinkArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => linkProjectFolder(args.project as string, args.folder as string | undefined),
+    },
+    project_add: {
+      action: "project_add", inputSchema: ProjectAddArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => addProjectNote(args.note as string, args.project as string | undefined),
+    },
+    project_update: {
+      action: "project_update", inputSchema: ProjectUpdateArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => updateProjectNote(args.id as string, args.note as string, args.project as string | undefined),
+    },
+    project_remove: {
+      action: "project_remove", inputSchema: ProjectRemoveArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => removeProjectNote(args.id as string, args.project as string | undefined),
+    },
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["scriptSave"],
@@ -361,7 +402,9 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "relative to the old drag; call ResetLabelLocation first'). Each is stamped with the Civil 3D release and tagged with topics " +
         "(API names, tools, subjects); matching lessons are returned automatically with civil3d_execute/civil3d_query results and skill " +
         "reads. action=record (lesson, topics) right after you discover something non-obvious; search (query, optional); remove (id) only " +
-        "for a wrong lesson from the running release (lessons from other releases and built-in lessons are kept).",
+        "for a wrong lesson from the running release (lessons from other releases and built-in lessons are kept). Lessons must be GENERAL " +
+        "(useful on any project): no drawing names, point numbers, coordinates, dates, point group/layer names or site features. " +
+        "Put project-specific facts in civil3d_project_notes instead.",
       inputShape: {
         action: z.enum(["record", "search", "remove"]),
         lesson: z.string().optional(),
@@ -372,6 +415,28 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       supportedActions: ["memory_record", "memory_search", "memory_remove"],
       resolveAction: (rawArgs) => {
         const action = `memory_${String(rawArgs.action ?? "")}`;
+        return { action, args: { ...rawArgs, action } };
+      },
+    },
+    {
+      toolName: "civil3d_project_notes",
+      displayName: "Civil 3D Project Notes",
+      description:
+        "Notes about ONE project, kept only on this computer (never in general lessons or skills): what its point groups and layers are " +
+        "for, which survey dates or point ranges belong to which feature, which drawing is the go-by, sheet conventions, decisions the user " +
+        "made. A project is matched by folder; its notes are returned with the first civil3d_execute/civil3d_query result of a session. " +
+        "action=list (current drawing's project, or project); link (project, optional folder; default the active drawing's folder) to create " +
+        "a project or add a folder; add (note) / update (id, note) / remove (id), optional project. Ask before adding or changing.",
+      inputShape: {
+        action: z.enum(["list", "link", "add", "update", "remove"]),
+        project: z.string().optional(),
+        folder: z.string().optional(),
+        note: z.string().optional(),
+        id: z.string().optional(),
+      },
+      supportedActions: ["project_list", "project_link", "project_add", "project_update", "project_remove"],
+      resolveAction: (rawArgs) => {
+        const action = `project_${String(rawArgs.action ?? "")}`;
         return { action, args: { ...rawArgs, action } };
       },
     },
