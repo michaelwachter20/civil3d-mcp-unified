@@ -95,6 +95,50 @@ public sealed class ScriptContext
     return id;
   }
 
+  /// <summary>
+  /// Names the area this run is about, so after a committed write the view zooms to it (in or out)
+  /// instead of to every object the change touched. Calls accumulate.
+  /// </summary>
+  public void FocusOn(Point3d min, Point3d max)
+  {
+    var extents = new Extents3d(
+      new Point3d(Math.Min(min.X, max.X), Math.Min(min.Y, max.Y), Math.Min(min.Z, max.Z)),
+      new Point3d(Math.Max(min.X, max.X), Math.Max(min.Y, max.Y), Math.Max(min.Z, max.Z)));
+    if (Focus == null)
+    {
+      Focus = extents;
+    }
+    else
+    {
+      var combined = Focus.Value;
+      combined.AddExtents(extents);
+      Focus = combined;
+    }
+  }
+
+  /// <summary>Focuses on a set of points (e.g. the points a change was built from).</summary>
+  public void FocusOn(IEnumerable<Point3d> points)
+  {
+    var list = points.ToList();
+    if (list.Count == 0) return;
+    FocusOn(new Point3d(list.Min(p => p.X), list.Min(p => p.Y), list.Min(p => p.Z)),
+            new Point3d(list.Max(p => p.X), list.Max(p => p.Y), list.Max(p => p.Z)));
+  }
+
+  /// <summary>Focuses on entities (their bounds).</summary>
+  public void FocusOn(IEnumerable<ObjectId> ids)
+  {
+    foreach (var id in ids)
+    {
+      if (Transaction.GetObject(id, OpenMode.ForRead) is Entity entity && entity.Bounds is Extents3d bounds)
+      {
+        FocusOn(bounds.MinPoint, bounds.MaxPoint);
+      }
+    }
+  }
+
+  internal Extents3d? Focus { get; private set; }
+
   /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
   public IReadOnlyList<OpenDrawingInfo> OpenDrawings => ReferenceDrawing.ListOpen();
 

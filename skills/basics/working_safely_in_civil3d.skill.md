@@ -37,6 +37,11 @@ Read them: they are mistakes someone already made.
 - Ask before deleting objects, overwriting files, or anything that can't be undone with `UNDO`.
 - Don't print or store the licensee name: `ACADVER` contains it. Record the release (e.g. 2027) instead.
 - Long loops must check `CancellationToken`; a tight loop that never does can freeze Civil 3D.
+- End every write with the view on the area you worked on: call `FocusOn(...)` in the script (the points or
+  objects the change was about). Without it the view follows everything the change touched, which for a
+  surface or point group edit can zoom out to the whole drawing.
+- Use `civil3d_drawing action=command_line` to see what the user sees on the command line, and whenever a
+  request is slow or reports that Civil 3D is busy.
 
 ## Verify, don't assume
 

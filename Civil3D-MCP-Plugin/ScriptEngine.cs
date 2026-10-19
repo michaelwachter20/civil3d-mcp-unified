@@ -177,7 +177,7 @@ internal static class ScriptEngine
       {
         transaction.Commit();
         transaction.Dispose();
-        ViewFollower.Follow(document, changes);
+        ViewFollower.Follow(document, changes, context.Focus);
       }
       else
       {

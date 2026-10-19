@@ -114,6 +114,8 @@ const SCRIPT_GLOBALS_HELP =
   "Other drawings (e.g. a go-by to learn from): OpenDrawings lists the drawings open in this Civil 3D window (Name, Path, Active); " +
   "Reference(\"Site-GoBy\") or Reference(@\"C:\\path\\goby.dwg\") opens another drawing READ ONLY with .Database, .CivilDoc, .Get<T>(id), " +
   ".ModelSpace, .FromHandle(h) (always rolled back; a path that isn't open is read in the background). Changes always go to the active drawing. " +
+  "FocusOn(min, max) / FocusOn(points) / FocusOn(ids) names the area a write is about: afterwards the view zooms to it (otherwise it pans to everything " +
+  "the change touched, which for surfaces and point groups can be the whole drawing). Always call it in write scripts. " +
   "Auto-imported: System, System.Linq, System.Collections.Generic, System.IO, System.Text, System.Text.Json(.Nodes), System.Globalization, " +
   "Autodesk.AutoCAD.{ApplicationServices,DatabaseServices,EditorInput,Geometry,Colors}, Autodesk.Civil, Autodesk.Civil.{ApplicationServices,DatabaseServices,DatabaseServices.Styles,Settings}. " +
   "Names that exist in both AutoCAD and Civil (Entity, Surface, Section, DBObject) are ambiguous — fully qualify them or use TinSurface etc. " +

@@ -21,9 +21,13 @@ internal static class ViewFollower
   /// <summary>Starts recording appended/modified objects; dispose once the transaction has ended.</summary>
   public static ChangeTracker Track(Database database) => new(database, Enabled);
 
-  public static void Follow(Document document, ChangeTracker tracker)
+  /// <summary>
+  /// After a committed write: zoom to <paramref name="focus"/> when the script named the area it
+  /// worked on (FocusOn), otherwise pan/zoom out just enough to show the changed entities.
+  /// </summary>
+  public static void Follow(Document document, ChangeTracker tracker, Extents3d? focus = null)
   {
-    if (!Enabled || tracker.Ids.Count == 0)
+    if (!Enabled || (focus == null && tracker.Ids.Count == 0))
     {
       return;
     }
@@ -36,12 +40,20 @@ internal static class ViewFollower
         return; // A layout tab is active; leave paper space views alone.
       }
 
+      if (focus != null)
+      {
+        ZoomTo(document, focus.Value);
+        PluginLog.Info("ViewFollower", $"Zoomed to the script's focus area {Describe(focus.Value)}.");
+        return;
+      }
+
       var extents = GetModelSpaceExtents(database, tracker.Ids);
       if (extents == null)
       {
         return;
       }
 
+      PluginLog.Info("ViewFollower", $"Showing {tracker.Ids.Count} changed objects, extents {Describe(extents.Value)}.");
       MoveViewToShow(document, extents.Value);
     }
     catch (System.Exception exception)
@@ -87,6 +99,47 @@ internal static class ViewFollower
 
     transaction.Commit();
     return extents;
+  }
+
+  private static string Describe(Extents3d e) =>
+    $"{Math.Round(e.MinPoint.X)},{Math.Round(e.MinPoint.Y)} .. {Math.Round(e.MaxPoint.X)},{Math.Round(e.MaxPoint.Y)}";
+
+  /// <summary>Centers on the extents and sets the zoom so they fill the view with a margin (in or out).</summary>
+  private static void ZoomTo(Document document, Extents3d extents)
+  {
+    var editor = document.Editor;
+    using var view = editor.GetCurrentView();
+    var (minX, minY, maxX, maxY) = ToDisplay(view, extents);
+    var aspect = view.Width / view.Height;
+    var neededWidth = Math.Max(maxX - minX, 1) * (1 + 2 * MarginFraction);
+    var neededHeight = Math.Max(maxY - minY, 1) * (1 + 2 * MarginFraction);
+    var width = Math.Max(neededWidth, neededHeight * aspect);
+    view.CenterPoint = new Point2d((minX + maxX) / 2, (minY + maxY) / 2);
+    view.Width = width;
+    view.Height = width / aspect;
+    editor.SetCurrentView(view);
+  }
+
+  private static (double MinX, double MinY, double MaxX, double MaxY) ToDisplay(ViewTableRecord view, Extents3d extents)
+  {
+    var displayToWorld =
+      Matrix3d.Rotation(-view.ViewTwist, view.ViewDirection, view.Target) *
+      Matrix3d.Displacement(view.Target - Point3d.Origin) *
+      Matrix3d.PlaneToWorld(view.ViewDirection);
+    var worldToDisplay = displayToWorld.Inverse();
+    double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
+    foreach (var x in new[] { extents.MinPoint.X, extents.MaxPoint.X })
+    foreach (var y in new[] { extents.MinPoint.Y, extents.MaxPoint.Y })
+    foreach (var z in new[] { extents.MinPoint.Z, extents.MaxPoint.Z })
+    {
+      var point = new Point3d(x, y, z).TransformBy(worldToDisplay);
+      minX = Math.Min(minX, point.X);
+      minY = Math.Min(minY, point.Y);
+      maxX = Math.Max(maxX, point.X);
+      maxY = Math.Max(maxY, point.Y);
+    }
+
+    return (minX, minY, maxX, maxY);
   }
 
   private static void MoveViewToShow(Document document, Extents3d extents)
