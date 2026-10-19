@@ -16,6 +16,8 @@ describe("civil3d_drawing open drawings and tab switching", () => {
   it("lists open drawings and switches tabs without approval", () => {
     expect(risk("list_open")).toBe(false);
     expect(risk("switch")).toBe(false);
+    expect(risk("command_line")).toBe(false);
+    expect(DRAWING_RUNTIME_DOMAIN_DEFINITION.actions.command_line.pluginMethods).toEqual(["getCommandLine"]);
     expect(risk("save")).toBe(true);
   });
 

@@ -37,6 +37,7 @@ public static class CommandDispatcher
       "qcFixAndVerifyWorkflow" => WorkflowCommands.QcFixAndVerifyWorkflowAsync(parameters),
       "newDrawing" => DrawingCommands.NewDrawingAsync(parameters),
       "listOpenDrawings" => DrawingCommands.ListOpenDrawingsAsync(),
+      "getCommandLine" => CommandLineMonitor.GetCommandLineAsync(parameters),
       "activateDrawing" => DrawingCommands.ActivateDrawingAsync(parameters),
       "saveDrawing" => DrawingCommands.SaveDrawingAsync(parameters),
       "undoDrawing" => DrawingCommands.UndoDrawingAsync(parameters),

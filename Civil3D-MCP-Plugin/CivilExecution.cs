@@ -68,23 +68,47 @@ public static class CivilExecution
     return write ? await ExecuteInCommandContextAsync(Run) : await ExecuteReadOnlyAsync(Run);
   }
 
+  /// <summary>How long a request waits for the user's (or an earlier) command to finish (CIVIL3D_IDLE_WAIT_SECONDS, default 30).</summary>
+  private static TimeSpan IdleWait
+  {
+    get
+    {
+      var raw = Environment.GetEnvironmentVariable("CIVIL3D_IDLE_WAIT_SECONDS");
+      return int.TryParse(raw, out var seconds) && seconds > 0 ? TimeSpan.FromSeconds(seconds) : TimeSpan.FromSeconds(30);
+    }
+  }
+
   public static async Task<T> ExecuteInCommandContextAsync<T>(Func<Task<T>> action)
   {
-    return await ExecuteSerializedAsync(() => RunInCommandContextAsync(action));
+    return await ExecuteSerializedAsync(async () =>
+    {
+      // ExecuteInCommandContextAsync queued while another command is active can stay pending
+      // forever and block every later request, so start only when Civil 3D is idle.
+      await WaitForIdleAsync();
+      return await RunInCommandContextAsync(action);
+    });
   }
 
   /// <summary>
   /// Runs work that must not modify the drawing on the AutoCAD main thread in
-  /// application context, so it leaves no undo step. Falls back to command context
-  /// when a command is active (to avoid interleaving with the user's command) or no
-  /// main-thread context was captured.
+  /// application context, so it leaves no undo step. While a command is active it
+  /// retries until the command ends (never queuing into command context, which can
+  /// hang), and fails with CIVIL3D.HOST_BUSY after the idle wait.
   /// </summary>
   public static async Task<T> ExecuteReadOnlyAsync<T>(Func<Task<T>> action)
   {
     return await ExecuteSerializedAsync(async () =>
     {
       var context = _mainThreadContext;
-      if (context != null && !ReadsUseCommandContext)
+      if (context == null || ReadsUseCommandContext)
+      {
+        await WaitForIdleAsync();
+        return await RunInCommandContextAsync(action);
+      }
+
+      var cancellationToken = PluginRuntime.GetCurrentRequestCancellationToken();
+      var deadline = DateTime.UtcNow + IdleWait;
+      while (true)
       {
         var (ran, value) = await PostToMainThreadAsync(context, async () =>
         {
@@ -100,10 +124,46 @@ public static class CivilExecution
         {
           return value;
         }
+
+        if (DateTime.UtcNow > deadline)
+        {
+          throw BusyError();
+        }
+
+        await Task.Delay(200, cancellationToken);
+      }
+    });
+  }
+
+  /// <summary>Waits (off the main thread) until no AutoCAD command is active.</summary>
+  private static async Task WaitForIdleAsync()
+  {
+    var context = _mainThreadContext;
+    if (context == null)
+    {
+      return;
+    }
+
+    var cancellationToken = PluginRuntime.GetCurrentRequestCancellationToken();
+    var deadline = DateTime.UtcNow + IdleWait;
+    while (await PostToMainThreadAsync(context, () => Task.FromResult(IsCommandActive())))
+    {
+      if (DateTime.UtcNow > deadline)
+      {
+        throw BusyError();
       }
 
-      return await RunInCommandContextAsync(action);
-    });
+      await Task.Delay(200, cancellationToken);
+    }
+  }
+
+  private static JsonRpcDispatchException BusyError()
+  {
+    var names = CommandLineMonitor.ActiveCommandNames();
+    return new JsonRpcDispatchException(
+      "CIVIL3D.HOST_BUSY",
+      $"Civil 3D has had a command running for {IdleWait.TotalSeconds:0}s" + (names.Length > 0 ? $" ({names})" : string.Empty) +
+      ". Finish or cancel it (Esc) and try again. Use civil3d_drawing action=command_line to see what it is waiting for.");
   }
 
   private static async Task<T> RunInCommandContextAsync<T>(Func<Task<T>> action)
@@ -129,6 +189,19 @@ public static class CivilExecution
     }
 
     return result!;
+  }
+
+  /// <summary>Runs a small read on the main thread outside the request queue, with a timeout.</summary>
+  internal static async Task<T> OnMainThreadAsync<T>(Func<T> action, TimeSpan timeout)
+  {
+    var context = _mainThreadContext ?? throw new TimeoutException("No main-thread context.");
+    var task = PostToMainThreadAsync(context, () => Task.FromResult(action()));
+    if (await Task.WhenAny(task, Task.Delay(timeout)) != task)
+    {
+      throw new TimeoutException();
+    }
+
+    return await task;
   }
 
   private static Task<T> PostToMainThreadAsync<T>(SynchronizationContext context, Func<Task<T>> action)

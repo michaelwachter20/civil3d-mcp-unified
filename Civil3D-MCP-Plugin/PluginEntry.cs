@@ -14,6 +14,7 @@ public sealed class PluginEntry : IExtensionApplication
     try
     {
       CivilExecution.CaptureMainThreadContext();
+      CommandLineMonitor.Initialize();
       // Opt-in: AI clients can connect only after the user runs C3DMCPSTART in this session.
       // CIVIL3D_MCP_AUTOSTART=true restores starting the listener as soon as the plugin loads.
       if (string.Equals(Environment.GetEnvironmentVariable("CIVIL3D_MCP_AUTOSTART"), "true", StringComparison.OrdinalIgnoreCase))

@@ -21,7 +21,8 @@ public static class DrawingCommands
     object response = new Dictionary<string, object?>
     {
       ["connected"] = true,
-      ["civil3dVersion"] = App.GetSystemVariable("ACADVER")?.ToString(),
+      // ACADVER ends with the licensee's company name in parentheses; report only the version.
+      ["civil3dVersion"] = System.Text.RegularExpressions.Regex.Replace(App.GetSystemVariable("ACADVER")?.ToString() ?? string.Empty, @"\s*\(.*\)\s*$", string.Empty),
       ["pluginVersion"] = typeof(PluginEntry).Assembly.GetName().Version?.ToString(),
       ["drawingLoaded"] = doc != null,
       ["operationInProgress"] = status.OperationInProgress,
@@ -30,6 +31,7 @@ public static class DrawingCommands
       ["queueCapacity"] = status.QueueCapacity,
       ["currentOperationStartedAtUnixMs"] = status.CurrentOperationStartedAtUnixMs,
       ["currentRequestId"] = status.CurrentRequestId,
+      ["activeCommands"] = CommandLineMonitor.ActiveCommandNames(),
       ["currentOperationDurationMs"] = status.CurrentOperationStartedAtUnixMs is long startedAt
         ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startedAt)
         : null,
