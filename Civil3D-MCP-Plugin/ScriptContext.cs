@@ -192,9 +192,13 @@ public sealed class ScriptContext
   /// <summary>
   /// Turns sampling on for the named sources of a sample line group (surfaces, corridors, ...) and optionally sets
   /// their section style; sources not named are left as they are. Opens the group for write first (see
-  /// <see cref="SectionSources"/>). New sections appear on the group's sample lines; returns the resulting sources.
+  /// <see cref="SectionSources"/>). Like the dialog's "move to sampled" arrows, a source that is already sampled is
+  /// unsampled and sampled again. Sample lines that existed before a source was sampled may still get no section
+  /// data through the API; with <paramref name="rebuildExistingLines"/> those lines are recreated (same name,
+  /// vertices, layer, style) together with their section views (same location, style, layer, ranges), which always
+  /// gives them sections. Returns the resulting sources.
   /// </summary>
-  public IReadOnlyList<SectionSourceInfo> SetSectionSources(ObjectId sampleLineGroupId, IEnumerable<string> sampledNames, ObjectId sectionStyleId)
+  public IReadOnlyList<SectionSourceInfo> SetSectionSources(ObjectId sampleLineGroupId, IEnumerable<string> sampledNames, ObjectId sectionStyleId, bool rebuildExistingLines = true)
   {
     if (!IsWriteMode)
     {
@@ -203,6 +207,7 @@ public sealed class ScriptContext
 
     var names = new HashSet<string>(sampledNames, StringComparer.OrdinalIgnoreCase);
     var group = Get<Autodesk.Civil.DatabaseServices.SampleLineGroup>(sampleLineGroupId, OpenMode.ForWrite);
+    var changed = false;
     foreach (Autodesk.Civil.DatabaseServices.SectionSource source in group.GetSectionSources())
     {
       if (source.SourceId.IsNull)
@@ -216,14 +221,75 @@ public sealed class ScriptContext
         continue;
       }
 
+      if (source.IsSampled)
+      {
+        source.IsSampled = false;
+      }
+
       source.IsSampled = true;
+      changed = true;
       if (!sectionStyleId.IsNull)
       {
         source.StyleId = sectionStyleId;
       }
     }
 
+    if (changed && rebuildExistingLines)
+    {
+      RecreateSampleLines(group);
+    }
+
     return SectionSources(sampleLineGroupId);
+  }
+
+  private void RecreateSampleLines(Autodesk.Civil.DatabaseServices.SampleLineGroup group)
+  {
+    foreach (ObjectId lineId in group.GetSampleLineIds().Cast<ObjectId>().ToList())
+    {
+      var line = Get<Autodesk.Civil.DatabaseServices.SampleLine>(lineId, OpenMode.ForWrite);
+      var views = new List<(Point3d Location, ObjectId Style, string Layer, string Name, bool OffsetAuto, double OffsetLeft, double OffsetRight, bool ElevationAuto, double ElevationMin, double ElevationMax)>();
+      foreach (ObjectId viewId in line.GetSectionViewIds())
+      {
+        var view = Get<Autodesk.Civil.DatabaseServices.SectionView>(viewId, OpenMode.ForWrite);
+        views.Add((view.Location, view.StyleId, view.Layer, view.Name, view.IsOffsetRangeAutomatic, view.OffsetLeft, view.OffsetRight, view.IsElevationRangeAutomatic, view.ElevationMin, view.ElevationMax));
+        view.Erase();
+      }
+
+      var name = line.Name;
+      var layer = line.Layer;
+      var style = line.StyleId;
+      var points = new Point2dCollection();
+      foreach (Autodesk.Civil.DatabaseServices.SampleLineVertex vertex in line.Vertices)
+      {
+        points.Add(new Point2d(vertex.Location.X, vertex.Location.Y));
+      }
+
+      line.Erase();
+      var newLineId = Autodesk.Civil.DatabaseServices.SampleLine.Create(name, group.ObjectId, points);
+      var newLine = Get<Autodesk.Civil.DatabaseServices.SampleLine>(newLineId, OpenMode.ForWrite);
+      newLine.Layer = layer;
+      newLine.StyleId = style;
+      foreach (var v in views)
+      {
+        var newViewId = Autodesk.Civil.DatabaseServices.SectionView.Create(v.Name, newLineId, v.Location);
+        var newView = Get<Autodesk.Civil.DatabaseServices.SectionView>(newViewId, OpenMode.ForWrite);
+        newView.StyleId = v.Style;
+        newView.Layer = v.Layer;
+        newView.IsOffsetRangeAutomatic = v.OffsetAuto;
+        if (!v.OffsetAuto)
+        {
+          newView.OffsetLeft = v.OffsetLeft;
+          newView.OffsetRight = v.OffsetRight;
+        }
+
+        newView.IsElevationRangeAutomatic = v.ElevationAuto;
+        if (!v.ElevationAuto)
+        {
+          newView.ElevationMin = v.ElevationMin;
+          newView.ElevationMax = v.ElevationMax;
+        }
+      }
+    }
   }
 
   /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
