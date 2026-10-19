@@ -53,6 +53,10 @@ to show the settings. Make the rest so each lands exactly where the sheet expect
 - Never call `SampleLineGroup.GetSectionSources()` on a group opened for read: it updates the group and crashes Civil 3D
   (`eNotOpenForWrite`). The plugin blocks the raw call; use the `SectionSources(groupId)` helper in write mode.
 - `Section.LeftOffset` etc. throw "not supported by current Section" for surface sections - read names/styles/layers only.
+- Sampling: a new sample line group samples nothing. Turn sources on with the `SetSectionSources(groupId, names, styleId)`
+  helper (write mode). Through the API, sample lines that existed before their sources were sampled never get section data
+  (unsample/resample does not fix it; the dialog does); the helper recreates such lines and their views by default.
+  Simplest: sample first, then create the sample lines. Section point counts are only valid in a later run.
 - `SectionView.Create(name, sampleLineId, location)` makes a view with automatic ranges and the default style; set
   `StyleId`, `Layer`, and turn off automatic ranges before setting them.
 - The script checks the existing template view sits on its anchor, which proves the order (station <-> anchor) before
