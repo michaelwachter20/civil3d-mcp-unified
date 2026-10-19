@@ -150,6 +150,74 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>Drawings open in this Civil 3D window, and which one is active.</summary>
+  public static Task<object?> ListOpenDrawingsAsync()
+  {
+    return CivilExecution.ExecuteReadOnlyAsync<object?>(() => Task.FromResult<object?>(new Dictionary<string, object?>
+    {
+      ["drawings"] = ReferenceDrawing.ListOpen().Select(info => new Dictionary<string, object?>
+      {
+        ["name"] = info.Name,
+        ["path"] = info.Path,
+        ["active"] = info.Active,
+      }).ToList(),
+    }));
+  }
+
+  /// <summary>Makes another open drawing the active tab (by file name, with or without .dwg, or full path).</summary>
+  public static Task<object?> ActivateDrawingAsync(JsonObject? parameters)
+  {
+    var wanted = PluginRuntime.GetRequiredString(parameters, "name").Trim();
+    return CivilExecution.ExecuteReadOnlyAsync<object?>(() =>
+    {
+      var manager = App.DocumentManager;
+      var matches = new List<Document>();
+      foreach (Document document in manager)
+      {
+        var name = Path.GetFileName(document.Name);
+        if (string.Equals(document.Name, wanted, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetFileNameWithoutExtension(name), Path.GetFileNameWithoutExtension(wanted), StringComparison.OrdinalIgnoreCase))
+        {
+          matches.Add(document);
+        }
+      }
+
+      if (matches.Count != 1)
+      {
+        var open = string.Join(", ", ReferenceDrawing.ListOpen().Select(info => info.Name));
+        throw new JsonRpcDispatchException(
+          matches.Count == 0 ? "CIVIL3D.OBJECT_NOT_FOUND" : "CIVIL3D.INVALID_INPUT",
+          (matches.Count == 0 ? $"No open drawing named '{wanted}'." : $"'{wanted}' matches {matches.Count} open drawings; use the full path.") +
+          $" Open drawings: {open}.");
+      }
+
+      var target = matches[0];
+      var previous = manager.MdiActiveDocument;
+      if (target != previous)
+      {
+        if (!manager.DocumentActivationEnabled)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.HOST_BUSY", "Civil 3D isn't allowing drawing switches right now (a command or dialog may be active). Finish it and try again.");
+        }
+
+        manager.MdiActiveDocument = target;
+        if (manager.MdiActiveDocument != target)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.HOST_BUSY", $"Civil 3D didn't switch to '{Path.GetFileName(target.Name)}'. Finish any active command and try again.");
+        }
+      }
+
+      return Task.FromResult<object?>(new Dictionary<string, object?>
+      {
+        ["active"] = Path.GetFileName(target.Name),
+        ["path"] = target.Name,
+        ["previous"] = previous == null ? null : Path.GetFileName(previous.Name),
+        ["switched"] = target != previous,
+      });
+    });
+  }
+
   public static Task<object?> UndoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;

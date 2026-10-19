@@ -111,6 +111,9 @@ const SCRIPT_GLOBALS_HELP =
   "Globals: Document, CivilDoc (CivilDocument), Database, Transaction (use Transaction.GetObject), Editor, ModelSpace, " +
   "Args (values from `args`: Args.GetString/GetDouble/GetInt/GetBool/GetPoint/GetStringList/Get<T>/Has), Print(obj) for log lines, " +
   "Get<T>(id, mode), AddToModelSpace(entity), FromHandle(hexHandle), IsWriteMode, CancellationToken (check it in long loops). " +
+  "Other drawings (e.g. a go-by to learn from): OpenDrawings lists the drawings open in this Civil 3D window (Name, Path, Active); " +
+  "Reference(\"Site-GoBy\") or Reference(@\"C:\\path\\goby.dwg\") opens another drawing READ ONLY with .Database, .CivilDoc, .Get<T>(id), " +
+  ".ModelSpace, .FromHandle(h) (always rolled back; a path that isn't open is read in the background). Changes always go to the active drawing. " +
   "Auto-imported: System, System.Linq, System.Collections.Generic, System.IO, System.Text, System.Text.Json(.Nodes), System.Globalization, " +
   "Autodesk.AutoCAD.{ApplicationServices,DatabaseServices,EditorInput,Geometry,Colors}, Autodesk.Civil, Autodesk.Civil.{ApplicationServices,DatabaseServices,DatabaseServices.Styles,Settings}. " +
   "Names that exist in both AutoCAD and Civil (Entity, Surface, Section, DBObject) are ambiguous — fully qualify them or use TinSurface etc. " +

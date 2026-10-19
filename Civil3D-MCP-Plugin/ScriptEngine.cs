@@ -158,11 +158,47 @@ internal static class ScriptEngine
     using var changes = ViewFollower.Track(database);
     using var transaction = database.TransactionManager.StartTransaction();
     var context = new ScriptContext(document, civilDocument, database, transaction, args, write, linked.Token);
+    try
+    {
+      return RunAndFinish(await RunScriptAsync(compiled, context, timeout, externalToken, linked.Token));
+    }
+    finally
+    {
+      // Reference drawings (go-bys) are read only: their transactions are always aborted.
+      context.CloseReferences();
+    }
 
+    ScriptRunResult RunAndFinish(object? returnValue)
+    {
+      // Serialize while the transactions are still open so DBObjects are readable.
+      var json = ScriptResultSerializer.ToJson(returnValue);
+
+      if (write)
+      {
+        transaction.Commit();
+        transaction.Dispose();
+        ViewFollower.Follow(document, changes);
+      }
+      else
+      {
+        transaction.Abort();
+      }
+
+      return new ScriptRunResult(json, context.Output.ToList(), write, stopwatch.ElapsedMilliseconds, compiled.Warnings, false);
+    }
+  }
+
+  private static async Task<object?> RunScriptAsync(
+    CompiledScript compiled,
+    ScriptContext context,
+    CancellationTokenSource timeout,
+    CancellationToken externalToken,
+    CancellationToken linkedToken)
+  {
     object? returnValue;
     try
     {
-      var state = await compiled.Script.RunAsync(context, cancellationToken: linked.Token);
+      var state = await compiled.Script.RunAsync(context, cancellationToken: linkedToken);
       returnValue = state.ReturnValue;
     }
     catch (OperationCanceledException) when (timeout.IsCancellationRequested && !externalToken.IsCancellationRequested)
@@ -184,21 +220,7 @@ internal static class ScriptEngine
       throw new JsonRpcDispatchException("CIVIL3D.SCRIPT_ERROR", FormatRuntimeError(exception, context.Output));
     }
 
-    // Serialize while the transaction is still open so DBObjects are readable.
-    var json = ScriptResultSerializer.ToJson(returnValue);
-
-    if (write)
-    {
-      transaction.Commit();
-      transaction.Dispose();
-      ViewFollower.Follow(document, changes);
-    }
-    else
-    {
-      transaction.Abort();
-    }
-
-    return new ScriptRunResult(json, context.Output.ToList(), write, stopwatch.ElapsedMilliseconds, compiled.Warnings, false);
+    return returnValue;
   }
 
   private static CompiledScript CompileCore(string code, string hash)

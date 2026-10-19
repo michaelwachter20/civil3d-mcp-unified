@@ -25,6 +25,7 @@ public sealed class ScriptContext
   private int _outputCharacters;
   private bool _outputTruncated;
   private BlockTableRecord? _modelSpace;
+  private readonly Dictionary<string, ReferenceDrawing> _references = new(StringComparer.OrdinalIgnoreCase);
 
   public ScriptContext(
     Document document,
@@ -92,6 +93,37 @@ public sealed class ScriptContext
     var id = ModelSpace.AppendEntity(entity);
     Transaction.AddNewlyCreatedDBObject(entity, true);
     return id;
+  }
+
+  /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
+  public IReadOnlyList<OpenDrawingInfo> OpenDrawings => ReferenceDrawing.ListOpen();
+
+  /// <summary>
+  /// Opens another drawing for reading, such as a go-by: an open drawing by name ("Site-GoBy"),
+  /// or any .dwg by full path (read in the background, not opened in the editor). Changes to it
+  /// are always rolled back. Repeated calls with the same name return the same reference.
+  /// </summary>
+  public ReferenceDrawing Reference(string nameOrPath)
+  {
+    var key = (nameOrPath ?? string.Empty).Trim();
+    if (_references.TryGetValue(key, out var existing))
+    {
+      return existing;
+    }
+
+    var reference = ReferenceDrawing.Open(key, Document);
+    _references[key] = reference;
+    return reference;
+  }
+
+  internal void CloseReferences()
+  {
+    foreach (var reference in _references.Values)
+    {
+      reference.Close();
+    }
+
+    _references.Clear();
   }
 
   /// <summary>Finds an object by its hexadecimal handle string (e.g. "2A4F").</summary>

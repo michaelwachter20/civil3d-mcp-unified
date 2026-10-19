@@ -59,7 +59,7 @@ if (process.argv.includes("--prebuilt")) {
 const bundle = path.join(stage, "Civil3DMcpPlugin.bundle");
 await mkdir(path.join(bundle, "Contents"), { recursive: true });
 for (const file of await readdir(pluginBuild)) {
-  if (/\.(dll|pdb|json)$/i.test(file)) await cp(path.join(pluginBuild, file), path.join(bundle, "Contents", file));
+  if (/\.(dll|pdb|json)$/i.test(file) && file !== "BUILD-INFO.json") await cp(path.join(pluginBuild, file), path.join(bundle, "Contents", file));
 }
 if ((await readdir(path.join(bundle, "Contents"))).some((f) => /^(ac|aec|aecc)\w*mgd\.dll$/i.test(f))) {
   throw new Error("Autodesk assemblies ended up in the bundle; they must never be redistributed.");
