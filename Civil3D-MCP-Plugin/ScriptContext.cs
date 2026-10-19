@@ -189,6 +189,43 @@ public sealed class ScriptContext
     return result;
   }
 
+  /// <summary>
+  /// Turns sampling on for the named sources of a sample line group (surfaces, corridors, ...) and optionally sets
+  /// their section style; sources not named are left as they are. Opens the group for write first (see
+  /// <see cref="SectionSources"/>). New sections appear on the group's sample lines; returns the resulting sources.
+  /// </summary>
+  public IReadOnlyList<SectionSourceInfo> SetSectionSources(ObjectId sampleLineGroupId, IEnumerable<string> sampledNames, ObjectId sectionStyleId)
+  {
+    if (!IsWriteMode)
+    {
+      throw new InvalidOperationException("SetSectionSources requires write mode (civil3d_execute).");
+    }
+
+    var names = new HashSet<string>(sampledNames, StringComparer.OrdinalIgnoreCase);
+    var group = Get<Autodesk.Civil.DatabaseServices.SampleLineGroup>(sampleLineGroupId, OpenMode.ForWrite);
+    foreach (Autodesk.Civil.DatabaseServices.SectionSource source in group.GetSectionSources())
+    {
+      if (source.SourceId.IsNull)
+      {
+        continue;
+      }
+
+      var name = Get<DBObject>(source.SourceId) is Autodesk.Civil.DatabaseServices.Entity civilEntity ? civilEntity.Name : null;
+      if (name == null || !names.Contains(name))
+      {
+        continue;
+      }
+
+      source.IsSampled = true;
+      if (!sectionStyleId.IsNull)
+      {
+        source.StyleId = sectionStyleId;
+      }
+    }
+
+    return SectionSources(sampleLineGroupId);
+  }
+
   /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
   public IReadOnlyList<OpenDrawingInfo> OpenDrawings => ReferenceDrawing.ListOpen();
 
