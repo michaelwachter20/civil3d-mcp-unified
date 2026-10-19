@@ -42,6 +42,13 @@
 - Lessons, skills and scripts are kept general. The server instructions and the `working_safely_in_civil3d`
   skill say to keep project specifics in project notes instead.
 - New skill `swap_edges_to_follow_lines`: make a TIN surface follow top/toe lines using edge swaps only.
+- Skill `declutter_point_labels` v3:
+  - each display group's labels go on their own side;
+  - close shots stack in the points' order on the sheet;
+  - labels in crowded spots move a little or switch sides to the closest clear spot instead of going far away;
+  - shots with protected codes are never hidden, and hand-placed labels stay where they are;
+  - label size is checked against the user's own hand placements;
+  - a workflow for refining the result with the user.
 
 ## v2.0.0 — 2026-10-14: civil3d-mcp-unified
 
