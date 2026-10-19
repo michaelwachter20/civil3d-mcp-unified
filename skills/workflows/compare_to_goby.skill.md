@@ -12,7 +12,7 @@ parameters:
   - name: layerPattern
     type: string
     required: false
-    description: Optional regex; lists what is on matching layers in both drawings (e.g. "DITCH|RIM")
+    description: Optional regex; lists what is on matching layers in both drawings (e.g. "PERIMETER|LIMIT")
 ---
 
 > Verified on Civil 3D 2027.
