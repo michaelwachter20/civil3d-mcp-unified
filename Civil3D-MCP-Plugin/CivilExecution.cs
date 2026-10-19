@@ -168,27 +168,56 @@ public static class CivilExecution
 
   private static async Task<T> RunInCommandContextAsync<T>(Func<Task<T>> action)
   {
-    T? result = default;
-    Exception? capturedException = null;
+    var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    const int Pending = 0, Running = 1, Abandoned = 2;
+    var state = Pending;
 
-    await App.DocumentManager.ExecuteInCommandContextAsync(async _ =>
+    async Task Callback(object? _)
     {
+      // Never run late: whichever of "start" and "give up" happens first wins, atomically.
+      if (Interlocked.CompareExchange(ref state, Running, Pending) != Pending)
+      {
+        PluginLog.Warn("CivilExecution", "Command-context work started after its request was abandoned; skipped.");
+        return;
+      }
+
+      started.TrySetResult(true);
       try
       {
-        result = await action();
+        completion.TrySetResult(await action());
       }
       catch (Exception ex)
       {
-        capturedException = ex;
+        completion.TrySetException(ex);
       }
-    }, null);
-
-    if (capturedException != null)
-    {
-      throw capturedException;
     }
 
-    return result!;
+    // DocumentManager.ExecuteInCommandContextAsync must be called on the main thread in
+    // application context; from a background thread the work can stay queued forever.
+    var context = _mainThreadContext;
+    if (context != null)
+    {
+      await PostToMainThreadAsync(context, () =>
+      {
+        _ = App.DocumentManager.ExecuteInCommandContextAsync(Callback, null);
+        return Task.FromResult(true);
+      });
+    }
+    else
+    {
+      _ = App.DocumentManager.ExecuteInCommandContextAsync(Callback, null);
+    }
+
+    PluginLog.Debug("CivilExecution", "Queued command-context work.");
+    if (await Task.WhenAny(started.Task, Task.Delay(IdleWait)) != started.Task &&
+        Interlocked.CompareExchange(ref state, Abandoned, Pending) == Pending)
+    {
+      PluginLog.Warn("CivilExecution", $"Command-context work did not start within {IdleWait.TotalSeconds:0}s; abandoned (it will not run).");
+      throw BusyError();
+    }
+
+    return await completion.Task;
   }
 
   /// <summary>Runs a small read on the main thread outside the request queue, with a timeout.</summary>

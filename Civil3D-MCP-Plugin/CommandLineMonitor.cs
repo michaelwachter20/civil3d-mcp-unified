@@ -85,8 +85,9 @@ internal static class CommandLineMonitor
   /// <summary>Last command-line lines. Main thread only.</summary>
   public static IReadOnlyList<string> LastLines(int count)
   {
+    // AutoCAD returns the newest line first; return them oldest first, like the F2 history.
     var lines = Autodesk.AutoCAD.Internal.Utils.GetLastCommandLines(count, true);
-    return lines == null ? Array.Empty<string>() : lines.Cast<string>().ToList();
+    return lines == null ? Array.Empty<string>() : lines.Cast<string>().Reverse().ToList();
   }
 
   public static async Task<object?> GetCommandLineAsync(System.Text.Json.Nodes.JsonObject? parameters)
