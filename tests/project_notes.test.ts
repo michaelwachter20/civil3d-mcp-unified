@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, projectForDrawing, removeProjectNote, updateProjectNote,
+  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, projectForDrawing, removeProjectNote, unlinkProjectFolder, updateProjectNote,
 } from "../src/tools/projectNotes.js";
 import { hasApprovalRisk } from "../src/tools/approvalPolicy.js";
 import { SCRIPTING_DOMAIN_DEFINITION } from "../src/tools/domains/scriptingDomain.js";
@@ -43,6 +43,19 @@ describe("project notes (kept on this computer, matched by folder)", () => {
     expect(listed.notes).toEqual([expect.objectContaining({ id: "note-1", note: "Go-by: previous submittal." })]);
     await removeProjectNote("note-1", "Site A");
     expect((await listProjectNotes("Site A")).notes).toHaveLength(0);
+  });
+
+  it("adds more folders later and unlinks one without losing notes", async () => {
+    const test = join(root, "testing");
+    const real = join(root, "projects", "real job");
+    await linkProjectFolder("Site A", test);
+    await addProjectNote("A note.", "Site A");
+    expect((await linkProjectFolder("Site A", real)).folders).toHaveLength(2);
+    expect(projectForDrawing(join(real, "x.dwg"))?.name).toBe("Site A");
+    expect(unlinkProjectFolder("Site A", test).folders).toHaveLength(1);
+    expect(projectForDrawing(join(test, "x.dwg"))).toBeUndefined();
+    expect((await listProjectNotes("Site A")).notes).toHaveLength(1);
+    expect(() => unlinkProjectFolder("Site A", test)).toThrow(/isn't linked/);
   });
 
   it("rejects unknown projects", async () => {

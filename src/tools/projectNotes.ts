@@ -138,6 +138,20 @@ export async function linkProjectFolder(name: string, folder?: string) {
   return { success: true, action: created ? "created" : "linked", project: project.name, folders: project.folders, path: projectFile(project.name) };
 }
 
+/** Removes a folder from a project (its notes are kept). */
+export function unlinkProjectFolder(name: string, folder: string) {
+  const project = findProject(name);
+  if (!project) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No project named '${name}'.`);
+  const normalized = normalizeFolder(folder).toLowerCase();
+  const remaining = project.folders.filter((existing) => normalizeFolder(existing).toLowerCase() !== normalized);
+  if (remaining.length === project.folders.length) {
+    throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `'${folder}' isn't linked to '${project.name}'. Linked: ${project.folders.join("; ") || "(none)"}.`);
+  }
+  project.folders = remaining;
+  saveProject(project);
+  return { success: true, action: "unlinked", project: project.name, folders: project.folders };
+}
+
 export async function addProjectNote(note: string, name?: string) {
   const text = oneLine(note);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The note is empty.");
