@@ -42,11 +42,40 @@ internal static class CommandLineMonitor
       return;
     }
 
-    var name = Path.GetFileName(document.Name);
-    document.CommandWillStart += (_, e) => Record(name, e.GlobalCommandName, "started", +1);
-    document.CommandEnded += (_, e) => Record(name, e.GlobalCommandName, "ended", -1);
-    document.CommandCancelled += (_, e) => Record(name, e.GlobalCommandName, "cancelled", -1);
-    document.CommandFailed += (_, e) => Record(name, e.GlobalCommandName, "failed", -1);
+    // Read the name when the event fires: a document's name changes when a drawing is opened into it.
+    string Name() => Path.GetFileName(document.Name);
+    document.CommandWillStart += (_, e) => Record(Name(), e.GlobalCommandName, "started", +1);
+    document.CommandEnded += (_, e) => Record(Name(), e.GlobalCommandName, "ended", -1);
+    document.CommandCancelled += (_, e) => Record(Name(), e.GlobalCommandName, "cancelled", -1);
+    document.CommandFailed += (_, e) => Record(Name(), e.GlobalCommandName, "failed", -1);
+  }
+
+  // Commands that don't add work of the user's own to the undo history.
+  private static readonly HashSet<string> NotUserWork = new(StringComparer.OrdinalIgnoreCase)
+  {
+    "UNDO", "U", "REDO", "MREDO", "QSAVE", "SAVE", "SAVEAS", "COMMANDLINE", "EXECUTEFUNCTION",
+  };
+
+  /// <summary>
+  /// Commands the user finished in <paramref name="drawing"/> after the AI's last change (the last
+  /// EXECUTEFUNCTION). UNDO would undo these first, so undo must not run without asking.
+  /// </summary>
+  public static IReadOnlyList<string> UserCommandsSinceLastAiChange(string drawing)
+  {
+    lock (Sync)
+    {
+      var found = new List<string>();
+      for (var node = History.Last; node != null; node = node.Previous)
+      {
+        var e = node.Value;
+        if (!string.Equals(e.Drawing, drawing, StringComparison.OrdinalIgnoreCase)) continue;
+        if (string.Equals(e.Command, "EXECUTEFUNCTION", StringComparison.OrdinalIgnoreCase)) break;
+        if (e.Event == "ended" && !NotUserWork.Contains(e.Command)) found.Add($"{e.Command} at {e.Utc:HH:mm:ss} UTC");
+      }
+
+      found.Reverse();
+      return found;
+    }
   }
 
   private static void Record(string drawing, string command, string what, int delta)

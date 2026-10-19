@@ -139,6 +139,27 @@ public sealed class ScriptContext
 
   internal Extents3d? Focus { get; private set; }
 
+  /// <summary>
+  /// Deletes a point group the right way, through the point group collection. Erasing a PointGroup
+  /// object directly leaves an empty slot in the display order that breaks the Point Groups dialog
+  /// until the drawing is reopened. Returns false if no group has that name. Points are not touched.
+  /// </summary>
+  public bool RemovePointGroup(string name)
+  {
+    if (!IsWriteMode)
+    {
+      throw new InvalidOperationException("RemovePointGroup requires write mode (civil3d_execute).");
+    }
+
+    if (!CivilDoc.PointGroups.Contains(name))
+    {
+      return false;
+    }
+
+    CivilDoc.PointGroups.Remove(CivilDoc.PointGroups[name]);
+    return true;
+  }
+
   /// <summary>Drawings open in this Civil 3D window (Name, Path, Active).</summary>
   public IReadOnlyList<OpenDrawingInfo> OpenDrawings => ReferenceDrawing.ListOpen();
 

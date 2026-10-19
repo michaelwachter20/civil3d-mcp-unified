@@ -223,8 +223,20 @@ public static class DrawingCommands
   public static Task<object?> UndoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
+    var force = parameters?["force"]?.GetValue<bool>() ?? false;
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      // UNDO takes back the most recent steps, whoever made them. If the user has worked in the
+      // drawing since the AI's last change, undoing would revert the user's work instead.
+      var userWork = CommandLineMonitor.UserCommandsSinceLastAiChange(Path.GetFileName(doc.Name));
+      if (userWork.Count > 0 && !force)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.CONFLICT",
+          $"Not undoing: the user ran {string.Join(", ", userWork)} after the AI's last change, so UNDO would undo the user's work first. " +
+          "Ask the user, or pass force=true if they agree.");
+      }
+
       doc.SendStringToExecute($"_.UNDO {steps} ", true, false, false);
       return new Dictionary<string, object?>
       {

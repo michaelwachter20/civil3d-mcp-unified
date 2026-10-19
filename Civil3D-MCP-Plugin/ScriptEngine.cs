@@ -62,6 +62,8 @@ internal static class ScriptEngine
     "Autodesk.Civil.DatabaseServices",
     "Autodesk.Civil.DatabaseServices.Styles",
     "Autodesk.Civil.Settings",
+    // So scripts can name ReferenceDrawing / OpenDrawingInfo (plugin internals stay blocked by the sandbox).
+    "Civil3DMcpPlugin",
   };
 
   /// <summary>Script timeout (CIVIL3D_SCRIPT_TIMEOUT_SECONDS, default 110s — just under the Node command timeout).</summary>
