@@ -387,7 +387,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       toolName: "civil3d_preferences",
       displayName: "Civil 3D Preferences",
       description:
-        "The user's standing rules (e.g. 'we plot at 1\" = 30\''; 'never move COGO points'; 'hide group is Secondary Filter'). They are " +
+        "The user's standing rules (e.g. 'we plot at 1\" = 30\''; 'never move COGO points'; 'hide group is HIDDEN POINTS'). They are " +
         "included in the instructions every chat receives. action=list; add (rule) when the user states a standing rule or standard; " +
         "update (id, rule); remove (id) when the user retracts one. Ask before adding or changing.",
       inputShape: {

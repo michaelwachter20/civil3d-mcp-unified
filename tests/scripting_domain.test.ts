@@ -85,9 +85,9 @@ describe("knowledge base: skills, preferences and lessons", () => {
   });
 
   it("keeps standing preferences and puts them into every chat's instructions", () => {
-    const first = addPreference("Hide group is 'Secondary Filter'");
+    const first = addPreference("Hide group is 'HIDDEN POINTS'");
     expect(first.action).toBe("added");
-    expect(addPreference("hide group is 'secondary filter'").action).toBe("unchanged");
+    expect(addPreference("hide group is 'hidden points'").action).toBe("unchanged");
     addPreference("We plot at 1\" = 30'");
     updatePreference(first.preference.id, "Hide group is 'Hidden Points'");
     expect(listPreferences().map((preference) => preference.rule)).toEqual(["Hide group is 'Hidden Points'", "We plot at 1\" = 30'"]);
