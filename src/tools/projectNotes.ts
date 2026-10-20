@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
 import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.js";
@@ -7,6 +7,8 @@ import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.
  * Project notes: what the assistant learned about ONE job (its point groups and their purpose, which survey
  * dates belong to which feature, which drawing is the go-by, sheet conventions, ...). They stay on this
  * computer, in <knowledge dir>\projects\<project>.json, and are never part of the general lessons or skills.
+ * Reference files the user adds for the project (PDFs, spreadsheets, images, ...) go in the folder of the same
+ * name next to it, <knowledge dir>\projects\<project>\ (see projectFilesDirectory).
  * A project is matched by folder: notes come back automatically when the active drawing is inside one of
  * the project's folders.
  */
@@ -36,6 +38,41 @@ function projectFile(name: string): string {
   const key = slug(name);
   if (!key) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give the project a name with letters or digits.");
   return path.join(projectsDirectory(), `${key}.json`);
+}
+
+/**
+ * The project's files folder: <knowledge dir>\projects\<project> next to <project>.json (same name, so the two
+ * belong together). The user drops reference material there - PDFs, Word and Excel files, images, anything, in
+ * any subfolders - for the assistant to read and analyse. Created when the project is created or first listed.
+ */
+export function projectFilesDirectory(name: string): string {
+  return projectFile(name).replace(/\.json$/, "");
+}
+
+function ensureFilesDirectory(name: string): string {
+  const dir = projectFilesDirectory(name);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export interface ProjectFileEntry { path: string; size: number; modified: string }
+
+/** Every file in the project's files folder (relative paths, subfolders included). */
+export function listProjectFilesIn(dir: string, limit = 500): { files: ProjectFileEntry[]; truncated: boolean } {
+  const files: ProjectFileEntry[] = [];
+  const walk = (current: string) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (files.length >= limit) return;
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.isFile()) continue;
+      const stat = statSync(full);
+      files.push({ path: path.relative(dir, full), size: stat.size, modified: stat.mtime.toISOString() });
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return { files, truncated: files.length >= limit };
 }
 
 export function listProjects(): Project[] {
@@ -120,10 +157,29 @@ export async function listProjectNotes(name?: string) {
         hint: "No project linked to this drawing's folder yet. Ask the user for a project name and use action=link.",
       };
     }
-    return { project: project.name, folders: project.folders, notes: project.notes, path: projectFile(project.name) };
+    return describe(project);
   }
   const { project } = await resolveProject(name);
-  return { project: project.name, folders: project.folders, notes: project.notes, path: projectFile(project.name) };
+  return describe(project);
+}
+
+function describe(project: Project) {
+  const filesFolder = ensureFilesDirectory(project.name);
+  const { files } = listProjectFilesIn(filesFolder);
+  return { project: project.name, folders: project.folders, notes: project.notes, path: projectFile(project.name), filesFolder, files: files.length };
+}
+
+/** The project's files folder and what is in it (action=files). */
+export async function listProjectFiles(name?: string) {
+  const { project } = await resolveProject(name);
+  const filesFolder = ensureFilesDirectory(project.name);
+  const { files, truncated } = listProjectFilesIn(filesFolder);
+  return {
+    project: project.name, filesFolder, files, truncated,
+    hint: files.length === 0
+      ? "Empty. The user can drop PDFs, Word/Excel files, images or anything else here (subfolders are fine)."
+      : "Read files from this folder when they help (PDFs, spreadsheets, images, ...). Project-specific: keep findings in project notes, not in general lessons or skills.",
+  };
 }
 
 /** Creates the project if needed and links a folder to it (default: the active drawing's folder). */
@@ -135,7 +191,8 @@ export async function linkProjectFolder(name: string, folder?: string) {
   const created = project.folders.length === 0 && project.notes.length === 0;
   if (!project.folders.some((existing) => normalizeFolder(existing).toLowerCase() === normalized.toLowerCase())) project.folders.push(normalized);
   saveProject(project);
-  return { success: true, action: created ? "created" : "linked", project: project.name, folders: project.folders, path: projectFile(project.name) };
+  const filesFolder = ensureFilesDirectory(project.name);
+  return { success: true, action: created ? "created" : "linked", project: project.name, folders: project.folders, path: projectFile(project.name), filesFolder };
 }
 
 /** Removes a folder from a project (its notes are kept). */
@@ -190,12 +247,15 @@ export async function removeProjectNote(id: string, name?: string) {
 // without being repeated on every call.
 const announced = new Set<string>();
 
-export async function projectNotesOnce(): Promise<{ project: string; notes: ProjectNote[] } | undefined> {
+export async function projectNotesOnce(): Promise<{ project: string; notes: ProjectNote[]; filesFolder: string; files: string[] } | undefined> {
   try {
     const project = projectForDrawing(await activeDrawingPath());
-    if (!project || project.notes.length === 0 || announced.has(project.name)) return undefined;
+    if (!project || announced.has(project.name)) return undefined;
+    const filesFolder = projectFilesDirectory(project.name);
+    const files = listProjectFilesIn(filesFolder, 50).files.map((file) => file.path);
+    if (project.notes.length === 0 && files.length === 0) return undefined;
     announced.add(project.name);
-    return { project: project.name, notes: project.notes };
+    return { project: project.name, notes: project.notes, filesFolder, files };
   } catch {
     return undefined;
   }

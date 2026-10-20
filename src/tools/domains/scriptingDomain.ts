@@ -9,7 +9,7 @@ import {
   removePreference, searchLessons, updatePreference,
 } from "../knowledgeBase.js";
 import {
-  addProjectNote, linkProjectFolder, listProjectNotes, projectNotesOnce, removeProjectNote, unlinkProjectFolder, updateProjectNote,
+  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, projectNotesOnce, removeProjectNote, unlinkProjectFolder, updateProjectNote,
 } from "../projectNotes.js";
 
 /**
@@ -84,6 +84,7 @@ const ProjectUnlinkArgs = z.object({ action: z.literal("project_unlink"), projec
 const ProjectAddArgs =z.object({ action: z.literal("project_add"), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
 const ProjectUpdateArgs = z.object({ action: z.literal("project_update"), id: z.string().min(1), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
 const ProjectRemoveArgs = z.object({ action: z.literal("project_remove"), id: z.string().min(1), project: ProjectNameSchema.optional() });
+const ProjectFilesArgs = z.object({ action: z.literal("project_files"), project: ProjectNameSchema.optional() });
 const ScriptSaveArgs = z.object({
   action: z.literal("script_save"),
   name: ScriptNameSchema,
@@ -279,6 +280,11 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => removeProjectNote(args.id as string, args.project as string | undefined),
     },
+    project_files: {
+      action: "project_files", inputSchema: ProjectFilesArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => listProjectFiles(args.project as string | undefined),
+    },
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["scriptSave"],
@@ -435,15 +441,17 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "made. A project is matched by folder; its notes are returned with the first civil3d_execute/civil3d_query result of a session. " +
         "action=list (current drawing's project, or project); link (project, optional folder; default the active drawing's folder) to create " +
         "a project or add another folder to it at any time (a project can span several folders); unlink (project, folder) to drop a folder " +
-        "(notes are kept); add (note) / update (id, note) / remove (id), optional project. Ask before adding or changing.",
+        "(notes are kept); add (note) / update (id, note) / remove (id), optional project; files (optional project) lists the project's " +
+        "files folder (<knowledge dir>\\projects\\<project>\\, next to <project>.json, subfolders included), where the user drops PDFs, " +
+        "Word/Excel files, images or anything else to read and analyse for that project. Ask before adding or changing.",
       inputShape: {
-        action: z.enum(["list", "link", "unlink", "add", "update", "remove"]),
+        action: z.enum(["list", "link", "unlink", "add", "update", "remove", "files"]),
         project: z.string().optional(),
         folder: z.string().optional(),
         note: z.string().optional(),
         id: z.string().optional(),
       },
-      supportedActions: ["project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove"],
+      supportedActions: ["project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files"],
       resolveAction: (rawArgs) => {
         const action = `project_${String(rawArgs.action ?? "")}`;
         return { action, args: { ...rawArgs, action } };

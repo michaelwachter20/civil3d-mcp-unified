@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, projectForDrawing, removeProjectNote, unlinkProjectFolder, updateProjectNote,
+  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, listProjects, projectForDrawing, removeProjectNote, unlinkProjectFolder, updateProjectNote,
 } from "../src/tools/projectNotes.js";
 import { hasApprovalRisk } from "../src/tools/approvalPolicy.js";
 import { SCRIPTING_DOMAIN_DEFINITION } from "../src/tools/domains/scriptingDomain.js";
@@ -30,6 +30,18 @@ describe("project notes (kept on this computer, matched by folder)", () => {
     expect(projectForDrawing(join(jobs, "phase 2", "x.dwg"))?.name).toBe("Site A sub");
     expect(projectForDrawing(join(root, "elsewhere", "y.dwg"))).toBeUndefined();
     expect(listProjects().map((project) => project.name).sort()).toEqual(["Site A", "Site A sub"]);
+  });
+
+  it("gives each project a files folder named like its .json, listing files in subfolders too", async () => {
+    const linked = await linkProjectFolder("Site A", join(root, "jobs", "site-a"));
+    expect(linked.filesFolder).toBe(join(root, "projects", "site-a"));
+    expect(existsSync(linked.filesFolder)).toBe(true);
+    mkdirSync(join(linked.filesFolder, "specs", "2026"), { recursive: true });
+    writeFileSync(join(linked.filesFolder, "segments.pdf"), "pdf");
+    writeFileSync(join(linked.filesFolder, "specs", "2026", "table.xlsx"), "xlsx");
+    const listed = await listProjectFiles("Site A");
+    expect(listed.files.map((file) => file.path)).toEqual(["segments.pdf", join("specs", "2026", "table.xlsx")]);
+    expect((await listProjectNotes("Site A")).files).toBe(2);
   });
 
   it("adds, updates and removes notes, and files them under the knowledge folder", async () => {

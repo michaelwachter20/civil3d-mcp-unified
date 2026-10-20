@@ -5,6 +5,9 @@
 - The knowledge base folder is now `Documents\Civil3DMcp-KnowledgeBase` (was `Documents\Civil3DMcp`): preferences,
   lessons, project notes, skills and saved scripts. The MCP server and the plugin each move the old folder on first
   use when the new one doesn't exist. `CIVIL3D_KNOWLEDGE_DIR` and `CIVIL3D_SCRIPTS_DIR` still override it.
+- Project files folder: `projects\<project>\` next to `<project>.json`, for PDFs, spreadsheets, images or anything else
+  the user wants read for that project (subfolders included). Created with the project; `civil3d_project_notes
+  action=files` lists it, and the first code result of a session names it with its files.
 
 ## v2.1.0 — 2026-10-19
 

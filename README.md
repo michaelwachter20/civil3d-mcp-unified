@@ -138,6 +138,7 @@ with use instead of waiting for a new release:
 | **Preferences**: your standing rules and standards ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
 | **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about (general, never project-specific) | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
 | **Project notes**: facts about one job (what its point groups are for, which drawing is the go-by, decisions made), matched to the project by folder | `projects\<project>.json` | `civil3d_project_notes action=link / add / list` |
+| **Project files**: anything you want the assistant to read for one job (PDFs, Word/Excel files, images, in any subfolders) | `projects\<project>\` (same name as the `.json`) | Drop files in; `civil3d_project_notes action=files` lists them |
 | **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
 | **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
 
