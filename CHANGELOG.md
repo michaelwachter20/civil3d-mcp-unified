@@ -1,6 +1,6 @@
 # Changelog
 
-## v2.2.0 — 2026-10-20
+## v2.2.2 — 2026-10-20
 
 - The knowledge base folder is now `Documents\Civil3DMcp-KnowledgeBase` (was `Documents\Civil3DMcp`): preferences,
   lessons, project notes, skills and saved scripts. The MCP server and the plugin each move the old folder on first
@@ -8,6 +8,12 @@
 - Project files folder: `projects\<project>\` next to `<project>.json`, for PDFs, spreadsheets, images or anything else
   the user wants read for that project (subfolders included). Created with the project; `civil3d_project_notes
   action=files` lists it, and the first code result of a session names it with its files.
+- New skills: `daily_field_import` (import a day's checked field files into an all-points drawing: a layer and a
+  point group per crew, duplicate point numbers offset by a fixed step, point data exactly as in the file, field files
+  read only) and `points_by_segment_report` (shot types, segment and station range to the nearest +25 ft per group).
+- README brought up to date with 2.1.0 (several drawings, command line, HOST_BUSY, UNDO refusal, script helpers, crash
+  guard) and garbled characters (bullets, dashes, arrows) fixed in README.md and docs/DEPLOYMENT.md.
+- Release tags v2.2.0 and v2.2.1 did not publish (the tag didn't match package.json); this is the first 2.2 release.
 
 ## v2.1.0 — 2026-10-19
 
