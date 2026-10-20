@@ -154,7 +154,7 @@ The package is configured for npm publishing as-is. The `files` field in `packag
 ```json
 {
   "name": "civil3d-mcp",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "main": "build/index.js",
   "bin": {
     "civil3d-mcp": "./build/index.js"
@@ -363,7 +363,7 @@ Expected response when Civil 3D is connected:
 ```json
 {
   "connected": true,
-  "pluginVersion": "2.1.0.0",
+  "pluginVersion": "2.2.0.0",
   "drawingLoaded": true,
   "queueDepth": 0,
   "queueCapacity": 64,
