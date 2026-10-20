@@ -1,5 +1,14 @@
 # Changelog
 
+## v2.2.3 — 2026-10-20
+
+- New skill `mass_save_as`: Save As several open drawings to new names so the open tabs become the new files.
+  Checks every target first and never overwrites. It switches to each drawing and runs SAVEAS, because
+  `Database.SaveAs` from a script only writes a copy and the tab keeps its old file.
+- New skill `sheet_station_titles`: sets each sheet's station-range subtitle to what its plan viewport shows, to the
+  nearest foot, chained page to page with the smaller station first. A read-only plan flags gaps, overlaps and
+  sheets with two alignments for the user; apply mode only replaces the station text.
+
 ## v2.2.2 — 2026-10-20
 
 - The knowledge base folder is now `Documents\Civil3DMcp-KnowledgeBase` (was `Documents\Civil3DMcp`): preferences,
