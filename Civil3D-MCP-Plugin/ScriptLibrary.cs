@@ -39,7 +39,7 @@ internal sealed record SavedScript(
 /// // ---
 /// ...C# code...
 /// </code>
-/// Directory: CIVIL3D_SCRIPTS_DIR, or Documents\Civil3DMcp\scripts.
+/// Directory: CIVIL3D_SCRIPTS_DIR, or Documents\Civil3DMcp-KnowledgeBase\scripts.
 /// </summary>
 internal static class ScriptLibrary
 {
@@ -52,14 +52,52 @@ internal static class ScriptLibrary
     "string", "number", "integer", "boolean", "point", "string[]", "json",
   };
 
+  private const string KnowledgeFolderName = "Civil3DMcp-KnowledgeBase";
+  private const string LegacyKnowledgeFolderName = "Civil3DMcp";
+  private static bool _migrationChecked;
+
   public static string Directory
   {
     get
     {
       var configured = Environment.GetEnvironmentVariable("CIVIL3D_SCRIPTS_DIR");
-      return string.IsNullOrWhiteSpace(configured)
-        ? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Civil3DMcp", "scripts")
-        : configured.Trim();
+      if (!string.IsNullOrWhiteSpace(configured))
+      {
+        return configured.Trim();
+      }
+
+      var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+      if (!_migrationChecked)
+      {
+        _migrationChecked = true;
+        MigrateLegacyKnowledgeFolder(documents);
+      }
+
+      return System.IO.Path.Combine(documents, KnowledgeFolderName, "scripts");
+    }
+  }
+
+  /// <summary>
+  /// The knowledge base (scripts included) moved from Documents\Civil3DMcp to Documents\Civil3DMcp-KnowledgeBase
+  /// in 2.2.0. Moves the old folder once, when it exists and the new one doesn't (the MCP server does the same).
+  /// </summary>
+  private static void MigrateLegacyKnowledgeFolder(string documents)
+  {
+    var legacy = System.IO.Path.Combine(documents, LegacyKnowledgeFolderName);
+    var current = System.IO.Path.Combine(documents, KnowledgeFolderName);
+    if (!System.IO.Directory.Exists(legacy) || System.IO.Directory.Exists(current))
+    {
+      return;
+    }
+
+    try
+    {
+      System.IO.Directory.Move(legacy, current);
+      PluginLog.Info("Scripts", $"Knowledge base moved from {legacy} to {current}.");
+    }
+    catch (System.Exception exception)
+    {
+      PluginLog.Warn("Scripts", $"Could not move {legacy} to {current}: {exception.Message}");
     }
   }
 

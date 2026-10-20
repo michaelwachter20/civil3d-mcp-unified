@@ -23,7 +23,7 @@ import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.
  *
  * Two libraries are merged:
  * - built-in skills, shipped with the server (read-only), and
- * - the user's skills in the knowledge base (default Documents\Civil3DMcp\skills), which the assistant
+ * - the user's skills in the knowledge base (default Documents\Civil3DMcp-KnowledgeBase\skills), which the assistant
  *   creates and improves during normal use. A user skill with a built-in skill's name replaces it, so
  *   learned improvements survive new releases.
  *

@@ -6,7 +6,7 @@ import { withApplicationConnection } from "../utils/ConnectionManager.js";
 
 /**
  * The assistant's knowledge base: everything it learns while working, kept as plain files in one folder
- * (default Documents\Civil3DMcp, or CIVIL3D_KNOWLEDGE_DIR) so the next chat, or a colleague's assistant
+ * (default Documents\Civil3DMcp-KnowledgeBase, or CIVIL3D_KNOWLEDGE_DIR) so the next chat, or a colleague's assistant
  * pointed at the same folder, starts out experienced.
  *
  *   preferences.json        standing rules from the user, included in every AI's instructions
@@ -20,8 +20,45 @@ import { withApplicationConnection } from "../utils/ConnectionManager.js";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
+export const KNOWLEDGE_FOLDER_NAME = "Civil3DMcp-KnowledgeBase";
+/** Folder name used before 2.2.0; moved to KNOWLEDGE_FOLDER_NAME on first use. */
+export const LEGACY_KNOWLEDGE_FOLDER_NAME = "Civil3DMcp";
+
+let migrationChecked = false;
+
+/**
+ * Moves the knowledge base from the old default folder (Documents\Civil3DMcp) to the new one
+ * (Documents\Civil3DMcp-KnowledgeBase) once, when the old one exists and the new one doesn't.
+ * Nothing happens when CIVIL3D_KNOWLEDGE_DIR is set. Returns a note when it moved the folder.
+ */
+export function migrateLegacyKnowledgeFolder(documentsDir = path.join(os.homedir(), "Documents")): string | undefined {
+  const legacy = path.join(documentsDir, LEGACY_KNOWLEDGE_FOLDER_NAME);
+  const current = path.join(documentsDir, KNOWLEDGE_FOLDER_NAME);
+  if (!existsSync(legacy) || existsSync(current)) {
+    return undefined;
+  }
+
+  try {
+    renameSync(legacy, current);
+    return `Knowledge base moved from ${legacy} to ${current}.`;
+  } catch {
+    return undefined;   // in use or not allowed: keep using the new (empty) default, the old folder stays intact
+  }
+}
+
 export function knowledgeRoot(): string {
-  return process.env.CIVIL3D_KNOWLEDGE_DIR?.trim() || path.join(os.homedir(), "Documents", "Civil3DMcp");
+  const configured = process.env.CIVIL3D_KNOWLEDGE_DIR?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const documents = path.join(os.homedir(), "Documents");
+  if (!migrationChecked) {
+    migrationChecked = true;
+    migrateLegacyKnowledgeFolder(documents);
+  }
+
+  return path.join(documents, KNOWLEDGE_FOLDER_NAME);
 }
 
 export function preferencesFile(): string {

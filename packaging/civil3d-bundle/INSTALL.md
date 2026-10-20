@@ -44,7 +44,7 @@ that is active in that window.
 Close Civil 3D, then either double-click **`Uninstall-Civil3DPlugin.cmd`**, or go to **Windows Settings → Apps →
 Installed apps → Civil 3D MCP plugin → Uninstall**. This removes the plugin, its Apps entry, and the Civil 3D
 tools from Claude Desktop if the installer added them (restart Claude Desktop afterwards). Your saved
-scripts (`Documents\Civil3DMcp\scripts`) and the log (`%LOCALAPPDATA%\Civil3DMcpPlugin`) are kept; delete them by
+scripts (`Documents\Civil3DMcp-KnowledgeBase\scripts`) and the log (`%LOCALAPPDATA%\Civil3DMcpPlugin`) are kept; delete them by
 hand if you no longer want them. To remove the AI side, uninstall the extension in Claude Desktop or run
 `claude mcp remove civil3d-mcp` for Claude Code.
 
@@ -78,7 +78,7 @@ With a drawing open in Civil 3D, ask your AI app to run `civil3d_health`, or som
 ## Good to know
 
 - Changes that edit the drawing ask for approval first, and each one is a single `UNDO` step.
-- The assistant learns as you work. With your OK it saves, under `Documents\Civil3DMcp`: your preferences and rules
+- The assistant learns as you work. With your OK it saves, under `Documents\Civil3DMcp-KnowledgeBase`: your preferences and rules
   (`preferences.json`, loaded into every new chat), lessons about the Civil 3D API (`memory\lessons.jsonl`), skills
   (`skills\`) and scripts (`scripts\`, runnable in Civil 3D with `MCPRUN`). Nothing is thrown away: older versions of
   skills and scripts go to an `_archive` folder. These are plain files you can open and edit, and updates never

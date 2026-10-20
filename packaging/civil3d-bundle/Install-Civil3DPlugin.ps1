@@ -80,7 +80,7 @@ if ($Uninstall) {
     Write-Host 'The Civil 3D MCP plugin was not installed; nothing to remove.'
   }
   Write-Host 'Kept (delete by hand if you no longer want them):'
-  Write-Host "  Saved scripts, learned skills and knowledge: $([Environment]::GetFolderPath('MyDocuments'))\Civil3DMcp"
+  Write-Host "  Saved scripts, learned skills and knowledge: $([Environment]::GetFolderPath('MyDocuments'))\Civil3DMcp-KnowledgeBase"
   Write-Host "  Plugin log:    $env:LOCALAPPDATA\Civil3DMcpPlugin"
   exit 0
 }

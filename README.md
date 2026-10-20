@@ -130,7 +130,7 @@ return new { count = result.Status == PromptStatus.OK ? result.Value.Count : 0 }
 
 ### Learning on the job
 
-The assistant keeps what it learns in plain files on your PC (`Documents\Civil3DMcp` by default), so it improves
+The assistant keeps what it learns in plain files on your PC (`Documents\Civil3DMcp-KnowledgeBase` by default), so it improves
 with use instead of waiting for a new release:
 
 | What | Where | How it grows |
@@ -161,6 +161,8 @@ with use instead of waiting for a new release:
 - The assistant **asks before** saving, changing or removing anything. Learning only changes these files, never a
   drawing, so it doesn't use the drawing approval flow (removing a preference or lesson still asks for approval).
 - Everything is plain text: open the files in Notepad to review or edit them.
+- Until 2.1.0 the folder was `Documents\Civil3DMcp`. The first start after updating renames it to
+  `Documents\Civil3DMcp-KnowledgeBase` when the new one doesn't exist yet, so nothing is lost.
 - To share with a team, point `CIVIL3D_KNOWLEDGE_DIR` (and the plugin's `CIVIL3D_SCRIPTS_DIR`) at a shared folder.
   Scripts run code inside Civil 3D, so only people you trust should be able to write there.
 
@@ -170,7 +172,7 @@ When a snippet works and the task is likely to come up again, the AI saves it wi
 `civil3d_script action=save` and gives it a name, description, mode (`write` or
 `read`), and typed parameters. Scripts are compile-checked before they are saved,
 and each one is stored as a plain, editable `.csx` file in
-`Documents\Civil3DMcp\scripts` (override this with `CIVIL3D_SCRIPTS_DIR`). Later, the AI
+`Documents\Civil3DMcp-KnowledgeBase\scripts` (override this with `CIVIL3D_SCRIPTS_DIR`). Later, the AI
 reruns a script with `civil3d_script action=run`, or **you** run it from the Civil 3D
 command line:
 
@@ -1165,7 +1167,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 42-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
-| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |
+| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp-KnowledgeBase` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |
 | `CIVIL3D_USER_SKILLS_DIR` | `<knowledge dir>\skills` | Optional override for the learned-skills folder only. |
 | `CIVIL3D_RELEASE` | asked from the plugin, else `2027` | Civil 3D release used to stamp skills and lessons when Civil 3D can't be reached. |
 
@@ -1173,7 +1175,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_SCRIPTS_DIR` | `Documents\Civil3DMcp\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. |
+| `CIVIL3D_SCRIPTS_DIR` | `Documents\Civil3DMcp-KnowledgeBase\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. |
 | `CIVIL3D_SCRIPT_TIMEOUT_SECONDS` | `110` | Maximum run time per script. Keep it below `CIVIL3D_COMMAND_TIMEOUT` on the Node side. |
 | `CIVIL3D_SCRIPT_UNDO_GROUP` | `true` | Wraps each write run in `UNDO BEGIN/END` so a single undo reverts it. |
 | `CIVIL3D_READ_CONTEXT` | `application` | Read-only requests run outside command context so they don't add empty `EXECUTEFUNCTION` undo steps. Set to `command` to restore the old behavior. Reads fall back to command context while a command is active. |

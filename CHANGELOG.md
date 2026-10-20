@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The knowledge base folder is now `Documents\Civil3DMcp-KnowledgeBase` (was `Documents\Civil3DMcp`): preferences,
+  lessons, project notes, skills and saved scripts. The MCP server and the plugin each move the old folder on first
+  use when the new one doesn't exist. `CIVIL3D_KNOWLEDGE_DIR` and `CIVIL3D_SCRIPTS_DIR` still override it.
+
 ## v2.1.0 — 2026-10-19
 
 > Tested only with Autodesk Civil 3D 2027 (English) on Windows 11, like v2.0.0.
