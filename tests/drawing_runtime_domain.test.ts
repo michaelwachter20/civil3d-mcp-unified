@@ -11,4 +11,14 @@ describe("drawing runtime response contracts", () => {
       units: "feet",
     }).success).toBe(true);
   });
+
+  it("accepts selected objects that have no name or description", () => {
+    const responseSchema = DRAWING_RUNTIME_DOMAIN_DEFINITION.actions.selected_objects_info.responseSchema;
+
+    expect(responseSchema.safeParse([
+      { handle: "51ED3", objectType: "MLeader", name: null, description: null },
+      { handle: "4AEBB", objectType: "StationOffsetLabel", name: null, description: null },
+      { handle: "1F2", objectType: "Alignment", name: "Centerline", description: "" },
+    ]).success).toBe(true);
+  });
 });
