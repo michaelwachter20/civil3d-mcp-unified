@@ -35,7 +35,7 @@ project's segment table in project notes or its files folder and pass the ranges
   shots whose area code differs from the segment they are in (usually a crew working a few feet over a boundary) -
   never change the codes, only report them.
 - Job numbers: when the project keeps a request/job tracker (read only), match each piece of work to the newest
-  request for the same work type and area and give a table: Work | Pts | Job # | Tracker entry | Confidence, then
+  request for the same work type and area and give a table, headed by the field date of the data (MM/DD/YYYY): Work | Pts | Job # | Tracker entry | Confidence, then
   short notes; flag unclear matches instead of guessing.
 - Shots of another material right at the edge of the main work (e.g. a line of the neighbouring material along where
   the main material stops) are usually tie-in shots showing where one ends and the next starts: they belong to the
