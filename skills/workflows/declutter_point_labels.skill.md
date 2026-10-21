@@ -48,6 +48,10 @@ parameters:
     type: number
     required: false
     description: How far a crowded label may go in any direction before longer reaches are tried (default 0.25)
+  - name: annotationObstacles
+    type: boolean
+    required: false
+    description: Treat other annotation on the sheet (Civil labels such as station/offset labels, MLeaders, MText, text) as fixed obstacles, from exact in-memory Explode geometry (default true)
   - name: dryRun
     type: boolean
     required: false
@@ -66,6 +70,19 @@ or two per run, one undo step.
 - Labels of protected codes (default TOP/TOE/PERI) are never hidden.
 - Labels the user placed by hand stay where they are (`keepLabels`); never "improve" them.
 - Leaders never cross each other or label text; text never overlaps text.
+- Other annotation already on the sheet is a fixed obstacle (v4): point labels never sit on, or run a leader through,
+  station/offset or other Civil labels, MLeaders (their text, leader line and landing), MText or text - and no other
+  label's leader may run through a point label.
+
+## Exact geometry (v4)
+- Other annotation is measured with in-memory `Entity.Explode` - it returns copies and never changes the drawing.
+  A Civil label explodes to a block reference (explode again: border lines, MText, a Leader); an MLeader explodes to
+  MText, a landing line, the leader polyline from the arrowhead, and the arrow solid.
+- Civil 3D labels explode only in the write (command) context: in a read-only run they return nothing (MLeaders work in both). Run through `civil3d_execute`; the script stops if a label explodes empty.
+- Exploded geometry follows the ACTIVE viewport's twist and annotation scale (labels are view-oriented and
+  annotative), which is why the script runs in the activated viewport of the sheet being cleaned.
+- Points cannot be exploded (`CogoPoint.Explode` returns nothing), so point labels keep their calibrated box.
+- Check leader LINES against boxes, not only text against text: a leader running through a label is a clash.
 
 ## Placement rules (learned from a user's hand corrections)
 - Each display group has a side (`sideByGroup`), e.g. one group right-up and another left-down, so two surveys
@@ -84,7 +101,7 @@ or two per run, one undo step.
 1. Ask the user for their point group names: the display groups (`primary`, `secondary`), the hide group, and which
    side each group's labels go. `civil3d_query` can list the point groups and their style overrides.
 2. Open the layout and activate the viewport (double-click inside it).
-3. Dry run (`civil3d_query`, `dryRun: true`) and report the counts (`unresolved`, `crossingLeaders`,
+3. Dry run (`civil3d_execute` with `dryRun: true` - it changes nothing; Civil 3D labels only explode in the write context, so a read-only `civil3d_query` run would miss them) and report the counts (`unresolved`, `crossingLeaders`,
    `stackOrderViolations`, `textOnTextRemaining`).
 4. Apply as a preview (`civil3d_execute`) without saving, then select the remaining problem points for the user
    (`Editor.SetImpliedSelection` from a read-only `civil3d_query`: a selection set inside a write's command
@@ -118,7 +135,8 @@ Debug arguments: `audit: ["*"]` lists every label that conflicts as it sits now 
 - Leader = point -> elbow -> 0.05" horizontal landing; text starts right at the leader end.
 - Ignore points whose own layer, or whose label layer, is frozen, off or frozen in the viewport.
 - Points stacked within a marker width: a leader leaving one unavoidably crosses the other's marker; allow it.
-- `CogoPoint.Bounds` excludes dragged labels, and `Explode` returns nothing - don't rely on either.
+- `CogoPoint.Bounds` excludes dragged labels, and `CogoPoint.Explode` returns nothing - don't rely on either for
+  points. For every other annotation, in-memory Explode gives the exact drawn geometry (see Exact geometry).
 
 ## Script
 ```csharp
@@ -146,6 +164,8 @@ Debug arguments: `audit: ["*"]` lists every label that conflicts as it sits now 
 // then (protected/stacked) any quadrant within ~0.25", cheapest first: own side < other side or direction < both,
 // and toward the outside of the cluster. A label well above/below its point may sit nearly straight over it.
 // Label box calibrated to 0.075" with no clearance (labels may touch, never overlap). keepLabels pins hand placements.
+// v4: other annotation on the sheet (Civil labels, MLeaders, MText, text) is a fixed obstacle measured with in-memory
+// Explode in the active viewport (exact text/border boxes and leader lines); annotationObstacles=false turns it off.
 // Debug: audit=["*"] lists labels that conflict as they sit now; explain=[nums] shows planned offsets;
 // diff=true lists labels whose position differs from the plan (hand edits since a run with the same args).
 var primary = Args.GetString("primary");                // display group whose labels are placed first
@@ -255,6 +275,45 @@ foreach (ObjectId id in CivilDoc.CogoPoints) {
   L.Add(lbl);
 }
 
+// ---- fixed annotation obstacles (v4): other things drawn on the sheet that labels must not touch ----
+// Exact geometry from in-memory Explode (returns copies; the drawing is not changed). Exploded geometry follows the
+// ACTIVE viewport's twist and annotation scale, which is why this script works in the active viewport.
+//   Civil labels (station/offset etc.): box around their text + border, plus their leader lines
+//   MLeaders: text box + leader polyline + landing line;  MText / text: extents
+var obBoxes = new List<Bx>(); var obSegs = new List<Sg>(); int obstaclesSkipped = 0; bool probed = false;
+if (Args.GetBool("annotationObstacles", true)) {
+  Point2d D2(Point3d p) { var q = p.TransformBy(wcsToDcs); return new Point2d(q.X, q.Y); }
+  bool NearSheet(Point2d q) => Math.Abs(q.X - vc.X) <= hw + maxOffset * 3 && Math.Abs(q.Y - vc.Y) <= hh + maxOffset * 3;
+  void Pieces(Autodesk.AutoCAD.DatabaseServices.Entity e, List<Point2d> boxPts, List<Sg> segs, int depth) {
+    var parts = new DBObjectCollection(); try { e.Explode(parts); } catch { return; }
+    foreach (Autodesk.AutoCAD.DatabaseServices.DBObject o in parts) {
+      if (o is BlockReference br && depth < 3) Pieces(br, boxPts, segs, depth + 1);
+      else if (o is Leader ld) { for (int i = 0; i + 1 < ld.NumVertices; i++) segs.Add(new Sg(D2(ld.VertexAt(i)), D2(ld.VertexAt(i + 1)))); }
+      else if (o is Autodesk.AutoCAD.DatabaseServices.Entity pe) { try { var ex = pe.GeometricExtents; boxPts.Add(D2(ex.MinPoint)); boxPts.Add(D2(ex.MaxPoint)); boxPts.Add(D2(new Point3d(ex.MinPoint.X, ex.MaxPoint.Y, 0))); boxPts.Add(D2(new Point3d(ex.MaxPoint.X, ex.MinPoint.Y, 0))); } catch { } }
+      o.Dispose(); } }
+  foreach (ObjectId id in ModelSpace) {
+    var dxf = id.ObjectClass.DxfName; if (dxf == "AECC_COGO_POINT") continue;
+    if (!probed && Get<Autodesk.AutoCAD.DatabaseServices.Entity>(id) is Autodesk.Civil.DatabaseServices.Label pl0) { probed = true; var pp = new DBObjectCollection(); try { pl0.Explode(pp); } catch { } bool empty = pp.Count == 0; foreach (Autodesk.AutoCAD.DatabaseServices.DBObject o in pp) o.Dispose();
+      if (empty) throw new InvalidOperationException("Civil 3D labels explode to nothing in a read-only run - run with civil3d_execute (dryRun:true changes nothing), or pass annotationObstacles:false."); }
+    var e = Get<Autodesk.AutoCAD.DatabaseServices.Entity>(id);
+    bool civilLabel = e is Autodesk.Civil.DatabaseServices.Label; if (!civilLabel && !(e is MLeader) && !(e is MText) && !(e is DBText)) continue;
+    if (PointLayerInvisible(e.Layer)) continue;
+    try {
+      var boxPts = new List<Point2d>(); var segs = new List<Sg>();
+      if (e is MLeader ml) { var parts = new DBObjectCollection(); ml.Explode(parts);
+        foreach (Autodesk.AutoCAD.DatabaseServices.DBObject o in parts) { if (o is MText mt) { var ex = mt.GeometricExtents; boxPts.Add(D2(ex.MinPoint)); boxPts.Add(D2(ex.MaxPoint)); }
+          else if (o is Polyline pl) { for (int i = 0; i + 1 < pl.NumberOfVertices; i++) segs.Add(new Sg(D2(pl.GetPoint3dAt(i)), D2(pl.GetPoint3dAt(i + 1)))); }
+          else if (o is Line ln) segs.Add(new Sg(D2(ln.StartPoint), D2(ln.EndPoint))); o.Dispose(); } }
+      else if (civilLabel) Pieces(e, boxPts, segs, 0);
+      else { var ex = e.GeometricExtents; boxPts.Add(D2(ex.MinPoint)); boxPts.Add(D2(ex.MaxPoint)); }
+      if (boxPts.Count > 0) { var b = new Bx(boxPts.Min(p => p.X), boxPts.Min(p => p.Y), boxPts.Max(p => p.X), boxPts.Max(p => p.Y)); if (NearSheet(new Point2d((b.X0 + b.X1) / 2, (b.Y0 + b.Y1) / 2))) obBoxes.Add(b); }
+      foreach (var s in segs) if (NearSheet(s.A) || NearSheet(s.B)) obSegs.Add(s);
+    } catch { obstaclesSkipped++; } } }
+var Obstacle = new Lbl { Num = 0, Type = "(annotation)" };
+bool HitsObstacle(Bx box, Sg[] leader) {
+  foreach (var ob in obBoxes) { if (ob.X0 > box.X1 + reach || ob.X1 < box.X0 - reach) continue; if (BoxBox(box, ob)) return true; if (leader != null && leader.Any(s => SegBox(s.A, s.B, ob))) return true; }
+  foreach (var s in obSegs) if (SegBox(s.A, s.B, box)) return true;
+  return false; }
 // Two labels can only interact if their points are within this distance (both may be offset and long)
 double reach = 2 * (maxOffset + gap + L.Select(l => l.W).DefaultIfEmpty(0).Max() + markerR + pad) + 1;
 // Labels that touch anything (other than their own marker) before we change anything
@@ -343,6 +402,7 @@ List<Lbl> Conflicts(Lbl me, Bx box, Sg[] leader, Func<Lbl, bool> present) {
     }
     if (hit) hits.Add(o);
   }
+  if (HitsObstacle(box, leader)) hits.Add(Obstacle);   // v4: text, leaders, other labels already on the sheet
   return hits;
 }
 
@@ -507,7 +567,7 @@ string SettleCore(Lbl me, Func<Lbl, bool> present, bool allowHide) {
   if (me.Protected && TryFreeAny(me, cands.Concat(extCands).Concat(protCands).ToList(), present)) { movedOtherDirection++; return "moved"; }
   // Last resort: a spot whose only conflicts are point markers (no text on text, no leader through text,
   // no crossing leaders). Fewest marker touches wins; shorter spots win ties.
-  bool Severe(Bx box, Sg[] leader) => L.Any(o => o != me && o.Active && present(o)
+  bool Severe(Bx box, Sg[] leader) => HitsObstacle(box, leader) || L.Any(o => o != me && o.Active && present(o)
       && Math.Abs(o.P.X - me.P.X) < reach && Math.Abs(o.P.Y - me.P.Y) < reach
       && (BoxBox(box, o.Box)
           || (o.Leader != null && o.Leader.Any(s => SegBox(s.A, s.B, box)))
@@ -618,7 +678,7 @@ if (Args.Has("explain")) {
   return L.Where(l => ex.Contains(l.Num)).Select(l => new { l.Num, l.Active, unresolved = unresolved.Contains(l), dx = Math.Round((l.Anchor.X - l.P.X) / mpp, 3), dy = Math.Round((l.Anchor.Y - l.P.Y) / mpp, 3), stack = stackOf.TryGetValue(l, out var st) ? string.Join(",", st.Select(s => s.Num)) : "" }).ToList();
 }
 return new {
-  dryRun, scale = $"1\" = {mpp:0.##}'", labelsInView = L.Count, skippedInvisible, skippedPointLayer, overlappingBefore,
+  dryRun, scale = $"1\" = {mpp:0.##}'", labelsInView = L.Count, annotationObstacles = obBoxes.Count, obstacleLeaderSegments = obSegs.Count, obstaclesSkipped, labelsOnObstacles = L.Count(l => l.Active && HitsObstacle(l.Box, l.Leader)), skippedInvisible, skippedPointLayer, overlappingBefore,
   protectedShown = L.Count(l => l.Protected && l.Active), protectedHidden = L.Count(l => l.Protected && !l.Active),
   stacks = stacks.Count, stackedLabels = stacks.Sum(s => s.Count), stackOrderViolations, crossingLeaders,
   protectedUnresolved = unresolved.Where(u => u.Protected).Select(u => u.Num),

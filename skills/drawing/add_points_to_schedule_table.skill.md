@@ -46,7 +46,7 @@ rows. New points to show arrive as a point group; each needs a table row, a spre
 
 ## How to run
 1. `add-points-to-table` dry run, then run: table rows + labels.
-2. `place-labels-clear` with the new label handles: dry run, then run. Recheck with an overlap check.
+2. `place-labels-clear` with the new label handles (and `shownGroup`): activate a viewport of the sheets first and run it through `civil3d_execute` - dry run, then run. It measures everything with exact in-memory Explode geometry (Civil labels only explode in the write context; it stops if they come back empty), mirrors a label's box when it changes side, and skips sheets whose viewport twist/scale differs from the active one. Recheck with `annotation-clash-check` (skill clear_annotation_clashes).
 3. Spreadsheet (Python + openpyxl, no Excel needed): read rows A-H with each cell's style, append the new rows
    (point #, N, E, Elev, code, station, offset, date from the table), sort by station key, write values + styles back,
    rewrite the sort-key formula per row, save; compare every row with the drawing table.
