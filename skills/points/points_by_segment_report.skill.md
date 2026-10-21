@@ -40,6 +40,11 @@ project's segment table in project notes or its files folder and pass the ranges
 - Shots of another material right at the edge of the main work (e.g. a line of the neighbouring material along where
   the main material stops) are usually tie-in shots showing where one ends and the next starts: they belong to the
   main work's job, as do area-code spill shots over a segment line.
+- Status column (COMPLETE / IN PROGRESS): a job covers its whole area (full station range and full width). It is
+  COMPLETE only when the job material covers every station across the full width of the layer it goes on (the
+  previous material's footprint), counting shots from all days; otherwise IN PROGRESS, saying what is still missing
+  (stations and offset strips). Shots that belong to an older, separate request in the same area don't count. The
+  saved script job-coverage compares footprint vs job material offsets per 100 ft.
 
 ## Script
 ```csharp
