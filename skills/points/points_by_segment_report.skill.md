@@ -31,7 +31,7 @@ project's segment table in project notes or its files folder and pass the ranges
   Adjust if the project's description order differs.
 - Station ranges are widened outward to whole +25 ft (floor of the first, ceiling of the last), e.g. 75+25 to 79+50.
 - Offsets are reported as left (negative) / right (positive) of the alignment.
-- Present it per crew, then per segment and type, and call out shots whose area code differs from the segment they
+- Present the day combined (all groups together, not split by crew unless asked), per segment and type, and call out shots whose area code differs from the segment they
   are in (usually a crew working a few feet over a boundary) - never change the codes, only report them.
 
 ## Script
