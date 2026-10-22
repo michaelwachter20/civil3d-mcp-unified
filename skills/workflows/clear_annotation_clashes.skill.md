@@ -69,7 +69,7 @@ hand - and the user wants them clean and uniform, not "smallest random shift".
   if a label explodes empty.
 - Exploded geometry follows the ACTIVE viewport's twist and annotation scale: activate the viewport of one of the
   sheets; sheets whose viewport twist/scale differ are skipped and reported - activate one of them and run again.
-- A clash is: two boxes overlapping, or any leader line (labels', points', MLeaders') crossing another box.
+- A clash is: two boxes overlapping, or any leader line (labels', points', MLeaders') crossing another box - or an MLeader whose own leader runs through its own text (checked for every paper-space leader too, e.g. a cover location map). For that, measure the text glyphs (`MText.GetBoundingPoints`), not the MText frame width, and keep the landing on the side the text is on: a right-aligned text in a wide frame leaves a gap after the landing.
 - Count only what is visible on that sheet: layers on and not frozen in its viewport, and only shown points.
 
 ## How to run
@@ -87,7 +87,15 @@ int from = Args.GetInt("fromTab"), to = Args.GetInt("toTab"); var vpLayer = Args
 double ptH = 0, ptX = 0;
 var dict = Get<DBDictionary>(Database.LayoutDictionaryId); var lt = Get<LayerTable>(Database.LayerTableId);
 bool On(string n) { var r = Get<LayerTableRecord>(lt[n]); return !r.IsFrozen && !r.IsOff; }
-var rows = new List<string>(); var shown = new HashSet<uint>(Get<PointGroup>(CivilDoc.PointGroups[Args.GetString("shownGroup")]).GetPointNumbers());
+// MLeaders whose own leader line runs through their own text (model-space leaders on the measured sheets and every
+// paper-space leader, e.g. on a cover/location map). Text box = the glyphs (GetBoundingPoints), not the MText frame;
+// the landing line into the text is not counted.
+List<string> SelfThrough(MLeader ml, Func<Point3d, Point2d> D) { var r = new List<string>(); var parts = new DBObjectCollection(); try { ml.Explode(parts); } catch { return r; }
+  List<Point2d> box = null; var segs = new List<(Point2d a, Point2d b)>();
+  foreach (Autodesk.AutoCAD.DatabaseServices.DBObject o in parts) { if (o is MText mt) box = mt.GetBoundingPoints().Cast<Point3d>().Select(D).ToList(); else if (o is Polyline p2) for (int i = 0; i + 1 < p2.NumberOfVertices; i++) segs.Add((D(p2.GetPoint3dAt(i)), D(p2.GetPoint3dAt(i + 1)))); o.Dispose(); }
+  if (box == null) return r; double x0 = box.Min(p => p.X), x1 = box.Max(p => p.X), y0 = box.Min(p => p.Y), y1 = box.Max(p => p.Y); double tol = Math.Min(x1 - x0, y1 - y0) * 0.05;
+  foreach (var s in segs) { int n = 200; for (int k = 1; k < n; k++) { var q = k / (double)n; double x = s.a.X + (s.b.X - s.a.X) * q, y = s.a.Y + (s.b.Y - s.a.Y) * q; if (x > x0 + tol && x < x1 - tol && y > y0 + tol && y < y1 - tol) { r.Add($"mleader {ml.Handle} '{ml.MText.Text.Trim()}' leader runs through its own text"); return r; } } }
+  return r; }var rows = new List<string>(); var shown = new HashSet<uint>(Get<PointGroup>(CivilDoc.PointGroups[Args.GetString("shownGroup")]).GetPointNumbers());
 // Exploded geometry follows the ACTIVE viewport (twist + annotation scale): require one, and only measure sheets whose
 // plan viewport has the same twist and scale.
 if (Database.TileMode) throw new InvalidOperationException("Open a plan sheet and activate its viewport (double-click inside it) first.");
@@ -127,6 +135,9 @@ double styleH = 0.0016667, styleX = 0.0020833;
     if (i < j && A.x0 - gap < B.x1 && A.x1 + gap > B.x0 && A.y0 - gap < B.y1 && A.y1 + gap > B.y0) { var k = $"{A.name} box x {B.name} box"; if (seen.Add(k)) rows.Add($"sheet {lay.LayoutName}: {k}"); }
     foreach (var s in A.lines) { // ignore a leader touching the box of the thing it labels at its own end (e.g. elevation label's leader at its point)
       if (SegBox(s, B)) { var k = $"{A.name} line x {B.name} box"; if (seen.Add(k)) rows.Add($"sheet {lay.LayoutName}: {k}"); break; } } } }
+foreach (DBDictionaryEntry pe in Get<DBDictionary>(Database.LayoutDictionaryId)) { var pl = Get<Layout>(pe.Value); if (pl.ModelType) continue;
+  foreach (ObjectId pid in Get<BlockTableRecord>(pl.BlockTableRecordId)) if (Get<Autodesk.AutoCAD.DatabaseServices.Entity>(pid) is MLeader pml && pml.ContentType == ContentType.MTextContent) foreach (var s in SelfThrough(pml, p => new Point2d(p.X, p.Y))) rows.Add($"layout {pl.LayoutName} (paper): {s}"); }
+foreach (ObjectId mid in ModelSpace) if (Get<Autodesk.AutoCAD.DatabaseServices.Entity>(mid) is MLeader mml && mml.ContentType == ContentType.MTextContent) foreach (var s in SelfThrough(mml, p => new Point2d(p.X, p.Y))) rows.Add($"model: {s}");
 return rows;
 ```
 
