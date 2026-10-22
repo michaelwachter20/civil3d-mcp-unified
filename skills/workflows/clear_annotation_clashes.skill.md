@@ -69,7 +69,7 @@ hand - and the user wants them clean and uniform, not "smallest random shift".
   if a label explodes empty.
 - Exploded geometry follows the ACTIVE viewport's twist and annotation scale: activate the viewport of one of the
   sheets; sheets whose viewport twist/scale differ are skipped and reported - activate one of them and run again.
-- A clash is: two boxes overlapping, or any leader line (labels', points', MLeaders') crossing another box - or an MLeader whose own leader runs through its own text (checked for every paper-space leader too, e.g. a cover location map). For that, measure the text glyphs (`MText.GetBoundingPoints`), not the MText frame width, and keep the landing on the side the text is on: a right-aligned text in a wide frame leaves a gap after the landing.
+- A clash is: two boxes overlapping, or any leader line (labels', points', MLeaders') crossing another box - or an MLeader whose own leader runs through its own text (checked for every paper-space leader too, e.g. a cover location map) - or a label whose point is on the sheet but whose text runs off the viewport onto the next sheet. For that, measure the text glyphs (`MText.GetBoundingPoints`), not the MText frame width, and keep the landing on the side the text is on: a right-aligned text in a wide frame leaves a gap after the landing.
 - Count only what is visible on that sheet: layers on and not frozen in its viewport, and only shown points.
 
 ## How to run
@@ -128,6 +128,9 @@ double styleH = 0.0016667, styleX = 0.0020833;
       AddBox($"mleader {ml.Handle} '{ml.MText.Text.Trim()}'", pts, lines); continue; }
     if (e is MText mx) { if (!InView(mx.Location)) continue; var ex = mx.GeometricExtents; AddBox($"mtext {mx.Handle} '{mx.Text}'", new[] { D(ex.MinPoint), D(ex.MaxPoint) }, new List<(Point2d, Point2d)>()); } }
   bool SegBox((Point2d a, Point2d b) s, (string name, double x0, double y0, double x1, double y1, List<(Point2d a, Point2d b)> lines) o) { int n = Math.Max(2, (int)(s.a.GetDistanceTo(s.b) / 0.4)); for (int k = 1; k < n; k++) { var t = k / (double)n; double x = s.a.X + (s.b.X - s.a.X) * t, y = s.a.Y + (s.b.Y - s.a.Y) * t; if (x > o.x0 - gap && x < o.x1 + gap && y > o.y0 - gap && y < o.y1 + gap) return true; } return false; }
+  // labels whose point is on this sheet but whose text/border runs off the viewport (bleeds onto the next sheet)
+  foreach (var it0 in items) { if (!it0.name.StartsWith("label") || it0.lines.Count == 0) continue; var an0 = it0.lines[0].a; if (Math.Abs(an0.X - v.ViewCenter.X) > hw || Math.Abs(an0.Y - v.ViewCenter.Y) > hh) continue;
+    if (it0.x0 < v.ViewCenter.X - hw || it0.x1 > v.ViewCenter.X + hw || it0.y0 < v.ViewCenter.Y - hh || it0.y1 > v.ViewCenter.Y + hh) rows.Add($"sheet {lay.LayoutName}: {it0.name} runs off the sheet"); }
   var seen = new HashSet<string>();
   for (int i = 0; i < items.Count; i++) for (int j = 0; j < items.Count; j++) { if (i == j) continue; var A = items[i]; var B = items[j];
     // only report clashes where something is on this sheet
