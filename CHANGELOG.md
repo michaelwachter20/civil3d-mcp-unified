@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.2.4 — 2026-10-22
+
+- New skill `add_points_to_schedule_table`: add a point group's points to a model-space coordinate schedule table in
+  station order, mirror the rows into the companion spreadsheet (sorted, formatting kept with each row), give each
+  point a station/offset label like its neighbours and place the labels clear on their plan sheets.
+- Label placement uses exact in-memory Explode geometry (`declutter_point_labels` v4 with annotation obstacles). New
+  skill `clear_annotation_clashes`: per-sheet clash check (box vs box, leader lines vs boxes, MLeaders whose leader
+  runs through their own text, labels running off their sheet unless another sheet shows them in full) and a
+  uniform fix. Explode follows the active viewport's twist and annotation scale, so each twist group is checked from
+  a viewport like it; Civil 3D labels explode only in the write context.
+- `points_by_segment_report`: the day is reported combined, not per crew; job numbers matched from a read-only
+  request tracker in a table headed by the field date; edge tie-in shots go to the main work's job; a COMPLETE /
+  IN PROGRESS status column (complete only when the whole area is covered and both edges are shot).
+- Fix: `selected_objects_info` failed on objects without a name or description.
 ## v2.2.3 — 2026-10-20
 
 - New skill `mass_save_as`: Save As several open drawings to new names so the open tabs become the new files.
