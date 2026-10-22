@@ -44,7 +44,9 @@ project's segment table in project notes or its files folder and pass the ranges
   COMPLETE only when the job material covers every station across the full width of the layer it goes on (the
   previous material's footprint), counting shots from all days; otherwise IN PROGRESS, saying what is still missing
   (stations and offset strips). Shots that belong to an older, separate request in the same area don't count. The
-  saved script job-coverage compares footprint vs job material offsets per 100 ft.
+  saved script job-coverage compares footprint vs job material offsets per 100 ft. The width is reached when the
+  material has its edge (perimeter shot line) on BOTH sides along the whole area - older shots beyond a shot perimeter
+  are ground outside the limit; if one side has no edge yet, it is IN PROGRESS and the report names that side.
 
 ## Script
 ```csharp
