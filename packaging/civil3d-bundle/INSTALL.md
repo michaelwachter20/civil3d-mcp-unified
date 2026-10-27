@@ -57,6 +57,9 @@ backs up Claude's settings file before adding the one `civil3d-mcp` entry.
 
 **Claude Desktop (manual, no Node.js needed):** open **Settings → Extensions → Advanced settings → Install
 Extension**, select `civil3d-mcp-{{VERSION}}.mcpb`, and accept the defaults (host `localhost`, port `8080`).
+The extension runs on the Node.js built into Claude Desktop (Node 24 in current versions), which has everything the
+project notes need. If you turned off **Use Built-in Node.js for MCP** in Claude Desktop's extension settings, it
+uses the Node.js installed on your PC instead, which then has to be 22.15 or newer.
 
 **Claude Code:** needs Node.js 22.15 or newer. To make it available only in one project folder, run this inside
 that folder (use `--scope user` instead to have it in every project):
