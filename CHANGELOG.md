@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Security updates for the server's dependencies**, so CI's `npm audit` passes again: zod 3 → 4 (zod 3 had a
+  memory-exhaustion advisory with no fix in 3.x), plus fixed versions of `@modelcontextprotocol/sdk`, body-parser,
+  undici and fast-uri. Tool parameter schemas updated for zod 4 (`z.record` names its key type); the job tools'
+  `createdAt` / `completedAt` are described as strings (they always arrive from the plugin as ISO text).
+
 ## v2.3.0 — 2026-10-26
 
 - **Project notes moved to the suite's project database.** Each job now has one SQLite database,
