@@ -39,7 +39,7 @@ internal sealed record SavedScript(
 /// // ---
 /// ...C# code...
 /// </code>
-/// Directory: CIVIL3D_SCRIPTS_DIR, or Documents\Civil3DMcp-KnowledgeBase\scripts.
+/// Directory: CIVIL3D_SCRIPTS_DIR, or Documents\Project Knowledge\civil3d\scripts (see <see cref="Directory"/>).
 /// </summary>
 internal static class ScriptLibrary
 {
@@ -52,10 +52,16 @@ internal static class ScriptLibrary
     "string", "number", "integer", "boolean", "point", "string[]", "json",
   };
 
-  private const string KnowledgeFolderName = "Civil3DMcp-KnowledgeBase";
-  private const string LegacyKnowledgeFolderName = "Civil3DMcp";
-  private static bool _migrationChecked;
+  // The suite's shared folder (project-analyzer's docs/suite-knowledge.md, "Where"); the MCP server finds it the same way.
+  private const string SharedFolderName = "Project Knowledge";
+  private static readonly string[] EarlierSharedFolderNames = { "Civil3DMcp-KnowledgeBase", "Civil3DMcp" };
+  private const string KnowHowFolderName = "civil3d";
 
+  /// <summary>
+  /// CIVIL3D_SCRIPTS_DIR, else the know-how folder's scripts (CIVIL3D_MCP_KNOWLEDGE_DIR\scripts, else
+  /// &lt;shared&gt;\civil3d\scripts), else the &lt;shared&gt;\scripts used before 2.4.0 while civil3d\scripts doesn't exist yet
+  /// (the MCP server moves it there). Nothing is created, renamed or moved here.
+  /// </summary>
   public static string Directory
   {
     get
@@ -66,39 +72,46 @@ internal static class ScriptLibrary
         return configured.Trim();
       }
 
-      var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-      if (!_migrationChecked)
+      var knowHow = Environment.GetEnvironmentVariable("CIVIL3D_MCP_KNOWLEDGE_DIR");
+      if (!string.IsNullOrWhiteSpace(knowHow))
       {
-        _migrationChecked = true;
-        MigrateLegacyKnowledgeFolder(documents);
+        return System.IO.Path.Combine(knowHow.Trim(), "scripts");
       }
 
-      return System.IO.Path.Combine(documents, KnowledgeFolderName, "scripts");
+      var shared = SharedRoot();
+      var own = System.IO.Path.Combine(shared, KnowHowFolderName, "scripts");
+      var earlier = System.IO.Path.Combine(shared, "scripts");
+      return !System.IO.Directory.Exists(own) && System.IO.Directory.Exists(earlier) ? earlier : own;
     }
   }
 
   /// <summary>
-  /// The knowledge base (scripts included) moved from Documents\Civil3DMcp to Documents\Civil3DMcp-KnowledgeBase
-  /// in 2.2.0. Moves the old folder once, when it exists and the new one doesn't (the MCP server does the same).
+  /// PROJECT_KNOWLEDGE_DIR, else CIVIL3D_KNOWLEDGE_DIR (its earlier name), else Documents\Project Knowledge if it exists,
+  /// else an earlier default that exists (Documents\Civil3DMcp-KnowledgeBase, then Documents\Civil3DMcp) as it is, else
+  /// Documents\Project Knowledge. No tool renames the folder: an older tool on the same PC would lose it.
   /// </summary>
-  private static void MigrateLegacyKnowledgeFolder(string documents)
+  private static string SharedRoot()
   {
-    var legacy = System.IO.Path.Combine(documents, LegacyKnowledgeFolderName);
-    var current = System.IO.Path.Combine(documents, KnowledgeFolderName);
-    if (!System.IO.Directory.Exists(legacy) || System.IO.Directory.Exists(current))
+    foreach (var variable in new[] { "PROJECT_KNOWLEDGE_DIR", "CIVIL3D_KNOWLEDGE_DIR" })
     {
-      return;
+      var configured = Environment.GetEnvironmentVariable(variable);
+      if (!string.IsNullOrWhiteSpace(configured))
+      {
+        return configured.Trim();
+      }
     }
 
-    try
+    var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    foreach (var name in EarlierSharedFolderNames.Prepend(SharedFolderName))
     {
-      System.IO.Directory.Move(legacy, current);
-      PluginLog.Info("Scripts", $"Knowledge base moved from {legacy} to {current}.");
+      var candidate = System.IO.Path.Combine(documents, name);
+      if (System.IO.Directory.Exists(candidate))
+      {
+        return candidate;
+      }
     }
-    catch (System.Exception exception)
-    {
-      PluginLog.Warn("Scripts", $"Could not move {legacy} to {current}: {exception.Message}");
-    }
+
+    return System.IO.Path.Combine(documents, SharedFolderName);
   }
 
   public static string NormalizeName(string rawName)

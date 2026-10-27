@@ -17,12 +17,12 @@ export { projectsDirectory } from "./projectDb.js";
 
 /**
  * Project notes: what is known about ONE job, kept in the suite's project database
- * <knowledge dir>\projects\<slug>.db (see projectDb.ts and project-analyzer's docs/suite-knowledge.md). Project
+ * <shared folder>\projects\<slug>.db (see projectDb.ts and project-analyzer's docs/suite-knowledge.md). Project
  * Analyzer fills it from the job folder; Civil 3D MCP and TBC MCP read it and add notes. A note is a row of `facts`
  * with tool = 'civil3d'; this tool changes only its own facts and folders. A job is matched by folder: the active
  * drawing belongs to the job whose source_root or linked folder contains it (deepest wins).
  * The user's own documents for the job (guidelines, requirements, standards) go in
- * <knowledge dir>\projects\<slug>\User Knowledge\ (see userKnowledge.ts); this tool only creates and reads that folder.
+ * <shared folder>\projects\<slug>\User Knowledge\ (see userKnowledge.ts); this tool only creates and reads that folder.
  */
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -30,7 +30,7 @@ const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
   try { return text ? (JSON.parse(text) as T) : fallback; } catch { return fallback; }
 };
 
-/** The job's User Knowledge folder <knowledge dir>\projects\<slug>\User Knowledge (not created here). */
+/** The job's User Knowledge folder <shared folder>\projects\<slug>\User Knowledge (not created here). */
 export function userKnowledgeDirectory(name: string): string {
   return userKnowledgeDirectoryOf(databaseFileFor(name));
 }

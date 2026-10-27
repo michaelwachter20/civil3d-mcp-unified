@@ -1,7 +1,7 @@
 -- Project knowledge database, schema version 1.
 --
--- One SQLite file per job: <shared>\projects\<slug>.db, where <shared> is CIVIL3D_KNOWLEDGE_DIR, else
--- Documents\Civil3DMcp-KnowledgeBase. Shared by Project Analyzer (fills it), Civil 3D MCP and TBC MCP (read it, add
+-- One SQLite file per job: <shared>\projects\<slug>.db, where <shared> is the suite's folder, by default
+-- Documents\Project Knowledge (docs/suite-knowledge.md, "Where"). Shared by Project Analyzer (fills it), Civil 3D MCP and TBC MCP (read it, add
 -- notes). The rules that go with these tables are in docs/suite-knowledge.md; this file is the exact table layout.
 --
 -- Every tool that creates a database runs this whole file (it is safe to run on an existing one: IF NOT EXISTS

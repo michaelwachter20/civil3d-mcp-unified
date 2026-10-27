@@ -20,17 +20,17 @@ import { join } from "node:path";
 
 describe("knowledge base: skills, preferences and lessons", () => {
   let root: string;
-  const previous = process.env.CIVIL3D_KNOWLEDGE_DIR;
+  const previous = process.env.PROJECT_KNOWLEDGE_DIR;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "civil3d-kb-"));
-    process.env.CIVIL3D_KNOWLEDGE_DIR = root;
+    process.env.PROJECT_KNOWLEDGE_DIR = root;
     setReleaseForTesting("2027");
     invalidateSkillCache();
   });
 
   afterEach(() => {
-    if (previous === undefined) delete process.env.CIVIL3D_KNOWLEDGE_DIR; else process.env.CIVIL3D_KNOWLEDGE_DIR = previous;
+    if (previous === undefined) delete process.env.PROJECT_KNOWLEDGE_DIR; else process.env.PROJECT_KNOWLEDGE_DIR = previous;
     setReleaseForTesting(undefined);
     invalidateSkillCache();
     rmSync(root, { recursive: true, force: true });
@@ -53,7 +53,7 @@ describe("knowledge base: skills, preferences and lessons", () => {
     const retired = retireSkill("renumber_points");
     expect(retired.archivedTo).toHaveLength(1);
     expect(() => readSkill("renumber_points")).toThrow(/not found/);
-    expect(readdirSync(join(root, "skills", "_archive"))).toHaveLength(2);
+    expect(readdirSync(join(root, "civil3d", "skills", "_archive"))).toHaveLength(2);
   });
 
   it("refuses to overwrite a skill verified on another release and adds a version section instead", () => {

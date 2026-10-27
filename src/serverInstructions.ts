@@ -1,4 +1,4 @@
-import { allLessons, knowledgeRoot, listPreferences } from "./tools/knowledgeBase.js";
+import { allLessons, knowledgeStatus, listPreferences } from "./tools/knowledgeBase.js";
 import { practicesForInstructions } from "./tools/practices.js";
 import { loadSkills } from "./tools/skillsLibrary.js";
 
@@ -69,9 +69,12 @@ export function buildServerInstructions(): string {
     }
 
     const lessons = allLessons().length;
+    const status = knowledgeStatus();
     if (lessons > 0) {
-      parts.push(`\nKnowledge base: ${knowledgeRoot()} (${lessons} lessons; relevant ones are returned with code results).`);
+      parts.push(`\nCivil 3D know-how: ${status.civil3dFolder} (${lessons} lessons; relevant ones are returned with code results). ` +
+        `Shared with the suite (practices, job databases): ${status.sharedFolder}.`);
     }
+    if (status.notes) parts.push(`\nKnowledge folders: ${status.notes.join(" ")}`);
   } catch {
     // Instructions must never block startup; the tools still expose everything.
   }

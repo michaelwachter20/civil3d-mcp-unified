@@ -1,18 +1,22 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
 
 /**
- * The assistant's knowledge base: everything it learns while working, kept as plain files in one folder
- * (default Documents\Civil3DMcp-KnowledgeBase, or CIVIL3D_KNOWLEDGE_DIR) so the next chat, or a colleague's assistant
- * pointed at the same folder, starts out experienced.
+ * The assistant's knowledge base: everything it learns while working, kept as plain files so the next chat, or a
+ * colleague's assistant pointed at the same folder, starts out experienced. It lives in the suite's shared folder
+ * (project-analyzer's docs/suite-knowledge.md, "Where"; sharedRoot below), next to what Project Analyzer and TBC MCP
+ * keep there:
  *
- *   preferences.json        standing rules from the user, included in every AI's instructions
- *   memory\lessons.jsonl    gotchas and facts, each stamped with the Civil 3D release; shown when relevant
- *   skills\**\*.skill.md    verified step-by-step recipes (see skillsLibrary.ts)
- *   scripts\*.csx           reusable scripts (managed by the Civil 3D plugin)
+ *   practices.json              good practices shared by the suite (practices.ts)
+ *   projects\<slug>.db          one database per job (projectDb.ts)
+ *   civil3d\                    Civil 3D's own know-how (CIVIL3D_MCP_KNOWLEDGE_DIR overrides it):
+ *     preferences.json          standing rules from the user, included in every AI's instructions
+ *     memory\lessons.jsonl      gotchas and facts, each stamped with the Civil 3D release; shown when relevant
+ *     skills\**\*.skill.md      verified step-by-step recipes (see skillsLibrary.ts)
+ *     scripts\*.csx             reusable scripts (managed by the Civil 3D plugin)
  *
  * Rule: add, never delete. Knowledge from another Civil 3D release is kept; new releases add to it.
  * Built-in seed lessons ship with the server (skills\lessons.seed.jsonl) and can't be removed.
@@ -20,53 +24,119 @@ import { withApplicationConnection } from "../utils/ConnectionManager.js";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 
-export const KNOWLEDGE_FOLDER_NAME = "Civil3DMcp-KnowledgeBase";
-/** Folder name used before 2.2.0; moved to KNOWLEDGE_FOLDER_NAME on first use. */
-export const LEGACY_KNOWLEDGE_FOLDER_NAME = "Civil3DMcp";
+/** The shared folder's name in Documents. */
+export const SHARED_FOLDER_NAME = "Project Knowledge";
+/** Earlier default names, used as they are when they exist (nothing renames them; the user may). */
+export const EARLIER_SHARED_FOLDER_NAMES = ["Civil3DMcp-KnowledgeBase", "Civil3DMcp"] as const;
+/** Civil 3D MCP's own subfolder of the shared folder. */
+export const KNOW_HOW_FOLDER_NAME = "civil3d";
+/** What Civil 3D MCP kept directly in the shared folder before 2.4.0, and now keeps in civil3d\. */
+export const KNOW_HOW_ITEMS = ["preferences.json", "memory", "skills", "scripts"] as const;
+type KnowHowItem = (typeof KNOW_HOW_ITEMS)[number];
 
-let migrationChecked = false;
+const isDirectory = (candidate: string) => {
+  try {
+    return statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 /**
- * Moves the knowledge base from the old default folder (Documents\Civil3DMcp) to the new one
- * (Documents\Civil3DMcp-KnowledgeBase) once, when the old one exists and the new one doesn't.
- * Nothing happens when CIVIL3D_KNOWLEDGE_DIR is set. Returns a note when it moved the folder.
+ * The suite's shared folder: PROJECT_KNOWLEDGE_DIR, else CIVIL3D_KNOWLEDGE_DIR (its earlier name), else
+ * Documents\Project Knowledge if it exists, else an earlier default that exists (Documents\Civil3DMcp-KnowledgeBase,
+ * then Documents\Civil3DMcp) as it is, else Documents\Project Knowledge. Nothing is created, renamed or moved here:
+ * a tool of an older version on the same PC would lose a moved folder. `documents` is for tests.
  */
-export function migrateLegacyKnowledgeFolder(documentsDir = path.join(os.homedir(), "Documents")): string | undefined {
-  const legacy = path.join(documentsDir, LEGACY_KNOWLEDGE_FOLDER_NAME);
-  const current = path.join(documentsDir, KNOWLEDGE_FOLDER_NAME);
-  if (!existsSync(legacy) || existsSync(current)) {
-    return undefined;
+export function sharedRoot(documents = path.join(os.homedir(), "Documents")): string {
+  for (const variable of ["PROJECT_KNOWLEDGE_DIR", "CIVIL3D_KNOWLEDGE_DIR"]) {
+    const configured = process.env[variable]?.trim();
+    if (configured) return configured;
   }
-
-  try {
-    renameSync(legacy, current);
-    return `Knowledge base moved from ${legacy} to ${current}.`;
-  } catch {
-    return undefined;   // in use or not allowed: keep using the new (empty) default, the old folder stays intact
+  for (const name of [SHARED_FOLDER_NAME, ...EARLIER_SHARED_FOLDER_NAMES]) {
+    if (isDirectory(path.join(documents, name))) return path.join(documents, name);
   }
+  return path.join(documents, SHARED_FOLDER_NAME);
 }
 
-export function knowledgeRoot(): string {
-  const configured = process.env.CIVIL3D_KNOWLEDGE_DIR?.trim();
-  if (configured) {
-    return configured;
-  }
+/** Civil 3D MCP's own know-how folder: CIVIL3D_MCP_KNOWLEDGE_DIR, else <shared>\civil3d. */
+export function knowHowRoot(): string {
+  return process.env.CIVIL3D_MCP_KNOWLEDGE_DIR?.trim() || path.join(sharedRoot(), KNOW_HOW_FOLDER_NAME);
+}
 
-  const documents = path.join(os.homedir(), "Documents");
-  if (!migrationChecked) {
-    migrationChecked = true;
-    migrateLegacyKnowledgeFolder(documents);
-  }
+/** Items whose own variable points elsewhere are neither moved nor looked for at the top of the shared folder. */
+const OWN_VARIABLES: Partial<Record<KnowHowItem, string>> = { skills: "CIVIL3D_USER_SKILLS_DIR", scripts: "CIVIL3D_SCRIPTS_DIR" };
+const managedHere = (item: KnowHowItem) =>
+  !process.env.CIVIL3D_MCP_KNOWLEDGE_DIR?.trim() && !process.env[OWN_VARIABLES[item] ?? ""]?.trim();
 
-  return path.join(documents, KNOWLEDGE_FOLDER_NAME);
+const movesChecked = new Set<string>();
+
+/**
+ * Moves the know-how Civil 3D MCP kept at the top of the shared folder before 2.4.0 into <shared>\civil3d, once:
+ * each item is renamed when civil3d\<item> doesn't exist yet. An item that can't be moved (in use) stays where it is
+ * and is used from there, and the move is tried again on the next start; when both exist, civil3d\ is used and the
+ * top-level one is left alone. Nothing is deleted. Nothing happens when CIVIL3D_MCP_KNOWLEDGE_DIR is set.
+ */
+export function moveKnowHowIntoOwnFolder(shared = sharedRoot()) {
+  const result = { moved: [] as string[], notMoved: [] as string[] };
+  if (process.env.CIVIL3D_MCP_KNOWLEDGE_DIR?.trim()) return result;
+  const own = path.join(shared, KNOW_HOW_FOLDER_NAME);
+  for (const item of KNOW_HOW_ITEMS) {
+    const top = path.join(shared, item);
+    if (!managedHere(item) || !existsSync(top) || existsSync(path.join(own, item))) continue;
+    try {
+      mkdirSync(own, { recursive: true });
+      renameSync(top, path.join(own, item));
+      result.moved.push(item);
+    } catch {
+      result.notMoved.push(item);   // in use or not allowed: used from the top this time, tried again next start
+    }
+  }
+  return result;
+}
+
+/** Moves the know-how into civil3d\ the first time this process uses a shared folder. */
+function checkMoveOnce(shared: string) {
+  if (movesChecked.has(shared)) return;
+  movesChecked.add(shared);
+  moveKnowHowIntoOwnFolder(shared);
+}
+
+/** Where one know-how item is: civil3d\<item>, or the top-level one while it couldn't be moved yet. */
+export function knowHowPath(item: KnowHowItem): string {
+  const shared = sharedRoot();
+  checkMoveOnce(shared);
+  const own = path.join(knowHowRoot(), item);
+  if (managedHere(item) && !existsSync(own) && existsSync(path.join(shared, item))) return path.join(shared, item);
+  return own;
+}
+
+/**
+ * Where the knowledge is, for the instructions and civil3d_health: the shared folder, Civil 3D's own folder, and
+ * know-how still at the top of the shared folder (not moved yet, or left there because civil3d\ has its own).
+ */
+export function knowledgeStatus() {
+  const shared = sharedRoot();
+  checkMoveOnce(shared);
+  const own = knowHowRoot();
+  const atTop = KNOW_HOW_ITEMS.filter((item) => managedHere(item) && existsSync(path.join(shared, item)));
+  const leftAtTop = atTop.filter((item) => existsSync(path.join(own, item)));
+  const notMovedYet = atTop.filter((item) => !leftAtTop.includes(item));
+  const notes = [
+    ...(notMovedYet.length ? [`Not moved into ${own} yet (in use?), used from the shared folder until the next start: ${notMovedYet.join(", ")}.`] : []),
+    ...(leftAtTop.length
+      ? [`${leftAtTop.join(", ")} also at the top of ${shared}, from an earlier version; not used, since ${own} has its own. Nothing was deleted: the user can compare and tidy them.`]
+      : []),
+  ];
+  return { sharedFolder: shared, civil3dFolder: own, ...(notes.length ? { notes } : {}) };
 }
 
 export function preferencesFile(): string {
-  return path.join(knowledgeRoot(), "preferences.json");
+  return knowHowPath("preferences.json");
 }
 
 export function lessonsFile(): string {
-  return path.join(knowledgeRoot(), "memory", "lessons.jsonl");
+  return path.join(knowHowPath("memory"), "lessons.jsonl");
 }
 
 function seedLessonsFile(): string | undefined {

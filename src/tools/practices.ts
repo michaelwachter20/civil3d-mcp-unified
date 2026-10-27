@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.js";
+import { knowledgeError, sharedRoot, writeAtomically } from "./knowledgeBase.js";
 import { jobIndex, TOOL } from "./projectDb.js";
 
 /**
  * Good practices: engineering and company practice that doesn't depend on a program ("storm pipe minimum slope is
  * 0.5%", "label structures MH-n"). Shared by the whole suite (Project Analyzer, Civil 3D MCP, TBC MCP) in
- * <knowledge dir>\practices.json, following project-analyzer's docs/suite-knowledge.md:
+ * <shared folder>\practices.json, following project-analyzer's docs/suite-knowledge.md:
  *
  *   - ids practice-N, never reused; removing sets "retired" (nothing is deleted)
  *   - one line each, duplicate check (case-insensitive) before adding
@@ -27,7 +27,7 @@ export interface Practice {
 }
 
 export function practicesFile(): string {
-  return path.join(knowledgeRoot(), "practices.json");
+  return path.join(sharedRoot(), "practices.json");
 }
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();

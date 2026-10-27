@@ -22,7 +22,7 @@ const ELM_DRAWING = "C:\\Jobs\\Elm Street\\Drawings\\C-104.dwg";
 describe("project notes on the suite's project database", () => {
   let root: string;
   let drawing: string | undefined;
-  const previous = process.env.CIVIL3D_KNOWLEDGE_DIR;
+  const previous = process.env.PROJECT_KNOWLEDGE_DIR;
   const projects = () => join(root, "projects");
   const open = (file = join(projects(), "elm-street-drainage.db")): DatabaseSync => new Database(file);
   const query = <T>(sql: string, ...params: Array<string | number>) => {
@@ -32,7 +32,7 @@ describe("project notes on the suite's project database", () => {
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "civil3d-projects-"));
-    process.env.CIVIL3D_KNOWLEDGE_DIR = root;
+    process.env.PROJECT_KNOWLEDGE_DIR = root;
     mkdirSync(projects(), { recursive: true });
     copyFileSync(join(FIXTURES, "fixture.db"), join(projects(), "elm-street-drainage.db"));
     drawing = undefined;
@@ -44,7 +44,7 @@ describe("project notes on the suite's project database", () => {
   afterEach(() => {
     setActiveDrawingResolverForTesting(undefined);
     invalidateJobIndex();
-    if (previous === undefined) delete process.env.CIVIL3D_KNOWLEDGE_DIR; else process.env.CIVIL3D_KNOWLEDGE_DIR = previous;
+    if (previous === undefined) delete process.env.PROJECT_KNOWLEDGE_DIR; else process.env.PROJECT_KNOWLEDGE_DIR = previous;
     rmSync(root, { recursive: true, force: true });
   });
 

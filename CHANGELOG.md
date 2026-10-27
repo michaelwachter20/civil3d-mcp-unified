@@ -2,8 +2,29 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **The shared folder is `Documents\Project Knowledge`, and no tool owns it** (project-analyzer's
+  `docs/suite-knowledge.md`, "Where"). The folder is the first of `PROJECT_KNOWLEDGE_DIR`; `CIVIL3D_KNOWLEDGE_DIR`
+  (its earlier name, still honoured); `Documents\Project Knowledge` if it exists; an earlier default that exists,
+  used as it is (`Documents\Civil3DMcp-KnowledgeBase`, then `Documents\Civil3DMcp`); else
+  `Documents\Project Knowledge`. `practices.json` and `projects\` stay at its top.
+  - Nothing renames or moves the shared folder any more (the 2.2.0 rename from `Documents\Civil3DMcp` is gone, in
+    the server and in the plugin): an older tool on the same PC would lose it. An existing folder keeps working; to
+    rename it, update every suite tool, close them and rename it to `Project Knowledge`.
+  - Civil 3D's own know-how moves into `<shared>\civil3d\` (new `CIVIL3D_MCP_KNOWLEDGE_DIR` overrides it):
+    `preferences.json`, `memory\`, `skills\` (`CIVIL3D_USER_SKILLS_DIR` still overrides) and `scripts\`. On the first
+    start each of them still at the top of the shared folder is renamed into `civil3d\` when `civil3d\` doesn't have
+    it yet. One that can't be moved (in use) is used where it is and moved on a later start. When both exist,
+    `civil3d\` is used and the old one is left alone. Nothing is deleted. Nothing is moved into a folder set with
+    `CIVIL3D_MCP_KNOWLEDGE_DIR`, nor skills or scripts whose own variable is set.
+  - `civil3d_health` returns `knowledge` (`sharedFolder`, `civil3dFolder`, and `notes` about know-how still at the
+    top); the server instructions name both folders and carry the same notes.
+  - The plugin's `MCPRUN` / `MCPSCRIPTS` scripts folder is `CIVIL3D_SCRIPTS_DIR`, else
+    `CIVIL3D_MCP_KNOWLEDGE_DIR\scripts`, else `<shared>\civil3d\scripts`, found the same way, using the earlier
+    `<shared>\scripts` while `civil3d\scripts` doesn't exist yet. Prebuilt plugin rebuilt (still 2.4.0).
+  - `project-db.sql` updated from project-analyzer (header comment only). README, INSTALL.md, the installer's
+    uninstall message and the tool descriptions say `Documents\Project Knowledge` / `<shared folder>`.
 - **User knowledge per job.** Each job has a `User Knowledge` folder,
-  `<knowledge dir>\projects\<job>\User Knowledge\`, for the user's own documents about that job: proposal
+  `<shared folder>\projects\<job>\User Knowledge\`, for the user's own documents about that job: proposal
   guidelines, building-type requirements, a client's standards, design manuals, code books (subfolders are fine).
   It is created, empty, when the job is listed, opened or linked; Civil 3D MCP never writes anything else there.
   Project Analyzer reads it into the job's database (paths `<user knowledge>\...`); Civil 3D MCP uses that text

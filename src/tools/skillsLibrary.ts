@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.js";
+import { knowHowPath, knowledgeError, writeAtomically } from "./knowledgeBase.js";
 
 /**
  * Skills are verified, step-by-step recipes (`*.skill.md`): when to use them, the user's rules, the pitfalls
@@ -23,7 +23,7 @@ import { knowledgeError, knowledgeRoot, writeAtomically } from "./knowledgeBase.
  *
  * Two libraries are merged:
  * - built-in skills, shipped with the server (read-only), and
- * - the user's skills in the knowledge base (default Documents\Civil3DMcp-KnowledgeBase\skills), which the assistant
+ * - the user's skills in the know-how folder (default Documents\Project Knowledge\civil3d\skills), which the assistant
  *   creates and improves during normal use. A user skill with a built-in skill's name replaces it, so
  *   learned improvements survive new releases.
  *
@@ -79,9 +79,9 @@ export function resolveSkillsDirectory(): string | undefined {
   return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isDirectory());
 }
 
-/** The user's skills folder inside the knowledge base. It's created on first write. */
+/** The user's skills folder: CIVIL3D_USER_SKILLS_DIR, else the know-how folder's skills\. It's created on first write. */
 export function personalSkillsDirectory(): string {
-  return process.env.CIVIL3D_USER_SKILLS_DIR?.trim() || path.join(knowledgeRoot(), "skills");
+  return process.env.CIVIL3D_USER_SKILLS_DIR?.trim() || knowHowPath("skills");
 }
 
 function findSkillFiles(directory: string): string[] {

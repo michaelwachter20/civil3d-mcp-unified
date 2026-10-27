@@ -12,19 +12,19 @@ const FIXTURES = join(import.meta.dirname, "fixtures");
 
 describe("good practices shared by the suite (practices.json)", () => {
   let root: string;
-  const previous = process.env.CIVIL3D_KNOWLEDGE_DIR;
+  const previous = process.env.PROJECT_KNOWLEDGE_DIR;
   const raw = () => readFileSync(practicesFile(), "utf8");
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "civil3d-practices-"));
-    process.env.CIVIL3D_KNOWLEDGE_DIR = root;
+    process.env.PROJECT_KNOWLEDGE_DIR = root;
     copyFileSync(join(FIXTURES, "fixture-practices.json"), join(root, "practices.json"));
     invalidateJobIndex();
   });
 
   afterEach(() => {
     invalidateJobIndex();
-    if (previous === undefined) delete process.env.CIVIL3D_KNOWLEDGE_DIR; else process.env.CIVIL3D_KNOWLEDGE_DIR = previous;
+    if (previous === undefined) delete process.env.PROJECT_KNOWLEDGE_DIR; else process.env.PROJECT_KNOWLEDGE_DIR = previous;
     rmSync(root, { recursive: true, force: true });
   });
 

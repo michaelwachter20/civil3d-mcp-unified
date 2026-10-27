@@ -138,7 +138,7 @@ Returns drawing-level ambient settings.
 
 ### Tool 2: `civil3d_health`
 
-Reports the status of the Civil 3D connection and plugin.
+Reports the status of the Civil 3D connection and plugin, and where the knowledge folders are.
 
 | Parameter | Type | Required | Description            |
 | --------- | ---- | -------- | ---------------------- |
@@ -155,7 +155,12 @@ Reports the status of the Civil 3D connection and plugin.
   operationInProgress: boolean,
   currentOperation: string | null,
   queueDepth: number,
-  memoryUsageMb: number
+  memoryUsageMb: number,
+  knowledge: {               // added by the server
+    sharedFolder: string,    // the suite's shared folder (practices.json, projects\)
+    civil3dFolder: string,   // Civil 3D MCP's own know-how (preferences, lessons, skills, scripts)
+    notes?: string[]         // know-how still at the top of the shared folder from before 2.4.0
+  }
 }
 ```
 

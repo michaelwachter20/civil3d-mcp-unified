@@ -4,7 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import zlib from "node:zlib";
 
 /**
- * A job's User Knowledge folder, <knowledge dir>\projects\<slug>\User Knowledge (contract: project-analyzer's
+ * A job's User Knowledge folder, <shared folder>\projects\<slug>\User Knowledge (contract: project-analyzer's
  * docs/suite-knowledge.md, "User knowledge (per job)"): documents the user adds for one job, such as proposal
  * guidelines, building-type requirements, a client's standards or code books. Civil 3D MCP only creates the folder
  * (empty) and reads it; it never writes, moves or deletes anything there.
@@ -20,7 +20,7 @@ export const USER_KNOWLEDGE = "User Knowledge";
 /** How Project Analyzer writes a user-knowledge document's path in `files.path`. */
 export const USER_KNOWLEDGE_PREFIX = "<user knowledge>\\";
 
-/** <knowledge dir>\projects\<slug> for a job database <slug>.db. */
+/** <shared folder>\projects\<slug> for a job database <slug>.db. */
 export const jobDirectoryOf = (databaseFile: string) => databaseFile.replace(/\.db$/i, "");
 export const userKnowledgeDirectoryOf = (databaseFile: string) => path.join(jobDirectoryOf(databaseFile), USER_KNOWLEDGE);
 

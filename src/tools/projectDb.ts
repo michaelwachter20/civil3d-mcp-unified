@@ -6,10 +6,10 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import zlib from "node:zlib";
-import { knowledgeError, knowledgeRoot } from "./knowledgeBase.js";
+import { knowledgeError, sharedRoot } from "./knowledgeBase.js";
 
 /**
- * The suite's project database: one SQLite file per job, <knowledge dir>\projects\<slug>.db, shared with Project
+ * The suite's project database: one SQLite file per job, <shared folder>\projects\<slug>.db, shared with Project
  * Analyzer (which fills it from the job folder) and TBC MCP. The contract is project-analyzer's
  * docs/suite-knowledge.md; the table layout is project-db.sql next to this file (a copy of project-analyzer's
  * schema/project-db.sql, checked by a test).
@@ -49,10 +49,10 @@ export const nowIso = () => new Date().toISOString();
 export const slug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 
 export function projectsDirectory(): string {
-  return path.join(knowledgeRoot(), "projects");
+  return path.join(sharedRoot(), "projects");
 }
 
-/** <knowledge dir>\projects\<slug>.db for a job name. */
+/** <shared folder>\projects\<slug>.db for a job name. */
 export function databaseFileFor(name: string): string {
   const key = slug(name);
   if (!key) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give the project a name with letters or digits.");
@@ -338,7 +338,7 @@ function readJob(file: string): Job {
 }
 
 /**
- * Every job database in <knowledge dir>\projects, with the folders that belong to it; cached for a minute (or until
+ * Every job database in <shared folder>\projects, with the folders that belong to it; cached for a minute (or until
  * the set of files changes). A pre-2.3.0 <slug>.json without a database gets its database here (imported once).
  */
 export function jobIndex(force = false): { jobs: Job[]; errors: string[] } {

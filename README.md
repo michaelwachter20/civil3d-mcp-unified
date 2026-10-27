@@ -92,8 +92,9 @@ handlers, Claude Code and Claude Desktop installers, and the generated inventory
 Civil 3D MCP is one of three tools that can share what they know about a job:
 [Project Analyzer](https://github.com/michaelwachter20/project-analyzer) (reads a whole job folder) and TBC MCP
 (Trimble Business Center). Each is installed, updated and used on its own: none needs another one installed,
-running, or at a matching version. When they are on the same PC they meet in the knowledge folder
-(`Documents\Civil3DMcp-KnowledgeBase`) and share it with no setup.
+running, or at a matching version. When they are on the same PC they meet in one shared folder
+(`Documents\Project Knowledge`) and share it with no setup. No tool owns it: each keeps its own know-how in its own
+subfolder (`civil3d\`, `tbc\`).
 
 | Installed | What you get |
 | --- | --- |
@@ -149,9 +150,9 @@ return new { count = result.Status == PromptStatus.OK ? result.Value.Count : 0 }
 
 ### Learning on the job
 
-The assistant keeps what it learns on your PC (`Documents\Civil3DMcp-KnowledgeBase` by default, or
-`CIVIL3D_KNOWLEDGE_DIR`), so it improves with use instead of waiting for a new release. Knowledge comes in three
-kinds, and each has its place:
+The assistant keeps what it learns on your PC, in the suite's shared folder (`Documents\Project Knowledge` by
+default, or `PROJECT_KNOWLEDGE_DIR`), so it improves with use instead of waiting for a new release. Knowledge comes in
+three kinds, and each has its place:
 
 - **How to drive Civil 3D** (true for this program on any job): preferences, lessons, skills and saved scripts.
   Only Civil 3D MCP uses them.
@@ -160,12 +161,12 @@ kinds, and each has its place:
   every file's text, references, people, timeline and checks) and TBC MCP.
 - **Engineering practice** (true on every job, in any program): good practices, shared by the same three tools.
 
-| What | Where | How it grows |
+| What | Where (in the shared folder) | How it grows |
 | --- | --- | --- |
-| **Preferences**: your standing rules for working in Civil 3D ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
-| **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about (general, never project-specific) | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
-| **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
-| **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
+| **Preferences**: your standing rules for working in Civil 3D ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `civil3d\preferences.json` | `civil3d_preferences action=add / update / remove` |
+| **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about (general, never project-specific) | `civil3d\memory\lessons.jsonl` | `civil3d_memory action=record / search` |
+| **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `civil3d\skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
+| **Saved scripts**: ready-to-run programs | `civil3d\scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
 | **Project knowledge**: everything about one job: what Project Analyzer read from the job folder, and notes the tools add (what its point groups are for, which drawing is the go-by, decisions made), matched to the job by folder | `projects\<job>.db` | `civil3d_project_notes action=overview / search / file / entity / timeline / locate` to read; `link / add / update / remove` for Civil 3D MCP's own notes |
 | **User knowledge**: your own documents for one job (proposal guidelines, building-type requirements, a client's standards, design manuals, code books; subfolders are fine) | `projects\<job>\User Knowledge\` | Drop files in; `civil3d_project_notes action=files / read`, and `search` and `overview` include them. See [below](#user-knowledge-your-documents-for-a-job) |
 | **Good practices**: engineering and company practice for every job ("storm pipe minimum slope is 0.5%", "label structures MH-n") | `practices.json` | `civil3d_practices action=add / update / remove` |
@@ -190,7 +191,7 @@ kinds, and each has its place:
   appear in that code come back with the result (`relatedLessons`), and reading a skill returns the lessons related
   to it. The release ships with a set of seed lessons learned on real drawings.
 - **Add, never delete.** Improving a skill or re-saving a script archives the previous version (`skills\_archive`,
-  `scripts\_archive`), and saved scripts carry a `script_version` that goes up on each save. Retiring a skill or
+  `scripts\_archive` in `civil3d\`), and saved scripts carry a `script_version` that goes up on each save. Retiring a skill or
   deleting a script moves it to the archive.
 - **Versions are tracked.** Skills record the Civil 3D releases they were verified on (`civil3d_versions`), and lessons
   record the release they were learned on (the release only, never the licensee name). On a different release the
@@ -204,21 +205,30 @@ kinds, and each has its place:
 - Everything except the project databases is plain text: open the files in Notepad to review or edit them. The
   databases use Node's built-in SQLite (Node.js 22.15 or newer); Project Analyzer's `kb.py` reads, exports and
   merges them.
+- **Which folder.** The shared folder is the first of: `PROJECT_KNOWLEDGE_DIR`; `CIVIL3D_KNOWLEDGE_DIR` (its earlier
+  name, still honoured); `Documents\Project Knowledge` if it exists; an earlier default that exists, used as it is
+  (`Documents\Civil3DMcp-KnowledgeBase`, then `Documents\Civil3DMcp`); else `Documents\Project Knowledge`. No tool
+  renames or moves it, because an older tool on the same PC would then lose it. An existing folder keeps working
+  under its old name; to rename it, update every suite tool you use, close them, and rename the folder to
+  `Project Knowledge`. Each tool finds it there on its next start.
+- Until 2.4.0 Civil 3D MCP kept `preferences.json`, `memory\`, `skills\` and `scripts\` directly in the shared
+  folder. On its first start after updating it moves each of them into `civil3d\` when `civil3d\` doesn't have it
+  yet. Something it can't move (a file in use) is used where it is and moved on a later start. When both exist,
+  `civil3d\` is used and the old one is left alone (`civil3d_health` and the server instructions mention it).
+  Nothing is deleted.
 - Until 2.4.0 reference files for a job went directly in `projects\<job>\`. They aren't read any more:
   `civil3d_project_notes action=files` lists them under `elsewhere`; move them into `projects\<job>\User Knowledge\`.
 - Until 2.3.0 project notes were kept in `projects\<project>.json`. The first time a job is opened after updating,
   its notes, folders and name move into `projects\<project>.db` (each note keeps who wrote it and when) and the JSON
   file is renamed to `<project>.json.imported`.
-- Until 2.1.0 the folder was `Documents\Civil3DMcp`. The first start after updating renames it to
-  `Documents\Civil3DMcp-KnowledgeBase` when the new one doesn't exist yet, so nothing is lost.
-- Keep the knowledge folder on a local disk: SQLite databases can't safely be shared over a network folder. To share
+- Keep the shared folder on a local disk: SQLite databases can't safely be shared over a network folder. To share
   a job with someone, use Project Analyzer's `kb.py export` / `merge`. To share saved scripts with a team, point the
   plugin's `CIVIL3D_SCRIPTS_DIR` at a shared folder; scripts run code inside Civil 3D, so only people you trust
   should be able to write there.
 
 #### User knowledge: your documents for a job
 
-Each job has a **User Knowledge** folder, `<knowledge folder>\projects\<job>\User Knowledge\`, for documents that
+Each job has a **User Knowledge** folder, `<shared folder>\projects\<job>\User Knowledge\`, for documents that
 say how *this* job must be done: proposal guidelines, requirements for the building type, the client's standards,
 design manuals, code books. Subfolders are fine. They aren't the job's files (those stay in the job folder).
 
@@ -242,7 +252,7 @@ When a snippet works and the task is likely to come up again, the AI saves it wi
 `civil3d_script action=save` and gives it a name, description, mode (`write` or
 `read`), and typed parameters. Scripts are compile-checked before they are saved,
 and each one is stored as a plain, editable `.csx` file in
-`Documents\Civil3DMcp-KnowledgeBase\scripts` (override this with `CIVIL3D_SCRIPTS_DIR`). Later, the AI
+`Documents\Project Knowledge\civil3d\scripts` (override this with `CIVIL3D_SCRIPTS_DIR`). Later, the AI
 reruns a script with `civil3d_script action=run`, or **you** run it from the Civil 3D
 command line:
 
@@ -1238,15 +1248,17 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 42-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
-| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp-KnowledgeBase` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name), plus what the suite shares: `practices.json` and `projects\<job>.db` (one project database per job). Keep it on a local disk. |
-| `CIVIL3D_USER_SKILLS_DIR` | `<knowledge dir>\skills` | Optional override for the learned-skills folder only. |
+| `PROJECT_KNOWLEDGE_DIR` | `Documents\Project Knowledge` | The suite's shared folder: `practices.json` and `projects\<job>.db` (one project database per job), shared with Project Analyzer and TBC MCP, plus Civil 3D MCP's own `civil3d\` folder. Keep it on a local disk. When it isn't set and `Documents\Project Knowledge` doesn't exist, an existing earlier folder (`Documents\Civil3DMcp-KnowledgeBase`, then `Documents\Civil3DMcp`) is used as it is. |
+| `CIVIL3D_KNOWLEDGE_DIR` | | Earlier name of `PROJECT_KNOWLEDGE_DIR`, still honoured when that isn't set. |
+| `CIVIL3D_MCP_KNOWLEDGE_DIR` | `<shared folder>\civil3d` | Civil 3D MCP's own know-how: `preferences.json`, `memory\lessons.jsonl`, `skills\` (learned skills, which replace built-in skills of the same name) and `scripts\`. Set it where Civil 3D is launched too, so `MCPRUN` finds the scripts. |
+| `CIVIL3D_USER_SKILLS_DIR` | `<civil3d folder>\skills` | Optional override for the learned-skills folder only. |
 | `CIVIL3D_RELEASE` | asked from the plugin, else `2027` | Civil 3D release used to stamp skills and lessons when Civil 3D can't be reached. |
 
 ### Code execution (set where Civil 3D is launched)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_SCRIPTS_DIR` | `Documents\Civil3DMcp-KnowledgeBase\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. |
+| `CIVIL3D_SCRIPTS_DIR` | `<civil3d folder>\scripts` | Folder for saved `.csx` scripts used by `civil3d_script` and `MCPRUN`. Without it the plugin finds the shared folder the same way the server does, and uses the earlier `<shared folder>\scripts` while `civil3d\scripts` doesn't exist yet. |
 | `CIVIL3D_SCRIPT_TIMEOUT_SECONDS` | `110` | Maximum run time per script. Keep it below `CIVIL3D_COMMAND_TIMEOUT` on the Node side. |
 | `CIVIL3D_SCRIPT_UNDO_GROUP` | `true` | Wraps each write run in `UNDO BEGIN/END` so a single undo reverts it. |
 | `CIVIL3D_READ_CONTEXT` | `application` | Read-only requests run outside command context so they don't add empty `EXECUTEFUNCTION` undo steps. Set to `command` to restore the old behavior. Reads fall back to command context while a command is active. |

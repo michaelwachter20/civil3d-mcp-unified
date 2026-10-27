@@ -102,7 +102,7 @@ const PPTX = zip({
 describe("user knowledge (the job's User Knowledge folder)", () => {
   let root: string;
   let drawing: string | undefined;
-  const previous = process.env.CIVIL3D_KNOWLEDGE_DIR;
+  const previous = process.env.PROJECT_KNOWLEDGE_DIR;
   const projects = () => join(root, "projects");
   const jobDir = () => join(projects(), "elm-street-drainage");
   const knowledge = () => join(jobDir(), "User Knowledge");
@@ -121,7 +121,7 @@ describe("user knowledge (the job's User Knowledge folder)", () => {
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "civil3d-user-knowledge-"));
-    process.env.CIVIL3D_KNOWLEDGE_DIR = root;
+    process.env.PROJECT_KNOWLEDGE_DIR = root;
     mkdirSync(projects(), { recursive: true });
     copyFileSync(join(FIXTURES, "fixture.db"), database());
     drawing = undefined;
@@ -133,7 +133,7 @@ describe("user knowledge (the job's User Knowledge folder)", () => {
   afterEach(() => {
     setActiveDrawingResolverForTesting(undefined);
     invalidateJobIndex();
-    if (previous === undefined) delete process.env.CIVIL3D_KNOWLEDGE_DIR; else process.env.CIVIL3D_KNOWLEDGE_DIR = previous;
+    if (previous === undefined) delete process.env.PROJECT_KNOWLEDGE_DIR; else process.env.PROJECT_KNOWLEDGE_DIR = previous;
     rmSync(root, { recursive: true, force: true });
   });
 

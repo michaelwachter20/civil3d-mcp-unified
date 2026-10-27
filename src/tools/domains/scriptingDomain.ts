@@ -529,7 +529,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       toolName: "civil3d_project_notes",
       displayName: "Civil 3D Project Notes",
       description:
-        "What is known about ONE job, from the suite's project database on this computer (<knowledge dir>\\projects\\<job>.db, shared with " +
+        "What is known about ONE job, from the suite's project database on this computer (<shared folder>\\projects\\<job>.db, shared with " +
         "Project Analyzer, which reads the job folder, and TBC MCP; never in general lessons or skills). A job is matched by folder: the " +
         "active drawing belongs to the job whose folder contains it; a short overview comes back with the first civil3d_execute/civil3d_query " +
         "result of a session. Read: overview (key facts, newest facts, open questions, rules, high checks, people, practices); search (query: " +
@@ -538,7 +538,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "document); timeline (optional from, to: YYYY[-MM[-DD]]); locate (path written in a file, e.g. an xref: job folders are usually " +
         "COPIES, so paths in files point at the original location; this says where the file is in the copy, or that it isn't known: then ask " +
         "the user rather than guess); list (this tool's own notes and the job's folders). User knowledge, the user's own documents for the job " +
-        "(proposal guidelines, building-type requirements, standards, code books) in <knowledge dir>\\projects\\<job>\\User Knowledge\\: files " +
+        "(proposal guidelines, building-type requirements, standards, code books) in <shared folder>\\projects\\<job>\\User Knowledge\\: files " +
         "lists them (readByAnalyzer, readableHere); read (file: its path there; optional maxChars, default 20000, and offset) returns its " +
         "text; search and overview cover them too. Follow a document that applies to the task and name it; when it conflicts with a fact, " +
         "a practice or the drawings, tell the user. Write (only this tool's own notes and folders): link (project, optional folder; default the " +
@@ -581,7 +581,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       description:
         "Good practices: engineering and company practice that holds on every job and in every program (e.g. 'storm pipe minimum slope is " +
         "0.5%', 'label structures MH-n, CB-n', 'survey in NAD83 Illinois East'), shared with Project Analyzer and TBC MCP in " +
-        "<knowledge dir>\\practices.json and shown in the instructions every chat receives. action=list (optional includeRetired); search " +
+        "<shared folder>\\practices.json and shown in the instructions every chat receives. action=list (optional includeRetired); search " +
         "(query); add (practice: one line; optional topics) when the user states one; update (id, practice, optional topics) and remove (id; " +
         "retires it, kept) only for practices Civil 3D MCP added (source civil3d); the other tools' entries are read-only. Ask the user " +
         "before adding or changing. Not for facts about one job (civil3d_project_notes) or how to drive Civil 3D (civil3d_preferences, " +
