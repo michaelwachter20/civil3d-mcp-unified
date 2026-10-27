@@ -21,6 +21,7 @@ for (const required of [
   "build/version.js",
   "build/standards/data/civil3d_framework_rules.json",
   "build/skills/surfaces/list_surfaces.skill.md",
+  "build/tools/project-db.sql",
   "LICENSE",
   "README.md",
 ]) {

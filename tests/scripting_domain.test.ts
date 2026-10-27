@@ -188,7 +188,7 @@ function riskFor(action: string) {
 describe("scripting domain", () => {
   it("exposes all scripting tools in compact mode", () => {
     const names = selectManifestExposures(SCRIPTING_DOMAIN_DEFINITION, false).map((exposure) => exposure.toolName);
-    expect(names).toEqual(["civil3d_execute", "civil3d_query", "acad_command", "civil3d_skills", "civil3d_preferences", "civil3d_memory", "civil3d_project_notes", "civil3d_script"]);
+    expect(names).toEqual(["civil3d_execute", "civil3d_query", "acad_command", "civil3d_skills", "civil3d_preferences", "civil3d_memory", "civil3d_project_notes", "civil3d_practices", "civil3d_script"]);
   });
 
   it("gates drawing and file mutations behind approval but not read-only work", () => {

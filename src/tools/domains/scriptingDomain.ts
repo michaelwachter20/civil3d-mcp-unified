@@ -9,8 +9,10 @@ import {
   removePreference, searchLessons, updatePreference,
 } from "../knowledgeBase.js";
 import {
-  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, projectNotesOnce, removeProjectNote, unlinkProjectFolder, updateProjectNote,
+  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectEntity, projectFileDetails, projectNotesOnce,
+  projectOverview, projectTimeline, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
 } from "../projectNotes.js";
+import { addPractice, describePractices, removePractice, searchPractices, updatePractice } from "../practices.js";
 
 /**
  * Code execution domain: Roslyn C# scripts with full AutoCAD + Civil 3D .NET
@@ -81,10 +83,29 @@ const ProjectNameSchema = z.string().min(1).max(120);
 const ProjectListArgs = z.object({ action: z.literal("project_list"), project: ProjectNameSchema.optional() });
 const ProjectLinkArgs = z.object({ action: z.literal("project_link"), project: ProjectNameSchema, folder: z.string().min(1).max(260).optional() });
 const ProjectUnlinkArgs = z.object({ action: z.literal("project_unlink"), project: ProjectNameSchema, folder: z.string().min(1).max(260) });
-const ProjectAddArgs =z.object({ action: z.literal("project_add"), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
-const ProjectUpdateArgs = z.object({ action: z.literal("project_update"), id: z.string().min(1), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional() });
+const TopicsSchema = z.array(z.string().min(1).max(120)).max(12);
+const ProjectAddArgs = z.object({
+  action: z.literal("project_add"), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional(),
+  topics: TopicsSchema.optional(), supersedes: z.string().min(1).max(32).optional(), source: z.enum(["drawing", "user"]).optional(),
+});
+const ProjectUpdateArgs = z.object({ action: z.literal("project_update"), id: z.string().min(1), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional(), topics: TopicsSchema.optional() });
 const ProjectRemoveArgs = z.object({ action: z.literal("project_remove"), id: z.string().min(1), project: ProjectNameSchema.optional() });
 const ProjectFilesArgs = z.object({ action: z.literal("project_files"), project: ProjectNameSchema.optional() });
+const ProjectOverviewArgs = z.object({ action: z.literal("project_overview"), project: ProjectNameSchema.optional() });
+const ProjectSearchArgs = z.object({ action: z.literal("project_search"), query: z.string().min(1).max(500), project: ProjectNameSchema.optional(), limit: z.number().int().min(1).max(50).optional() });
+const ProjectFileArgs = z.object({ action: z.literal("project_file"), file: z.string().min(1).max(1_000), project: ProjectNameSchema.optional() });
+const ProjectEntityArgs = z.object({ action: z.literal("project_entity"), entity: z.string().min(1).max(200), project: ProjectNameSchema.optional() });
+const JobDateSchema = z.string().regex(/^\d{4}(-\d{2}(-\d{2})?)?$/, "YYYY, YYYY-MM or YYYY-MM-DD");
+const ProjectTimelineArgs = z.object({
+  action: z.literal("project_timeline"), project: ProjectNameSchema.optional(), from: JobDateSchema.optional(), to: JobDateSchema.optional(),
+  limit: z.number().int().min(1).max(1_000).optional(),
+});
+const ProjectLocateArgs = z.object({ action: z.literal("project_locate"), path: z.string().min(1).max(1_000), project: ProjectNameSchema.optional() });
+const PracticesListArgs = z.object({ action: z.literal("practices_list"), includeRetired: z.boolean().optional() });
+const PracticesSearchArgs = z.object({ action: z.literal("practices_search"), query: z.string().min(1).max(500) });
+const PracticesAddArgs = z.object({ action: z.literal("practices_add"), practice: z.string().min(1).max(1_000), topics: TopicsSchema.optional() });
+const PracticesUpdateArgs = z.object({ action: z.literal("practices_update"), id: z.string().min(1), practice: z.string().min(1).max(1_000), topics: TopicsSchema.optional() });
+const PracticesRemoveArgs = z.object({ action: z.literal("practices_remove"), id: z.string().min(1) });
 const ScriptSaveArgs = z.object({
   action: z.literal("script_save"),
   name: ScriptNameSchema,
@@ -101,7 +122,7 @@ const ScriptDeleteArgs = z.object({ action: z.literal("script_delete"), name: Sc
 
 /**
  * Adds lessons whose topics appear in the code, so known pitfalls surface right where they matter, and
- * (once per session) the notes of the project the active drawing belongs to.
+ * (once per session) a short overview of the project the active drawing belongs to.
  */
 async function withLessons(code: string, result: unknown) {
   if (!result || typeof result !== "object") return result;
@@ -112,8 +133,8 @@ async function withLessons(code: string, result: unknown) {
   } catch {
     // Lessons are advice; never fail the run because of them.
   }
-  const notes = await projectNotesOnce();
-  if (notes) enriched = { ...enriched, projectNotes: notes };
+  const project = await projectNotesOnce();
+  if (project) enriched = { ...enriched, project };
   return enriched;
 }
 
@@ -268,12 +289,16 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
     project_add: {
       action: "project_add", inputSchema: ProjectAddArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
-      execute: async (args) => addProjectNote(args.note as string, args.project as string | undefined),
+      execute: async (args) => addProjectNote(args.note as string, args.project as string | undefined, {
+        topics: args.topics as string[] | undefined,
+        supersedes: args.supersedes as string | undefined,
+        source: args.source as "drawing" | "user" | undefined,
+      }),
     },
     project_update: {
       action: "project_update", inputSchema: ProjectUpdateArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
-      execute: async (args) => updateProjectNote(args.id as string, args.note as string, args.project as string | undefined),
+      execute: async (args) => updateProjectNote(args.id as string, args.note as string, args.project as string | undefined, { topics: args.topics as string[] | undefined }),
     },
     project_remove: {
       action: "project_remove", inputSchema: ProjectRemoveArgs, responseSchema: GenericResponseSchema,
@@ -284,6 +309,61 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       action: "project_files", inputSchema: ProjectFilesArgs, responseSchema: GenericResponseSchema,
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => listProjectFiles(args.project as string | undefined),
+    },
+    project_overview: {
+      action: "project_overview", inputSchema: ProjectOverviewArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectOverview(args.project as string | undefined),
+    },
+    project_search: {
+      action: "project_search", inputSchema: ProjectSearchArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => searchProject(args.query as string, args.project as string | undefined, (args.limit as number | undefined) ?? 20),
+    },
+    project_file: {
+      action: "project_file", inputSchema: ProjectFileArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectFileDetails(args.file as string, args.project as string | undefined),
+    },
+    project_entity: {
+      action: "project_entity", inputSchema: ProjectEntityArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectEntity(args.entity as string, args.project as string | undefined),
+    },
+    project_timeline: {
+      action: "project_timeline", inputSchema: ProjectTimelineArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectTimeline(args.project as string | undefined, args.from as string | undefined, args.to as string | undefined, (args.limit as number | undefined) ?? 200),
+    },
+    project_locate: {
+      action: "project_locate", inputSchema: ProjectLocateArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => locatePath(args.path as string, args.project as string | undefined),
+    },
+    practices_list: {
+      action: "practices_list", inputSchema: PracticesListArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => describePractices(args.includeRetired === true),
+    },
+    practices_search: {
+      action: "practices_search", inputSchema: PracticesSearchArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => searchPractices(args.query as string),
+    },
+    practices_add: {
+      action: "practices_add", inputSchema: PracticesAddArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => addPractice(args.practice as string, args.topics as string[] | undefined),
+    },
+    practices_update: {
+      action: "practices_update", inputSchema: PracticesUpdateArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => updatePractice(args.id as string, args.practice as string, args.topics as string[] | undefined),
+    },
+    practices_remove: {
+      action: "practices_remove", inputSchema: PracticesRemoveArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => removePractice(args.id as string),
     },
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
@@ -395,8 +475,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Preferences",
       description:
         "The user's standing rules (e.g. 'we plot at 1\" = 30\''; 'never move COGO points'; 'hide group is HIDDEN POINTS'). They are " +
-        "included in the instructions every chat receives. action=list; add (rule) when the user states a standing rule or standard; " +
-        "update (id, rule); remove (id) when the user retracts one. Ask before adding or changing.",
+        "included in the instructions every chat receives. action=list; add (rule) when the user states a standing rule or standard for " +
+        "working in Civil 3D; update (id, rule); remove (id) when the user retracts one. Ask before adding or changing. Engineering practice " +
+        "that holds in any program (minimum slopes, structure naming, the survey datum) goes in civil3d_practices; facts about one job in " +
+        "civil3d_project_notes.",
       inputShape: {
         action: z.enum(["list", "add", "update", "remove"]),
         rule: z.string().optional(),
@@ -418,7 +500,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "reads. action=record (lesson, topics) right after you discover something non-obvious; search (query, optional); remove (id) only " +
         "for a wrong lesson from the running release (lessons from other releases and built-in lessons are kept). Lessons must be GENERAL " +
         "(useful on any project): no drawing names, point numbers, coordinates, dates, point group/layer names or site features. " +
-        "Put project-specific facts in civil3d_project_notes instead.",
+        "Put facts about one job in civil3d_project_notes and program-independent engineering practice in civil3d_practices instead.",
       inputShape: {
         action: z.enum(["record", "search", "remove"]),
         lesson: z.string().optional(),
@@ -436,24 +518,68 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       toolName: "civil3d_project_notes",
       displayName: "Civil 3D Project Notes",
       description:
-        "Notes about ONE project, kept only on this computer (never in general lessons or skills): what its point groups and layers are " +
-        "for, which survey dates or point ranges belong to which feature, which drawing is the go-by, sheet conventions, decisions the user " +
-        "made. A project is matched by folder; its notes are returned with the first civil3d_execute/civil3d_query result of a session. " +
-        "action=list (current drawing's project, or project); link (project, optional folder; default the active drawing's folder) to create " +
-        "a project or add another folder to it at any time (a project can span several folders); unlink (project, folder) to drop a folder " +
-        "(notes are kept); add (note) / update (id, note) / remove (id), optional project; files (optional project) lists the project's " +
-        "files folder (<knowledge dir>\\projects\\<project>\\, next to <project>.json, subfolders included), where the user drops PDFs, " +
-        "Word/Excel files, images or anything else to read and analyse for that project. Ask before adding or changing.",
+        "What is known about ONE job, from the suite's project database on this computer (<knowledge dir>\\projects\\<job>.db, shared with " +
+        "Project Analyzer, which reads the job folder, and TBC MCP; never in general lessons or skills). A job is matched by folder: the " +
+        "active drawing belongs to the job whose folder contains it; a short overview comes back with the first civil3d_execute/civil3d_query " +
+        "result of a session. Read: overview (key facts, newest facts, open questions, rules, high checks, people, practices); search (query: " +
+        "words or codes like MH-3, 12+50, C-104; searches the text of every file and the facts); file (file: id or path in the job folder; " +
+        "details, summary, references, facts citing it, start of its text); entity (entity: a person, organization, structure, sheet or " +
+        "document); timeline (optional from, to: YYYY[-MM[-DD]]); locate (path written in a file, e.g. an xref: job folders are usually " +
+        "COPIES, so paths in files point at the original location; this says where the file is in the copy, or that it isn't known: then ask " +
+        "the user rather than guess); list (this tool's own notes and the job's folders); files (the job's reference folder " +
+        "<knowledge dir>\\projects\\<job>\\). Write (only this tool's own notes and folders): link (project, optional folder; default the " +
+        "active drawing's folder) creates the job or adds a folder; unlink (project, folder); add (note: one line, one statement; optional " +
+        "topics, source drawing|user, supersedes = the id of another tool's fact it corrects); update (id, note, optional topics); remove (id) " +
+        "retires a note (kept, hidden). All take an optional project (default: the active drawing's job). Ask the user before adding or " +
+        "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12.",
       inputShape: {
-        action: z.enum(["list", "link", "unlink", "add", "update", "remove", "files"]),
+        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "list", "link", "unlink", "add", "update", "remove", "files"]),
         project: z.string().optional(),
         folder: z.string().optional(),
         note: z.string().optional(),
         id: z.string().optional(),
+        topics: z.array(z.string()).optional(),
+        supersedes: z.string().optional(),
+        source: z.enum(["drawing", "user"]).optional(),
+        query: z.string().optional(),
+        file: z.string().optional(),
+        entity: z.string().optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        path: z.string().optional(),
+        limit: z.number().int().optional(),
       },
-      supportedActions: ["project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files"],
+      supportedActions: [
+        "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate",
+        "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files",
+      ],
       resolveAction: (rawArgs) => {
         const action = `project_${String(rawArgs.action ?? "")}`;
+        return { action, args: { ...rawArgs, action } };
+      },
+    },
+    {
+      toolName: "civil3d_practices",
+      displayName: "Good Practices",
+      description:
+        "Good practices: engineering and company practice that holds on every job and in every program (e.g. 'storm pipe minimum slope is " +
+        "0.5%', 'label structures MH-n, CB-n', 'survey in NAD83 Illinois East'), shared with Project Analyzer and TBC MCP in " +
+        "<knowledge dir>\\practices.json and shown in the instructions every chat receives. action=list (optional includeRetired); search " +
+        "(query); add (practice: one line; optional topics) when the user states one; update (id, practice, optional topics) and remove (id; " +
+        "retires it, kept) only for practices Civil 3D MCP added (source civil3d); the other tools' entries are read-only. Ask the user " +
+        "before adding or changing. Not for facts about one job (civil3d_project_notes) or how to drive Civil 3D (civil3d_preferences, " +
+        "civil3d_memory, civil3d_skills); a practice that names a job, its folders or files is refused.",
+      inputShape: {
+        action: z.enum(["list", "search", "add", "update", "remove"]),
+        practice: z.string().optional(),
+        topics: z.array(z.string()).optional(),
+        query: z.string().optional(),
+        id: z.string().optional(),
+        includeRetired: z.boolean().optional(),
+      },
+      supportedActions: ["practices_list", "practices_search", "practices_add", "practices_update", "practices_remove"],
+      resolveAction: (rawArgs) => {
+        const action = `practices_${String(rawArgs.action ?? "")}`;
         return { action, args: { ...rawArgs, action } };
       },
     },

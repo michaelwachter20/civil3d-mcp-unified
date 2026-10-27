@@ -1,11 +1,11 @@
 {
   "name": "civil3d-mcp",
-  "version": "2.2.4",
+  "version": "2.3.0",
   "description": "MCP server for interacting with Autodesk Civil 3D.",
   "main": "build/index.js",
   "type": "module",
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=22.15.0"
   },
   "bin": {
     "civil3d-mcp": "./build/index.js"
@@ -63,7 +63,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "^2.1.2",
-    "@types/node": "^22.13.10",
+    "@types/node": "^22.20.5",
     "rimraf": "^5.0.10",
     "typescript": "^5.8.2",
     "vitest": "^4.1.0"

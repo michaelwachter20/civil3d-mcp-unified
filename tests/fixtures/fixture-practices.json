@@ -1,0 +1,23 @@
+{
+  "practices": [
+    {
+      "id": "practice-1",
+      "practice": "Storm pipe minimum slope is 0.5%.",
+      "topics": [
+        "storm",
+        "slope"
+      ],
+      "source": "civil3d",
+      "added": "2026-10-20T12:00:00.000Z"
+    },
+    {
+      "id": "practice-2",
+      "practice": "Label structures MH-n, CB-n, FES-n.",
+      "topics": [
+        "labels"
+      ],
+      "source": "tbc",
+      "added": "2026-10-20T12:00:00.000Z"
+    }
+  ]
+}

@@ -19,3 +19,7 @@ const skillsSource = path.join(repositoryRoot, "skills");
 const skillsOutput = path.join(repositoryRoot, "build", "skills");
 await mkdir(skillsOutput, { recursive: true });
 await cp(skillsSource, skillsOutput, { recursive: true, force: true });
+
+// Table layout of the suite's project database (a copy of project-analyzer's schema/project-db.sql).
+await mkdir(path.join(repositoryRoot, "build", "tools"), { recursive: true });
+await copyFile(path.join(repositoryRoot, "src", "tools", "project-db.sql"), path.join(repositoryRoot, "build", "tools", "project-db.sql"));

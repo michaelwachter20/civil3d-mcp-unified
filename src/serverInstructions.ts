@@ -1,4 +1,5 @@
 import { allLessons, knowledgeRoot, listPreferences } from "./tools/knowledgeBase.js";
+import { practicesForInstructions } from "./tools/practices.js";
 import { loadSkills } from "./tools/skillsLibrary.js";
 
 /**
@@ -14,19 +15,28 @@ export const SERVER_INSTRUCTIONS = [
   "Prefer a dedicated civil3d_* tool when one fits; use code execution for everything else.",
   "Never move, explode or edit COGO points or other survey data unless the user explicitly asks; point labels can be moved independently.",
   "Run a read-only check or a dryRun before changing a drawing, and make each change a single undo step.",
-  "Keep a knowledge base that grows (add, never delete), always asking the user first: a standing rule from the user becomes a " +
-    "preference (civil3d_preferences action=add); a non-obvious gotcha or fact becomes a lesson (civil3d_memory action=record, with topics); " +
-    "a multi-step task that worked and the user is happy with becomes a skill (civil3d_skills action=write) and, if it will be re-run, a " +
-    "saved script (civil3d_script action=save, runnable with MCPRUN). Improve skills that turned out wrong or incomplete.",
-  "Keep lessons, skills and scripts GENERAL so they help on any project: no drawing names, point numbers, coordinates, dates, " +
-    "point group or layer names, or site features. Facts about the current job go in civil3d_project_notes (kept only on this " +
-    "computer, matched to the project by folder); check them with civil3d_project_notes action=list when you start on a drawing.",
+  "Knowledge comes in three kinds; keep each where it belongs and always ask the user before saving or changing any of it. " +
+    "(1) How to drive Civil 3D: a standing rule from the user becomes a preference (civil3d_preferences action=add); a non-obvious " +
+    "gotcha or fact becomes a lesson (civil3d_memory action=record, with topics); a multi-step task that worked and the user is happy " +
+    "with becomes a skill (civil3d_skills action=write) and, if it will be re-run, a saved script (civil3d_script action=save, runnable " +
+    "with MCPRUN). Improve skills that turned out wrong or incomplete; add, never delete. " +
+    "(2) This job: facts about the current project go in civil3d_project_notes, the suite's project database on this computer, which " +
+    "Project Analyzer fills from the job folder and TBC MCP shares; the job is matched to the drawing by folder. Start on a drawing with " +
+    "civil3d_project_notes action=overview, and use search, file, entity, timeline and locate before asking the user what the files already say. " +
+    "Job folders are usually copies: translate paths written in files (xrefs, images) with action=locate. " +
+    "(3) Engineering practice true on every job and in every program (minimum slopes, structure naming, the survey datum) goes in " +
+    "civil3d_practices, shared with the other suite tools.",
+  "Keep lessons, skills, scripts and practices GENERAL so they help on any project: no job names, drawing or file names, folders, point " +
+    "numbers, coordinates, dates, point group or layer names, or site features. Those belong in civil3d_project_notes.",
 ].join("\n");
 
 const MAX_PREFERENCES_CHARS = 8_000;
+const MAX_PRACTICES_CHARS = 6_000;
+
+const capped = (block: string, limit: number, more: string) => (block.length > limit ? `${block.slice(0, limit)}\n[...more: ${more}]` : block);
 
 /**
- * Base instructions plus the user's preferences and skills, read once at startup.
+ * Base instructions plus the user's preferences, the suite's good practices and the user's skills, read once at startup.
  * (Clients receive instructions when they connect; the tools always show the latest.)
  */
 export function buildServerInstructions(): string {
@@ -34,11 +44,20 @@ export function buildServerInstructions(): string {
   try {
     const preferences = listPreferences();
     if (preferences.length > 0) {
-      let block = preferences.map((preference) => `- [${preference.id}] ${preference.rule}`).join("\n");
-      if (block.length > MAX_PREFERENCES_CHARS) block = `${block.slice(0, MAX_PREFERENCES_CHARS)}\n[...more: civil3d_preferences action=list]`;
-      parts.push(`\nThe user's standing preferences (follow them):\n${block}`);
+      const block = preferences.map((preference) => `- [${preference.id}] ${preference.rule}`).join("\n");
+      parts.push(`\nThe user's standing preferences (follow them):\n${capped(block, MAX_PREFERENCES_CHARS, "civil3d_preferences action=list")}`);
     }
+  } catch {
+    // Instructions must never block startup; the tools still expose everything.
+  }
 
+  const practices = practicesForInstructions();
+  if (practices.length > 0) {
+    const block = practices.map((practice) => `- [${practice.id}] ${practice.practice}`).join("\n");
+    parts.push(`\nGood practices shared by the suite (apply them on every job):\n${capped(block, MAX_PRACTICES_CHARS, "civil3d_practices action=list")}`);
+  }
+
+  try {
     const personal = loadSkills().filter((skill) => skill.source === "personal");
     if (personal.length > 0) {
       parts.push(`\nThe user's own skills (check these first): ${personal

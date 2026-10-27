@@ -123,7 +123,7 @@ describe("httpBridge", () => {
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
         bridge: "ok",
-        versions: { application: "2.2.4", mcpSdk: expect.any(String), node: expect.any(String) },
+        versions: { application: "2.3.0", mcpSdk: expect.any(String), node: expect.any(String) },
       });
       expect(executeOrchestratorMock).not.toHaveBeenCalled();
     });

@@ -52,13 +52,13 @@ hand if you no longer want them. To remove the AI side, uninstall the extension 
 
 **Claude Desktop (automatic):** the installer from step 1 asks *"Add the Civil 3D tools to Claude Desktop
 now?"*. Answer **Y**, quit Claude Desktop when asked, and reopen it: the Civil 3D tools are there. It needs
-[Node.js](https://nodejs.org) 18 or newer, keeps a copy of the server in `%LOCALAPPDATA%\civil3d-mcp`, and
+[Node.js](https://nodejs.org) 22.15 or newer, keeps a copy of the server in `%LOCALAPPDATA%\civil3d-mcp`, and
 backs up Claude's settings file before adding the one `civil3d-mcp` entry.
 
 **Claude Desktop (manual, no Node.js needed):** open **Settings → Extensions → Advanced settings → Install
 Extension**, select `civil3d-mcp-{{VERSION}}.mcpb`, and accept the defaults (host `localhost`, port `8080`).
 
-**Claude Code:** needs Node.js 18 or newer. To make it available only in one project folder, run this inside
+**Claude Code:** needs Node.js 22.15 or newer. To make it available only in one project folder, run this inside
 that folder (use `--scope user` instead to have it in every project):
 
 ```

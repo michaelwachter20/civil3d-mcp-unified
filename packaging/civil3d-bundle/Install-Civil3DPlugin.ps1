@@ -20,8 +20,9 @@ $serverHome = Join-Path $env:LOCALAPPDATA 'civil3d-mcp'
 function Get-Node {
   $node = Get-Command node -ErrorAction SilentlyContinue
   if (-not $node) { return $null }
-  $major = [int](((& $node.Source --version) -replace '^v', '') -split '\.')[0]
-  if ($major -lt 18) { return $null }
+  # 22.15 or newer: project notes use the built-in node:sqlite and zstd.
+  $version = [version](((& $node.Source --version) -replace '^v', '').Trim())
+  if ($version -lt [version]'22.15.0') { return $null }
   return $node.Source
 }
 
@@ -140,7 +141,7 @@ if ($claudeSettings -and (Test-Path -LiteralPath $serverSource)) {
   $answer = Read-Host 'Add the Civil 3D tools to Claude Desktop now? [Y/n]'
   if ($answer -notmatch '^(n|no)$') {
     if (-not (Get-Node)) {
-      Write-Host 'Node.js 18 or newer is needed for this step and was not found.' -ForegroundColor Yellow
+      Write-Host 'Node.js 22.15 or newer is needed for this step and was not found.' -ForegroundColor Yellow
       Write-Host 'Install it from https://nodejs.org (LTS) and run this installer again, or in Claude Desktop use'
       Write-Host 'Settings > Extensions > Advanced settings > Install Extension and pick the .mcpb file from this zip.'
     }

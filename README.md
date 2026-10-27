@@ -4,7 +4,7 @@
   <p><strong>Let an AI assistant drive a live Autodesk Civil 3D 2027 drawing with the full AutoCAD and Civil 3D .NET API.</strong></p>
   <p>200+ tested tools for everyday work, live C# for everything else, and saved scripts for the tasks you repeat.</p>
 
-  [![Node.js](https://img.shields.io/badge/Node.js-18%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+  [![Node.js](https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
   [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
   [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.29-blueviolet)](https://modelcontextprotocol.io)
@@ -67,6 +67,9 @@ civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 AP
 - **A knowledge base that grows with use**: `civil3d_preferences` (your standing rules), `civil3d_memory`
   (lessons about the API), and skills and scripts the assistant can learn and version. See
   [Learning on the job](#learning-on-the-job).
+- **Knows the job**: `civil3d_project_notes` reads the suite's project database, which Project Analyzer fills from
+  the whole job folder, and adds notes to it; `civil3d_practices` holds the engineering practice shared with Project
+  Analyzer and TBC MCP.
 - **Saved scripts** stored as editable `.csx` files, runnable by the AI or by you with `MCPRUN`.
 - **One AI change = one undo**: each write is a single `UNDO` step, and reads
   never add steps to your undo history.
@@ -79,7 +82,7 @@ civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 AP
 - **Safer undo and crash guards**: UNDO refuses to revert your own work, and API calls known to crash Civil 3D
   are blocked in scripts in favor of safe helpers.
 
-Everything else from upstream still applies: the compact tool surface (42 public
+Everything else from upstream still applies: the compact tool surface (43 public
 tools by default), local Autodesk help search (`civil3d_help`), native workflow
 handlers, Claude Code and Claude Desktop installers, and the generated inventory in
 [`docs/tools.generated.md`](./docs/tools.generated.md).
@@ -102,6 +105,8 @@ this repo's serialized host queue, approval flow, and logging.
 | `civil3d_skills` | Lists, searches, and reads skills (built-in ones in [`skills/`](./skills), plus the user's own); `write`, `append_version_section` and `retire` let the assistant learn new ones. | Not required |
 | `civil3d_preferences` | `list` / `add` / `update` / `remove` the user's standing rules, which are sent with every new chat. | remove |
 | `civil3d_memory` | `record` / `search` / `remove` lessons tagged with API topics; matching lessons come back with code results. | remove |
+| `civil3d_project_notes` | What is known about the drawing's job: `overview` / `search` / `file` / `entity` / `timeline` / `locate` read the project database; `list` / `link` / `unlink` / `add` / `update` / `remove` / `files` manage Civil 3D MCP's own notes and folders. | remove |
+| `civil3d_practices` | `list` / `search` / `add` / `update` / `remove` good practices shared by the suite (`practices.json`), sent with every new chat. | remove |
 | `civil3d_script` | `save` / `list` / `get` / `run` / `delete` reusable scripts, `compile` to check code without running it, and `status`. | save, run, delete |
 
 **Script globals:** `Document`, `CivilDoc`, `Database`, `Transaction`, `Editor`,
@@ -130,23 +135,43 @@ return new { count = result.Status == PromptStatus.OK ? result.Value.Count : 0 }
 
 ### Learning on the job
 
-The assistant keeps what it learns in plain files on your PC (`Documents\Civil3DMcp-KnowledgeBase` by default), so it improves
-with use instead of waiting for a new release:
+The assistant keeps what it learns on your PC (`Documents\Civil3DMcp-KnowledgeBase` by default, or
+`CIVIL3D_KNOWLEDGE_DIR`), so it improves with use instead of waiting for a new release. Knowledge comes in three
+kinds, and each has its place:
+
+- **How to drive Civil 3D** (true for this program on any job): preferences, lessons, skills and saved scripts.
+  Only Civil 3D MCP uses them.
+- **This job** (true only here): project notes, in the suite's **project database**, one SQLite file per job, shared
+  with [Project Analyzer](https://github.com/michaelwachter20/project-analyzer) (which reads the whole job folder:
+  every file's text, references, people, timeline and checks) and TBC MCP.
+- **Engineering practice** (true on every job, in any program): good practices, shared by the same three tools.
 
 | What | Where | How it grows |
 | --- | --- | --- |
-| **Preferences**: your standing rules and standards ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
+| **Preferences**: your standing rules for working in Civil 3D ("we plot at 1\" = 30'", "the hide group is Secondary Points") | `preferences.json` | `civil3d_preferences action=add / update / remove` |
 | **Lessons**: short, non-obvious facts about the Civil 3D API, tagged with the API names they're about (general, never project-specific) | `memory\lessons.jsonl` | `civil3d_memory action=record / search` |
-| **Project notes**: facts about one job (what its point groups are for, which drawing is the go-by, decisions made), matched to the project by folder | `projects\<project>.json` | `civil3d_project_notes action=link / add / list` |
-| **Project files**: anything you want the assistant to read for one job (PDFs, Word/Excel files, images, in any subfolders) | `projects\<project>\` (same name as the `.json`) | Drop files in; `civil3d_project_notes action=files` lists them |
 | **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
 | **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
+| **Project knowledge**: everything about one job: what Project Analyzer read from the job folder, and notes the tools add (what its point groups are for, which drawing is the go-by, decisions made), matched to the job by folder | `projects\<job>.db` | `civil3d_project_notes action=overview / search / file / entity / timeline / locate` to read; `link / add / update / remove` for Civil 3D MCP's own notes |
+| **Project files**: reference material you want read for one job (standards, specs, in any subfolders) | `projects\<job>\` (same name as the `.db`) | Drop files in; `civil3d_project_notes action=files` lists them |
+| **Good practices**: engineering and company practice for every job ("storm pipe minimum slope is 0.5%", "label structures MH-n") | `practices.json` | `civil3d_practices action=add / update / remove` |
 
-- **Every new chat starts informed.** Your preferences and the list of your own skills are sent with the server's
-  instructions, and the assistant first reads the built-in `working_safely_in_civil3d` skill.
-- **General and project knowledge stay apart.** Lessons and skills are written to help on any project. Facts about one
-  job go in that project's notes, which stay on your computer and come back with the first code result whenever the
-  active drawing is in one of the project's folders.
+- **Every new chat starts informed.** Your preferences, the good practices and the list of your own skills are sent
+  with the server's instructions, and the assistant first reads the built-in `working_safely_in_civil3d` skill.
+- **The job comes to the assistant.** The first code result of a session in a drawing that belongs to a known job
+  carries a short overview (key facts, high-severity checks, missing referenced files), and
+  `civil3d_project_notes action=overview` shows the rest: newest facts, open questions, rules, people and
+  practices. `search` finds words and codes (`MH-3`, `12+50`, `C-104`) in the text of every file Project Analyzer
+  read; `file`, `entity` and `timeline` show one file, one person/structure/sheet/document, or the job's events.
+- **Copied job folders.** Job folders are usually copies of a project kept elsewhere, so paths written in drawings
+  (xrefs, images) still point at the original place. `civil3d_project_notes action=locate` says where such a file is
+  in the copy, from the references Project Analyzer resolved, or that it isn't known.
+- **Each tool changes only its own.** Civil 3D MCP adds, changes and retires only its own notes, folders and
+  practices; a fact from Project Analyzer or TBC MCP is corrected by adding a note that supersedes it. Removing
+  retires an entry (hidden, kept, its id never reused). Nothing is deleted.
+- **General and project knowledge stay apart.** Lessons, skills, scripts and practices are written to help on any
+  project; a practice that names a job, its folders or its files is refused. Facts about one job go in its project
+  database, which stays on your computer. No tool keeps copies of the job's files.
 - **Lessons find themselves.** When the assistant runs code with `civil3d_execute` or `civil3d_query`, lessons whose topics
   appear in that code come back with the result (`relatedLessons`), and reading a skill returns the lessons related
   to it. The release ships with a set of seed lessons learned on real drawings.
@@ -160,12 +185,20 @@ with use instead of waiting for a new release:
 - **Your versions win.** A skill you write with the same name as a built-in one replaces it for you; retiring yours
   brings the built-in one back. Updates never overwrite your files.
 - The assistant **asks before** saving, changing or removing anything. Learning only changes these files, never a
-  drawing, so it doesn't use the drawing approval flow (removing a preference or lesson still asks for approval).
-- Everything is plain text: open the files in Notepad to review or edit them.
+  drawing, so it doesn't use the drawing approval flow (removing a preference, lesson, note or practice still asks
+  for approval).
+- Everything except the project databases is plain text: open the files in Notepad to review or edit them. The
+  databases use Node's built-in SQLite (Node.js 22.15 or newer); Project Analyzer's `kb.py` reads, exports and
+  merges them.
+- Until 2.3.0 project notes were kept in `projects\<project>.json`. The first time a job is opened after updating,
+  its notes, folders and name move into `projects\<project>.db` (each note keeps who wrote it and when) and the JSON
+  file is renamed to `<project>.json.imported`.
 - Until 2.1.0 the folder was `Documents\Civil3DMcp`. The first start after updating renames it to
   `Documents\Civil3DMcp-KnowledgeBase` when the new one doesn't exist yet, so nothing is lost.
-- To share with a team, point `CIVIL3D_KNOWLEDGE_DIR` (and the plugin's `CIVIL3D_SCRIPTS_DIR`) at a shared folder.
-  Scripts run code inside Civil 3D, so only people you trust should be able to write there.
+- Keep the knowledge folder on a local disk: SQLite databases can't safely be shared over a network folder. To share
+  a job with someone, use Project Analyzer's `kb.py export` / `merge`. To share saved scripts with a team, point the
+  plugin's `CIVIL3D_SCRIPTS_DIR` at a shared folder; scripts run code inside Civil 3D, so only people you trust
+  should be able to write there.
 
 ### Saved scripts for repetitive tasks
 
@@ -307,7 +340,7 @@ its `INSTALL.md`. In short:
    and shows a **Civil 3D MCP** ribbon tab. It also appears in **Windows Settings → Apps**; remove it there or
    with `Uninstall-Civil3DPlugin.cmd` (saved scripts and logs are kept). No admin rights needed.
 2. **AI app:**
-   - **Claude Desktop:** the installer offers to add the tools for you (needs Node.js 18+). Or install
+   - **Claude Desktop:** the installer offers to add the tools for you (needs Node.js 22.15+). Or install
      `civil3d-mcp-<version>.mcpb` via Settings → Extensions → Advanced settings → Install Extension.
    - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
    - **Other MCP clients:** a stdio server running `node <extracted>\mcp-server\server\index.js`.
@@ -375,7 +408,7 @@ Alternatively, `npm run release:publish` builds and publishes from your PC using
 ## Features
 
 - **Live C# execution and saved scripts** covering effectively the entire AutoCAD and Civil 3D .NET API
-- **Compact default MCP surface** with 42 public tools; every registered
+- **Compact default MCP surface** with 43 public tools; every registered
   route remains internally callable or available as an opt-in alias
 - **Local Autodesk help in chat** — version-matched topics, screenshots,
   diagrams, citations, and playable Civil 3D tutorial videos
@@ -514,7 +547,7 @@ active. Nothing in Node.js touches the drawing directly.
 
 | Component | Version |
 |---|---|
-| Node.js | 18+ |
+| Node.js | 22.15+ (built-in SQLite and zstd for project notes) |
 | Civil 3D | 2027 (AutoCAD 2027 requires .NET 10 plugins; 2025/2026 builds will not load). Tested only on 2027 English build 13.9.1308 |
 | .NET SDK | 10.0 |
 | Civil 3D API refs | Licensed local installation or untracked reference directory |
@@ -1168,7 +1201,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 42-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
-| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp-KnowledgeBase` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name). |
+| `CIVIL3D_KNOWLEDGE_DIR` | `Documents\Civil3DMcp-KnowledgeBase` | Knowledge base root: `preferences.json`, `memory\lessons.jsonl` and `skills\` (learned skills, which replace built-in skills of the same name), plus what the suite shares: `practices.json` and `projects\<job>.db` (one project database per job). Keep it on a local disk. |
 | `CIVIL3D_USER_SKILLS_DIR` | `<knowledge dir>\skills` | Optional override for the learned-skills folder only. |
 | `CIVIL3D_RELEASE` | asked from the plugin, else `2027` | Civil 3D release used to stamp skills and lessons when Civil 3D can't be reached. |
 

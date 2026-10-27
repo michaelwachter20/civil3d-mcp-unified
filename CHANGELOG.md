@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.3.0 — 2026-10-26
+
+- **Project notes moved to the suite's project database.** Each job now has one SQLite database,
+  `<knowledge dir>\projects\<job>.db`, shared with Project Analyzer (which reads the whole job folder into it:
+  every file's text, compressed, plus references, people, events and checks) and TBC MCP. It replaces
+  `projects\<job>.json`. A note is a fact owned by Civil 3D MCP: one line, a duplicate check, ids `fact-N`, a source
+  (the active drawing or the user), optional topics, and `supersedes` to correct another tool's fact. Civil 3D MCP
+  changes only its own notes and folders; `remove` retires a note (kept, hidden, id never reused). Saving no longer
+  drops fields written by other tools.
+- The first time a job is opened, its old `<job>.json` is imported once (name, folders, and each note with its
+  author tool and times) and renamed to `<job>.json.imported`.
+- A drawing's job is found by the job folder Project Analyzer read (`source_root`) and every linked folder, deepest
+  folder wins, case-insensitive.
+- New `civil3d_project_notes` read actions: `overview` (key and newest facts, open questions, rules, high-severity
+  checks, people, practices), `search` (full text of every file, codes such as `MH-3`, `12+50`, `C-104` kept
+  together, plus facts), `file`, `entity`, `timeline` and `locate` (where a path written in a file, such as an xref,
+  is in a copied job folder). The first code result of a session now carries a short overview of the job (key facts,
+  high-severity checks, missing referenced files).
+- New tool `civil3d_practices`: good practices shared by the suite in `<knowledge dir>\practices.json` (list,
+  search, add, update, remove = retire; only entries added by Civil 3D MCP can be changed; practices naming a job,
+  folder or file are refused). Current practices are sent with the server instructions next to the preferences.
+- The server instructions, tool descriptions and the `working_safely_in_civil3d` skill explain the three kinds of
+  knowledge: how to drive Civil 3D (preferences, lessons, skills, scripts), this job (project notes) and engineering
+  practice (practices).
+- **Requires Node.js 22.15 or newer** (was 18.17): the project database uses Node's built-in `node:sqlite` and zstd,
+  no native packages. Only project notes need it; the rest of the server still starts on an older Node.js. The
+  Docker image is now based on `node:22-alpine`.
+- The knowledge folder should stay on a local disk (SQLite databases can't be shared safely over a network folder);
+  share a job with Project Analyzer's `kb.py export` / `merge`.
+
 ## v2.2.4 — 2026-10-22
 
 - New skill `add_points_to_schedule_table`: add a point group's points to a model-space coordinate schedule table in

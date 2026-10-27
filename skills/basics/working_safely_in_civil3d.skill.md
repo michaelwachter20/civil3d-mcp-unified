@@ -15,8 +15,13 @@ parameters: []
   If tools report that Civil 3D can't be reached, ask them to turn it on rather than retrying.
 - You act on the drawing that is active in that Civil 3D window. Confirm which drawing it is (`civil3d_health` or a
   `civil3d_query` returning `Document.Name`) before changing anything, and say which drawing you're about to change.
-- Check `civil3d_preferences action=list` and follow the user's standing rules.
-- Check `civil3d_project_notes action=list` for what is already known about this drawing's project.
+- Check `civil3d_preferences action=list` and follow the user's standing rules, and the good practices
+  (`civil3d_practices action=list`) that apply on every job.
+- Check `civil3d_project_notes action=overview` for what is already known about this drawing's job. Project
+  Analyzer may have read the whole job folder: before asking the user what a spec, email or sheet says, look it up
+  with `action=search` (words or codes like `MH-3`, `12+50`, `C-104`), `file`, `entity` or `timeline`.
+- Job folders are usually copies, so paths written in drawings (xrefs, images) point at the original location.
+  Translate them with `civil3d_project_notes action=locate`; if it can't tell, ask the user rather than guess.
 
 ## Finding the right way to do something
 
@@ -52,18 +57,31 @@ Read them: they are mistakes someone already made.
 
 ## Keep the knowledge base growing (always ask first)
 
+Knowledge comes in three kinds. Decide which one it is before saving:
+
+- **How to drive Civil 3D** (true for this program on any job): preferences, lessons, skills, scripts.
+- **This job** (true only here): project notes, in the suite's project database shared with Project Analyzer and
+  TBC MCP.
+- **Engineering practice** (true on every job, in any program): good practices, shared by the suite.
+
 | You found | Save it as |
 |---|---|
-| A standing rule or standard from the user | `civil3d_preferences action=add` |
-| A fact about this job (what a point group or survey date is for, which drawing is the go-by, a decision) | `civil3d_project_notes action=add` (this computer only) |
-| A non-obvious gotcha or fact that applies to any project | `civil3d_memory action=record` with topics (API names) |
+| A standing rule from the user about working in Civil 3D (plot scale, styles, never move COGO points) | `civil3d_preferences action=add` |
+| A non-obvious gotcha or fact about Civil 3D that applies to any project | `civil3d_memory action=record` with topics (API names) |
 | A multi-step task that worked and the user is happy with | `civil3d_skills action=write` (when to use, rules, pitfalls, script) |
 | Something the user will re-run | also `civil3d_script action=save` (runnable with `MCPRUN`) |
+| A fact about this job (what a point group or survey date is for, which drawing is the go-by, a decision, where an xref is in the copy) | `civil3d_project_notes action=add` (one line, one statement; this computer only) |
+| A correction of a fact another tool recorded | `civil3d_project_notes action=add` with `supersedes` = that fact's id |
+| Engineering or company practice that holds on every job (minimum slopes, structure naming, the survey datum) | `civil3d_practices action=add` |
 
-Lessons, skills and scripts must be general: write the technique, not this job. No drawing or file names,
-point numbers, coordinates, elevations, dates, crew initials, point group or layer names, company details or
-site features. Make project-specific values parameters, or steps that ask the user. Those facts belong in
-project notes.
+You can change or remove only what Civil 3D MCP recorded; facts from Project Analyzer or TBC MCP and their
+practices are read-only. Write references the way every suite tool does: `2026-10-03`, `12+50`, `MH-3`, `C-104`,
+`RFI 12`, `$12,500.00`.
+
+Lessons, skills, scripts and practices must be general: write the technique, not this job. No job, drawing or
+file names, folders, point numbers, coordinates, elevations, dates, crew initials, point group or layer names,
+company details or site features. Make project-specific values parameters, or steps that ask the user. Those facts
+belong in project notes.
 
 Add, never delete: improving a skill archives the old version; a skill verified on another Civil 3D release gets a
 new section (`append_version_section`) instead of being overwritten.
