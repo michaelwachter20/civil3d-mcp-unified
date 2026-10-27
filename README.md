@@ -87,6 +87,20 @@ tools by default), local Autodesk help search (`civil3d_help`), native workflow
 handlers, Claude Code and Claude Desktop installers, and the generated inventory in
 [`docs/tools.generated.md`](./docs/tools.generated.md).
 
+### Works on its own, better together
+
+Civil 3D MCP is one of three tools that can share what they know about a job:
+[Project Analyzer](https://github.com/michaelwachter20/project-analyzer) (reads a whole job folder) and TBC MCP
+(Trimble Business Center). Each is installed, updated and used on its own: none needs another one installed,
+running, or at a matching version. When they are on the same PC they meet in the knowledge folder
+(`Documents\Civil3DMcp-KnowledgeBase`) and share it with no setup.
+
+| Installed | What you get |
+| --- | --- |
+| Civil 3D MCP alone | All its Civil 3D tools; project notes in the job's project database (it creates the database when you link a job); good practices; the job's [User Knowledge](#user-knowledge-your-documents-for-a-job) documents in text, Word, Excel and PowerPoint, read directly |
+| + Project Analyzer | Also every job document and every User Knowledge document (PDFs and scans too) searchable and readable, plus the people, timeline, checks and references the analyzer found, and `locate` for paths in a copied job folder |
+| + TBC MCP | Notes either tool adds are seen by the other; good practices are shared |
+
 ---
 
 ## Code Execution and Saved Scripts
@@ -153,7 +167,7 @@ kinds, and each has its place:
 | **Skills**: how to do a task (when to use it, your rules, pitfalls, and the script) | `skills\` | `civil3d_skills action=write` after a task works; `append_version_section`, `retire` |
 | **Saved scripts**: ready-to-run programs | `scripts\` | `civil3d_script action=save`; also runnable in Civil 3D with `MCPRUN` |
 | **Project knowledge**: everything about one job: what Project Analyzer read from the job folder, and notes the tools add (what its point groups are for, which drawing is the go-by, decisions made), matched to the job by folder | `projects\<job>.db` | `civil3d_project_notes action=overview / search / file / entity / timeline / locate` to read; `link / add / update / remove` for Civil 3D MCP's own notes |
-| **Project files**: reference material you want read for one job (standards, specs, in any subfolders) | `projects\<job>\` (same name as the `.db`) | Drop files in; `civil3d_project_notes action=files` lists them |
+| **User knowledge**: your own documents for one job (proposal guidelines, building-type requirements, a client's standards, design manuals, code books; subfolders are fine) | `projects\<job>\User Knowledge\` | Drop files in; `civil3d_project_notes action=files / read`, and `search` and `overview` include them. See [below](#user-knowledge-your-documents-for-a-job) |
 | **Good practices**: engineering and company practice for every job ("storm pipe minimum slope is 0.5%", "label structures MH-n") | `practices.json` | `civil3d_practices action=add / update / remove` |
 
 - **Every new chat starts informed.** Your preferences, the good practices and the list of your own skills are sent
@@ -190,6 +204,8 @@ kinds, and each has its place:
 - Everything except the project databases is plain text: open the files in Notepad to review or edit them. The
   databases use Node's built-in SQLite (Node.js 22.15 or newer); Project Analyzer's `kb.py` reads, exports and
   merges them.
+- Until 2.4.0 reference files for a job went directly in `projects\<job>\`. They aren't read any more:
+  `civil3d_project_notes action=files` lists them under `elsewhere`; move them into `projects\<job>\User Knowledge\`.
 - Until 2.3.0 project notes were kept in `projects\<project>.json`. The first time a job is opened after updating,
   its notes, folders and name move into `projects\<project>.db` (each note keeps who wrote it and when) and the JSON
   file is renamed to `<project>.json.imported`.
@@ -199,6 +215,26 @@ kinds, and each has its place:
   a job with someone, use Project Analyzer's `kb.py export` / `merge`. To share saved scripts with a team, point the
   plugin's `CIVIL3D_SCRIPTS_DIR` at a shared folder; scripts run code inside Civil 3D, so only people you trust
   should be able to write there.
+
+#### User knowledge: your documents for a job
+
+Each job has a **User Knowledge** folder, `<knowledge folder>\projects\<job>\User Knowledge\`, for documents that
+say how *this* job must be done: proposal guidelines, requirements for the building type, the client's standards,
+design manuals, code books. Subfolders are fine. They aren't the job's files (those stay in the job folder).
+
+- The folder is created, empty, the first time a tool lists or opens the job (`civil3d_project_notes action=list`,
+  `overview`, `files`, `read`, or `link`). That is the only thing any tool writes there; nothing in it is ever
+  changed, moved or deleted.
+- `action=files` lists each document with `readByAnalyzer` (Project Analyzer has read it as it is now) and
+  `readableHere` (Civil 3D MCP can read it itself). `action=read` (file, optional `maxChars`, default 20,000, and
+  `offset`) returns its text: the text Project Analyzer stored, else read straight from the file (plain text, Word
+  `.docx`, Excel `.xlsx`, PowerPoint `.pptx`), else a note that Project Analyzer reads it
+  (`python analyze.py knowledge --project "<job>"`) or that the AI app can open the file itself. That last case is
+  PDFs, scans, drawings and older Office formats.
+- `search` covers them (hits marked `userKnowledge`), including documents Project Analyzer hasn't read yet that
+  Civil 3D MCP can read itself; `overview` and the first code result of a session list them.
+- The assistant follows a document that applies to the task and names it. When one conflicts with a fact, a
+  practice or the drawings, it tells you rather than choosing.
 
 ### Saved scripts for repetitive tasks
 

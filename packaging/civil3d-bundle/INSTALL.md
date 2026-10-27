@@ -86,6 +86,13 @@ With a drawing open in Civil 3D, ask your AI app to run `civil3d_health`, or som
   (`skills\`) and scripts (`scripts\`, runnable in Civil 3D with `MCPRUN`). Nothing is thrown away: older versions of
   skills and scripts go to an `_archive` folder. These are plain files you can open and edit, and updates never
   overwrite them.
+- Each job also gets a **User Knowledge** folder, `Documents\Civil3DMcp-KnowledgeBase\projects\<job>\User Knowledge`,
+  for your own documents about that job: proposal guidelines, building-type requirements, client standards, design
+  manuals, code books (subfolders are fine). The assistant lists, searches and reads them, follows the ones that
+  apply and names them, and tells you when one conflicts with the drawings. It reads text, Word, Excel and PowerPoint
+  files itself; PDFs and scans need [Project Analyzer](https://github.com/michaelwachter20/project-analyzer).
+- Civil 3D MCP works on its own. If Project Analyzer or TBC MCP are installed on the same PC, they share the
+  knowledge folder automatically: no setup, and their versions don't have to match.
 - The plugin log is at `%LOCALAPPDATA%\Civil3DMcpPlugin\plugin.log`.
 - If you also `NETLOAD` the plugin from another folder, only one copy can use port 8080. Use one or the other.
 - Full documentation: {{URL}}

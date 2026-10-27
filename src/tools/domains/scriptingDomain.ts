@@ -10,7 +10,7 @@ import {
 } from "../knowledgeBase.js";
 import {
   addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectEntity, projectFileDetails, projectNotesOnce,
-  projectOverview, projectTimeline, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
+  projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
 } from "../projectNotes.js";
 import { addPractice, describePractices, removePractice, searchPractices, updatePractice } from "../practices.js";
 
@@ -91,6 +91,10 @@ const ProjectAddArgs = z.object({
 const ProjectUpdateArgs = z.object({ action: z.literal("project_update"), id: z.string().min(1), note: z.string().min(1).max(2_000), project: ProjectNameSchema.optional(), topics: TopicsSchema.optional() });
 const ProjectRemoveArgs = z.object({ action: z.literal("project_remove"), id: z.string().min(1), project: ProjectNameSchema.optional() });
 const ProjectFilesArgs = z.object({ action: z.literal("project_files"), project: ProjectNameSchema.optional() });
+const ProjectReadArgs = z.object({
+  action: z.literal("project_read"), file: z.string().min(1).max(1_000), project: ProjectNameSchema.optional(),
+  maxChars: z.number().int().min(1).max(200_000).optional(), offset: z.number().int().min(0).optional(),
+});
 const ProjectOverviewArgs = z.object({ action: z.literal("project_overview"), project: ProjectNameSchema.optional() });
 const ProjectSearchArgs = z.object({ action: z.literal("project_search"), query: z.string().min(1).max(500), project: ProjectNameSchema.optional(), limit: z.number().int().min(1).max(50).optional() });
 const ProjectFileArgs = z.object({ action: z.literal("project_file"), file: z.string().min(1).max(1_000), project: ProjectNameSchema.optional() });
@@ -310,6 +314,13 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => listProjectFiles(args.project as string | undefined),
     },
+    project_read: {
+      action: "project_read", inputSchema: ProjectReadArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => readUserKnowledge(args.file as string, args.project as string | undefined, {
+        maxChars: args.maxChars as number | undefined, offset: args.offset as number | undefined,
+      }),
+    },
     project_overview: {
       action: "project_overview", inputSchema: ProjectOverviewArgs, responseSchema: GenericResponseSchema,
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
@@ -526,14 +537,17 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "details, summary, references, facts citing it, start of its text); entity (entity: a person, organization, structure, sheet or " +
         "document); timeline (optional from, to: YYYY[-MM[-DD]]); locate (path written in a file, e.g. an xref: job folders are usually " +
         "COPIES, so paths in files point at the original location; this says where the file is in the copy, or that it isn't known: then ask " +
-        "the user rather than guess); list (this tool's own notes and the job's folders); files (the job's reference folder " +
-        "<knowledge dir>\\projects\\<job>\\). Write (only this tool's own notes and folders): link (project, optional folder; default the " +
+        "the user rather than guess); list (this tool's own notes and the job's folders). User knowledge, the user's own documents for the job " +
+        "(proposal guidelines, building-type requirements, standards, code books) in <knowledge dir>\\projects\\<job>\\User Knowledge\\: files " +
+        "lists them (readByAnalyzer, readableHere); read (file: its path there; optional maxChars, default 20000, and offset) returns its " +
+        "text; search and overview cover them too. Follow a document that applies to the task and name it; when it conflicts with a fact, " +
+        "a practice or the drawings, tell the user. Write (only this tool's own notes and folders): link (project, optional folder; default the " +
         "active drawing's folder) creates the job or adds a folder; unlink (project, folder); add (note: one line, one statement; optional " +
         "topics, source drawing|user, supersedes = the id of another tool's fact it corrects); update (id, note, optional topics); remove (id) " +
         "retires a note (kept, hidden). All take an optional project (default: the active drawing's job). Ask the user before adding or " +
         "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12.",
       inputShape: {
-        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "list", "link", "unlink", "add", "update", "remove", "files"]),
+        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "list", "link", "unlink", "add", "update", "remove", "files", "read"]),
         project: z.string().optional(),
         folder: z.string().optional(),
         note: z.string().optional(),
@@ -548,10 +562,13 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         to: z.string().optional(),
         path: z.string().optional(),
         limit: z.number().int().optional(),
+        maxChars: z.number().int().optional(),
+        offset: z.number().int().optional(),
       },
       supportedActions: [
         "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate",
         "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files",
+        "project_read",
       ],
       resolveAction: (rawArgs) => {
         const action = `project_${String(rawArgs.action ?? "")}`;

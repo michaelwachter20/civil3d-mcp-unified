@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.4.0 — 2026-10-27
+
+- **User knowledge per job.** Each job has a `User Knowledge` folder,
+  `<knowledge dir>\projects\<job>\User Knowledge\`, for the user's own documents about that job: proposal
+  guidelines, building-type requirements, a client's standards, design manuals, code books (subfolders are fine).
+  It is created, empty, when the job is listed, opened or linked; Civil 3D MCP never writes anything else there.
+  Project Analyzer reads it into the job's database (paths `<user knowledge>\...`); Civil 3D MCP uses that text
+  when the database has the document as it is now, and otherwise reads text, Word (`.docx`), Excel (`.xlsx`) and
+  PowerPoint (`.pptx`) documents itself with Node's built-ins.
+  - `civil3d_project_notes action=files` now lists that folder: each document's size, modified time,
+    `readByAnalyzer` and `readableHere`. Files earlier versions kept directly in `projects\<job>\` are listed under
+    `elsewhere`, with a suggestion to move them into `User Knowledge`.
+  - New `action=read` (file, optional `maxChars`, default 20,000, and `offset`) returns a document's text in pieces,
+    or says that Project Analyzer reads it (`python analyze.py knowledge --project "<job>"`) or that the AI app can
+    open it itself (PDFs, scans, drawings, older Office formats). Paths outside the folder are refused.
+  - `search` marks user-knowledge hits (`userKnowledge: true`) and also searches the folder's documents the database
+    doesn't have yet, when Civil 3D MCP can read them. `overview` counts job files without user knowledge and lists
+    the documents under `userKnowledge`; the session briefing names them too.
+  - The tool description, the server instructions and the `working_safely_in_civil3d` skill tell the assistant to
+    follow a document that applies to the task and name it, and to tell the user when one conflicts with a fact, a
+    practice or the drawings.
+- `link`, `list` and `files` return `userKnowledgeFolder` (was `filesFolder`).
+- README: "Works on its own, better together" (what Civil 3D MCP does alone, with Project Analyzer and with TBC MCP)
+  and the User Knowledge folder; also described in the release's INSTALL.md.
+
 ## v2.3.1 — 2026-10-27
 
 - **Security updates for the server's dependencies**, so CI's `npm audit` passes again: zod 3 → 4 (zod 3 had a

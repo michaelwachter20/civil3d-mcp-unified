@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
@@ -8,6 +8,10 @@ import {
   baseName, databaseFileFor, directoryOf, fullText, immediate, invalidateJobIndex, jobByName, jobForPath, jobIndex, metaValue, nextId, normalizePath,
   nowIso, pathKey, relativeTo, searchText, searchTokens, TOOL, withoutProfile, withProjectDb, type Job,
 } from "./projectDb.js";
+import {
+  analyzerDocuments, ensureUserKnowledgeDirectory, extractText, insideFolder, jobDirectoryOf, joinParts, legacyFiles, listFolder, MAX_DIRECT_BYTES,
+  readableHere, readByAnalyzer, USER_KNOWLEDGE_PREFIX, userKnowledgeDirectoryOf, type AnalyzerDocument, type FolderEntry, type TextPart,
+} from "./userKnowledge.js";
 
 export { projectsDirectory } from "./projectDb.js";
 
@@ -17,7 +21,8 @@ export { projectsDirectory } from "./projectDb.js";
  * Analyzer fills it from the job folder; Civil 3D MCP and TBC MCP read it and add notes. A note is a row of `facts`
  * with tool = 'civil3d'; this tool changes only its own facts and folders. A job is matched by folder: the active
  * drawing belongs to the job whose source_root or linked folder contains it (deepest wins).
- * Reference files the user adds for the job (standards, specs) go in <knowledge dir>\projects\<slug>\.
+ * The user's own documents for the job (guidelines, requirements, standards) go in
+ * <knowledge dir>\projects\<slug>\User Knowledge\ (see userKnowledge.ts); this tool only creates and reads that folder.
  */
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -25,37 +30,27 @@ const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
   try { return text ? (JSON.parse(text) as T) : fallback; } catch { return fallback; }
 };
 
-/** The job's files folder <knowledge dir>\projects\<slug> (next to <slug>.db), for material the user puts there. */
-export function projectFilesDirectory(name: string): string {
-  return databaseFileFor(name).replace(/\.db$/, "");
+/** The job's User Knowledge folder <knowledge dir>\projects\<slug>\User Knowledge (not created here). */
+export function userKnowledgeDirectory(name: string): string {
+  return userKnowledgeDirectoryOf(databaseFileFor(name));
 }
 
-const filesDirectoryOf = (job: Job) => job.file.replace(/\.db$/i, "");
+const USE_USER_KNOWLEDGE =
+  "When a user-knowledge document applies to the task (a guideline, a requirement), follow it and name the document; " +
+  "when it conflicts with a fact, a practice or the drawings, tell the user rather than choose.";
 
-function ensureFilesDirectory(job: Job): string {
-  const dir = filesDirectoryOf(job);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  return dir;
-}
+const analyzerCommand = (job: Job) => `python analyze.py knowledge --project "${job.name}"`;
 
-export interface ProjectFileEntry { path: string; size: number; modified: string }
-
-/** Every file in the project's files folder (relative paths, subfolders included). */
-export function listProjectFilesIn(dir: string, limit = 500): { files: ProjectFileEntry[]; truncated: boolean } {
-  const files: ProjectFileEntry[] = [];
-  const walk = (current: string) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (files.length >= limit) return;
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) { walk(full); continue; }
-      if (!entry.isFile()) continue;
-      const stat = statSync(full);
-      files.push({ path: path.relative(dir, full), size: stat.size, modified: stat.mtime.toISOString() });
-    }
-  };
-  if (existsSync(dir)) walk(dir);
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, truncated: files.length >= limit };
+/** The User Knowledge folder (created when missing) and, for each document, whether the database has it as it is now. */
+function userKnowledgeStatus(db: DatabaseSync, job: Job) {
+  const folder = ensureUserKnowledgeDirectory(job.file);
+  const { files, truncated } = listFolder(folder);
+  const rows = analyzerDocuments(db);
+  const entries = files.map((entry) => {
+    const row = rows.get(entry.path.toLowerCase());
+    return { entry, row, read: readByAnalyzer(entry, row) };
+  });
+  return { folder, entries, truncated, rows };
 }
 
 /** Every known job: name, database and folders. */
@@ -150,8 +145,8 @@ const facts = (db: DatabaseSync, where: string, ...params: Array<string | number
   (db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE ${where}`).all(...params) as unknown as FactRow[]).map(presentFact);
 
 function describe(job: Job) {
-  const filesFolder = ensureFilesDirectory(job);
-  const { files } = listProjectFilesIn(filesFolder);
+  const userKnowledgeFolder = ensureUserKnowledgeDirectory(job.file);
+  const { files } = listFolder(userKnowledgeFolder);
   return withProjectDb(job.file, ({ db }) => {
     const others = db.prepare(`SELECT tool, COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND tool <> ? GROUP BY tool`).all(TOOL) as Array<{ tool: string; n: number }>;
     return {
@@ -160,9 +155,10 @@ function describe(job: Job) {
       folders: job.roots.map((root) => ({ path: root.path, tool: root.tool })),
       notes: facts(db, `${CURRENT} AND f.tool = ? ORDER BY f.added, f.id`, TOOL),
       otherFacts: Object.fromEntries(others.map((row) => [row.tool, row.n])),
-      filesFolder,
-      files: files.length,
-      hint: "notes are this tool's own facts. action=overview shows what the whole suite knows about the job; search, file, entity, timeline and locate read more.",
+      userKnowledgeFolder,
+      userKnowledge: files.length,
+      hint: "notes are this tool's own facts. action=overview shows what the whole suite knows about the job; search, file, entity, timeline and locate read more; " +
+        "files and read show the user's own documents for the job (user knowledge).",
     };
   });
 }
@@ -185,16 +181,107 @@ export async function listProjectNotes(name?: string) {
   return describe(job);
 }
 
-/** The project's files folder and what is in it (action=files). */
+/**
+ * The job's User Knowledge folder and what is in it (action=files): each document with whether Project Analyzer has
+ * read it as it is now and whether this tool can read it itself. Files older versions kept directly in <slug>\
+ * are listed apart (`elsewhere`).
+ */
 export async function listProjectFiles(name?: string) {
   const { job } = await resolveProject(name);
-  const filesFolder = ensureFilesDirectory(job);
-  const { files, truncated } = listProjectFilesIn(filesFolder);
+  const { folder, entries, truncated } = withProjectDb(job.file, ({ db }) => userKnowledgeStatus(db, job));
+  const files = entries.map(({ entry, row, read }) => ({
+    path: entry.path, size: entry.size, modified: entry.modified, readByAnalyzer: read,
+    ...(row && !read ? { changedSinceAnalyzerRead: true } : {}),
+    readableHere: readableHere(entry.path, entry.size),
+  }));
+  const legacy = legacyFiles(job.file).files;
+  const unreadable = files.filter((file) => !file.readByAnalyzer && !file.readableHere).length;
   return {
-    project: job.name, filesFolder, files, truncated,
+    project: job.name, userKnowledgeFolder: folder, files, ...(truncated ? { truncated } : {}),
+    ...(legacy.length ? {
+      elsewhere: legacy.map((file) => ({ path: file.path, size: file.size, modified: file.modified })),
+      elsewhereHint: `These files are in ${jobDirectoryOf(job.file)}, where versions before 2.4.0 kept reference files, outside User Knowledge; ` +
+        `they aren't read any more. Suggest the user moves them into ${folder} (this tool doesn't move files).`,
+    } : {}),
     hint: files.length === 0
-      ? "Empty. The user can put standards, specs or other reference files for this job here (subfolders are fine)."
-      : "Read files from this folder when they help. Keep what you learn about the job in project notes, never in general lessons or skills.",
+      ? "Empty. The user can put documents for this job here: proposal guidelines, requirements for the building type, the client's " +
+        "standards, design manuals, code books (subfolders are fine)."
+      : `Read a document with action=read (file = its path here). ${USE_USER_KNOWLEDGE}` +
+        (unreadable ? ` Documents with readByAnalyzer and readableHere both false (PDFs, scans, drawings, older Office formats) are read by ` +
+          `Project Analyzer: ${analyzerCommand(job)}; or the AI app can open them itself from the folder.` : ""),
+  };
+}
+
+const notReadableHint = (job: Job, absolute: string, row: AnalyzerDocument | undefined, read: boolean) => {
+  const openIt = `If your AI app can open files, it can open ${absolute} itself.`;
+  if (read && row) {
+    return `Project Analyzer read it (status ${row.status}${row.error ? `: ${row.error}` : ""}) but found no text in it. ${openIt}`;
+  }
+  return `${row ? "It changed since Project Analyzer read it. " : ""}Civil 3D MCP reads plain text, Word (.docx), Excel (.xlsx) and ` +
+    `PowerPoint (.pptx) documents up to ${MAX_DIRECT_BYTES / 1024 / 1024} MB itself. Others (PDFs, scans, drawings, older Office formats) ` +
+    `are read by Project Analyzer: ${analyzerCommand(job)}, then read it again here. ${openIt}`;
+};
+
+/**
+ * One document of the job's User Knowledge folder (action=read): the text Project Analyzer stored when it has the
+ * document as it is now, else the text read straight from the file (plain text, .docx, .xlsx, .pptx), else a note
+ * saying who can read it. Paths outside the folder are refused. Long text comes back in pieces (offset, maxChars).
+ */
+export async function readUserKnowledge(file: string, name?: string, options: { maxChars?: number; offset?: number } = {}) {
+  const { job } = await resolveProject(name);
+  const folder = ensureUserKnowledgeDirectory(job.file);
+  const maxChars = Math.max(1, Math.floor(options.maxChars ?? 20_000));
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  let absolute = insideFolder(folder, file);
+  if (!absolute) {
+    throw knowledgeError("CIVIL3D.INVALID_INPUT", `'${file}' isn't in the job's User Knowledge folder (${folder}); only documents there can be read with action=read.`);
+  }
+  if (!existsSync(absolute)) {
+    // A bare file name: the one document with that name anywhere in the folder.
+    const byName = /[\\/]/.test(file) ? [] : listFolder(folder).files.filter((entry) => baseName(entry.path).toLowerCase() === file.trim().toLowerCase());
+    if (byName.length !== 1) {
+      throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", byName.length > 1
+        ? `Several documents are named '${file}': ${byName.map((entry) => entry.path).join("; ")}. Give the path.`
+        : `No document '${file}' in ${folder}. action=files lists them.`);
+    }
+    absolute = byName[0].absolute;
+  }
+  const stat = statSync(absolute);
+  if (!stat.isFile()) throw knowledgeError("CIVIL3D.INVALID_INPUT", `'${file}' is a folder; action=files lists the documents in it.`);
+  const entry: FolderEntry = {
+    path: path.relative(folder, absolute).split(/[\\/]+/).join("\\"), absolute, size: stat.size, modified: stat.mtime.toISOString(), mtimeMs: stat.mtimeMs,
+  };
+  const stored = withProjectDb(job.file, ({ db }) => {
+    const row = analyzerDocuments(db).get(entry.path.toLowerCase());
+    const read = readByAnalyzer(entry, row);
+    let text = "";
+    if (read && row) {
+      try { text = fullText(db, row.id); } catch { /* no text stored */ }
+    }
+    return { row, read, text };
+  });
+  const base = { project: job.name, file: entry.path, path: absolute, size: entry.size, modified: entry.modified, readByAnalyzer: stored.read };
+  let source: "project-analyzer" | "direct";
+  let text: string;
+  if (stored.read && stored.text.trim()) {
+    source = "project-analyzer";
+    text = stored.text;
+  } else if (readableHere(entry.path, entry.size)) {
+    try {
+      text = joinParts(extractText(absolute) ?? []);
+      source = "direct";
+    } catch (error) {
+      return { ...base, readableHere: true, text: null, error: (error as Error).message, hint: notReadableHint(job, absolute, stored.row, stored.read) };
+    }
+  } else {
+    return { ...base, readableHere: false, text: null, hint: notReadableHint(job, absolute, stored.row, stored.read) };
+  }
+  const end = offset + maxChars;
+  const truncated = end < text.length;
+  return {
+    ...base, source, chars: text.length, offset, text: text.slice(offset, end), truncated,
+    ...(truncated ? { nextOffset: end } : {}),
+    hint: `${truncated ? `More follows: read again with offset=${end}. ` : ""}${USE_USER_KNOWLEDGE}`,
   };
 }
 
@@ -214,8 +301,8 @@ export async function linkProjectFolder(name: string, folder?: string) {
   }), { create: true, name: oneLine(name), write: true });
   invalidateJobIndex();
   const job = jobByName(name)!;
-  const filesFolder = ensureFilesDirectory(job);
-  return { success: true, action: result, project: job.name, folders: job.roots.map((root) => root.path), path: job.file, filesFolder };
+  const userKnowledgeFolder = ensureUserKnowledgeDirectory(job.file);
+  return { success: true, action: result, project: job.name, folders: job.roots.map((root) => root.path), path: job.file, userKnowledgeFolder };
 }
 
 /** Removes a folder this tool linked (notes are kept; other tools' folders and source_root stay). */
@@ -339,7 +426,12 @@ function copyInfo(db: DatabaseSync) {
 export async function projectOverview(name?: string) {
   const { job } = await resolveProject(name);
   return withProjectDb(job.file, ({ db }) => {
-    const statuses = all<{ status: string; n: number }>(db, "SELECT status, COUNT(*) AS n FROM files GROUP BY status ORDER BY n DESC");
+    // Job files only: user-knowledge documents are counted under userKnowledge.
+    const statuses = all<{ status: string; n: number }>(
+      db, "SELECT status, COUNT(*) AS n FROM files WHERE substr(path, 1, ?) <> ? GROUP BY status ORDER BY n DESC",
+      USER_KNOWLEDGE_PREFIX.length, USER_KNOWLEDGE_PREFIX);
+    const knowledge = userKnowledgeStatus(db, job);
+    const legacy = legacyFiles(job.file).files.length;
     const lastRun = metaValue(db, "last_run_finished");
     return {
       project: job.name,
@@ -356,7 +448,16 @@ export async function projectOverview(name?: string) {
       people: all<{ name: string; aliases: string; files: number }>(db, "SELECT name, aliases, files FROM intel_entities WHERE type = 'person' ORDER BY files DESC, name LIMIT 10")
         .map((row) => ({ name: row.name, ...(parseJson<string[]>(row.aliases, []).length ? { aliases: parseJson<string[]>(row.aliases, []) } : {}), files: row.files })),
       practices: safePractices(),
-      filesFolder: filesDirectoryOf(job),
+      userKnowledge: {
+        folder: knowledge.folder,
+        documents: knowledge.entries.length,
+        names: knowledge.entries.slice(0, 30).map(({ entry }) => entry.path),
+        readByAnalyzer: knowledge.entries.filter(({ read }) => read).length,
+        ...(legacy ? { elsewhere: legacy } : {}),
+        hint: "The user's own documents for this job (proposal guidelines, building-type requirements, standards, code books): " +
+          `action=files lists them, read (file) reads one, search covers them. ${USE_USER_KNOWLEDGE}` +
+          (legacy ? " Files kept next to the folder by older versions aren't read: action=files lists them (elsewhere)." : ""),
+      },
       hint: "search (query), file (file id or path), entity (name), timeline (from, to) and locate (path) read more. " +
         "Paths in the job's files point at the original location when the job folder is a copy: translate them with action=locate.",
     };
@@ -371,23 +472,77 @@ function safePractices() {
   }
 }
 
-/** Full-text search of the job's files plus a search of the facts. */
+interface SearchHit { file: string | null; path?: string; part: string | null; snippet: string; userKnowledge?: true; readDirectly?: true }
+
+// Documents read straight from the folder by one search: each at most 20 MB, 200 MB in all.
+const SEARCH_DIRECT_MAX_BYTES = 20 * 1024 * 1024;
+const SEARCH_DIRECT_TOTAL_BYTES = 200 * 1024 * 1024;
+
+function snippetOf(text: string, words: string[]): string {
+  const lower = text.toLowerCase();
+  const found = words.map((word) => lower.indexOf(word)).filter((at) => at >= 0);
+  const start = Math.max((found.length ? Math.min(...found) : 0) - 100, 0);
+  return `${start ? "…" : ""}${text.slice(start, start + 240).replace(/\s+/g, " ").trim()}`;
+}
+
+/**
+ * Searches the User Knowledge documents the database doesn't have as they are now and that this tool can read
+ * itself: a document matches when it has every word (case-insensitive); the snippet comes from the first part
+ * (sheet, slide) that has them all, else from the first one that has the first word.
+ */
+function searchUnreadDocuments(entries: Array<{ entry: FolderEntry; read: boolean }>, words: string[], limit: number) {
+  const hits: SearchHit[] = [];
+  const notSearched: string[] = [];
+  let budget = SEARCH_DIRECT_TOTAL_BYTES;
+  for (const { entry, read } of entries) {
+    if (read) continue;
+    if (hits.length >= limit) break;
+    if (!readableHere(entry.path, entry.size) || entry.size > SEARCH_DIRECT_MAX_BYTES || entry.size > budget) { notSearched.push(entry.path); continue; }
+    budget -= entry.size;
+    let parts: TextPart[];
+    try { parts = extractText(entry.absolute) ?? []; } catch { notSearched.push(entry.path); continue; }
+    const has = (text: string) => { const lower = text.toLowerCase(); return words.every((word) => lower.includes(word)); };
+    if (!has(parts.map((part) => part.text).join("\n"))) continue;
+    const part = parts.find((candidate) => has(candidate.text)) ?? parts.find((candidate) => candidate.text.toLowerCase().includes(words[0])) ?? parts[0];
+    hits.push({ file: null, path: `${USER_KNOWLEDGE_PREFIX}${entry.path}`, part: part.label, snippet: snippetOf(part.text, words), userKnowledge: true, readDirectly: true });
+  }
+  return { hits, notSearched };
+}
+
+/**
+ * Full-text search of the job's files (user-knowledge documents included, marked userKnowledge), plus the
+ * user-knowledge documents the database doesn't have yet that this tool reads itself, plus a search of the facts.
+ */
 export async function searchProject(query: string, name?: string, limit = 20) {
   const { job } = await resolveProject(name);
   const tokens = searchTokens(query).map((token) => token.toLowerCase());
   if (tokens.length === 0) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give words or codes to search for (e.g. 'MH-3 culvert').");
+  const max = Math.min(Math.max(limit, 1), 50);
   return withProjectDb(job.file, ({ db }) => {
-    let hits: Array<{ file: string; path?: string; part: string | null; snippet: string }> = [];
+    let hits: SearchHit[] = [];
     let note: string | undefined;
     try {
-      hits = searchText(db, query, Math.min(Math.max(limit, 1), 50))
-        .map((hit) => ({ file: hit.fileId, path: filePath(db, hit.fileId), part: hit.label, snippet: hit.snippet }));
+      hits = searchText(db, query, max).map((hit) => {
+        const found = filePath(db, hit.fileId);
+        return { file: hit.fileId, path: found, part: hit.label, snippet: hit.snippet, ...(found?.startsWith(USER_KNOWLEDGE_PREFIX) ? { userKnowledge: true as const } : {}) };
+      });
     } catch (error) {
       note = `Text search failed: ${(error as Error).message}`;
     }
+    const direct = searchUnreadDocuments(userKnowledgeStatus(db, job).entries, tokens, max);
     const like = tokens.map(() => "lower(f.fact || ' ' || f.topics) LIKE ?").join(" AND ");
     const matching = facts(db, `${CURRENT} AND ${like} ORDER BY f.key DESC, f.added DESC LIMIT 50`, ...tokens.map((token) => `%${token}%`));
-    return { project: job.name, query, facts: matching, hits, ...(note ? { note } : {}) };
+    const anyKnowledge = direct.hits.length > 0 || hits.some((hit) => hit.userKnowledge);
+    return {
+      project: job.name, query, facts: matching, hits: [...hits, ...direct.hits],
+      ...(direct.notSearched.length ? {
+        userKnowledgeNotSearched: direct.notSearched.slice(0, 30),
+        userKnowledgeNotSearchedHint: "Project Analyzer hasn't read these user-knowledge documents as they are now, and Civil 3D MCP couldn't " +
+          `search them itself (format, size or damage): ${analyzerCommand(job)}.`,
+      } : {}),
+      ...(anyKnowledge ? { hint: `Hits marked userKnowledge are the user's own documents for this job: read one with action=read (file = its path without '<user knowledge>\\'). ${USE_USER_KNOWLEDGE}` } : {}),
+      ...(note ? { note } : {}),
+    };
   });
 }
 
@@ -567,7 +722,7 @@ export interface ProjectBriefing {
   notes: number;
   highChecks: string[];
   missingFiles: number;
-  filesFolder: string;
+  userKnowledge: { documents: number; names?: string[] };
   hint: string;
 }
 
@@ -575,15 +730,21 @@ export async function projectNotesOnce(): Promise<ProjectBriefing | undefined> {
   try {
     const job = projectForDrawing(await activeDrawingPath());
     if (!job || announced.has(job.file)) return undefined;
-    const briefing = withProjectDb(job.file, ({ db }) => ({
-      project: job.name,
-      keyFacts: facts(db, `${CURRENT} AND f.key = 1 AND ${NOT_SUPERSEDED} ORDER BY f.added, f.id LIMIT 15`).map((fact) => `[${fact.id}] ${fact.fact}`),
-      notes: Number((db.prepare(`SELECT COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND f.tool = ?`).get(TOOL) as { n: number }).n),
-      highChecks: all<{ title: string }>(db, "SELECT title FROM intel_checks WHERE severity = 'high' ORDER BY id LIMIT 10").map((row) => row.title),
-      missingFiles: Number(all<{ n: number }>(db, "SELECT COUNT(DISTINCT lower(normalized)) AS n FROM refs WHERE status = 'missing'")[0]?.n ?? 0),
-      filesFolder: filesDirectoryOf(job),
-      hint: "civil3d_project_notes action=overview for everything known about this job (facts, questions, rules, checks, people, practices).",
-    }));
+    const briefing = withProjectDb(job.file, ({ db }): ProjectBriefing => {
+      const knowledge = listFolder(ensureUserKnowledgeDirectory(job.file)).files;
+      return {
+        project: job.name,
+        keyFacts: facts(db, `${CURRENT} AND f.key = 1 AND ${NOT_SUPERSEDED} ORDER BY f.added, f.id LIMIT 15`).map((fact) => `[${fact.id}] ${fact.fact}`),
+        notes: Number((db.prepare(`SELECT COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND f.tool = ?`).get(TOOL) as { n: number }).n),
+        highChecks: all<{ title: string }>(db, "SELECT title FROM intel_checks WHERE severity = 'high' ORDER BY id LIMIT 10").map((row) => row.title),
+        missingFiles: Number(all<{ n: number }>(db, "SELECT COUNT(DISTINCT lower(normalized)) AS n FROM refs WHERE status = 'missing'")[0]?.n ?? 0),
+        userKnowledge: { documents: knowledge.length, ...(knowledge.length ? { names: knowledge.slice(0, 10).map((entry) => entry.path) } : {}) },
+        hint: "civil3d_project_notes action=overview for everything known about this job (facts, questions, rules, checks, people, practices). " +
+          (knowledge.length
+            ? `userKnowledge lists the user's own documents for this job (guidelines, requirements, standards): read them with action=read. ${USE_USER_KNOWLEDGE}`
+            : "The user can add their own documents for this job (guidelines, requirements, standards) to its User Knowledge folder (action=files)."),
+      };
+    });
     announced.add(job.file);
     return briefing;
   } catch {

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, listProjects, locatePath, projectEntity, projectFileDetails,
+  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, locatePath, projectEntity, projectFileDetails,
   projectForDrawing, projectNotesOnce, projectOverview, projectTimeline, removeProjectNote, resetProjectNotesAnnouncements, searchProject,
   setActiveDrawingResolverForTesting, unlinkProjectFolder, updateProjectNote,
 } from "../src/tools/projectNotes.js";
@@ -62,7 +62,8 @@ describe("project notes on the suite's project database", () => {
     const folder = join(root, "jobs", "site-a");
     const linked = await linkProjectFolder("Site A", folder);
     expect(linked).toMatchObject({ action: "created", project: "Site A", path: join(projects(), "site-a.db") });
-    expect(existsSync(linked.filesFolder)).toBe(true);
+    expect(linked.userKnowledgeFolder).toBe(join(projects(), "site-a", "User Knowledge"));
+    expect(existsSync(linked.userKnowledgeFolder)).toBe(true);
     const db = open(linked.path);
     try {
       const meta = Object.fromEntries((db.prepare("SELECT key, value FROM meta").all() as Array<{ key: string; value: string }>).map((row) => [row.key, row.value]));
@@ -145,16 +146,6 @@ describe("project notes on the suite's project database", () => {
     expect(await listProjectNotes()).toMatchObject({ project: null, activeDrawing: "x.dwg", knownProjects: [{ name: ELM }] });
     await expect(addProjectNote("x")).rejects.toThrow(/isn't in a known project folder/);
     await expect(addProjectNote("x", "Nope")).rejects.toThrow(/No project named/);
-  });
-
-  it("lists the job's reference files folder next to its database", async () => {
-    const dir = join(projects(), "elm-street-drainage");
-    mkdirSync(join(dir, "specs"), { recursive: true });
-    writeFileSync(join(dir, "standards.pdf"), "pdf");
-    writeFileSync(join(dir, "specs", "table.xlsx"), "xlsx");
-    const listed = await listProjectFiles(ELM);
-    expect(listed.filesFolder).toBe(dir);
-    expect(listed.files.map((file) => file.path)).toEqual([join("specs", "table.xlsx"), "standards.pdf"]);
   });
 
   it("gives an overview built from meta, files, facts, questions, rules, checks, people and practices", async () => {
@@ -330,12 +321,13 @@ describe("project notes on the suite's project database", () => {
       return hasApprovalRisk({ toolName: "civil3d_project_notes", action, capabilities: definition.capabilities, safeForRetry: definition.safeForRetry });
     };
     expect([
-      "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_files",
+      "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_files", "project_read",
       "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate",
     ].map(risk).every((value) => value === false)).toBe(true);
     expect(risk("project_remove")).toBe(true);
     const tool = SCRIPTING_DOMAIN_DEFINITION.exposures.find((exposure) => exposure.toolName === "civil3d_project_notes")!;
     expect(tool.resolveAction({ action: "locate", path: "x" }).action).toBe("project_locate");
+    expect(tool.resolveAction({ action: "read", file: "x" }).action).toBe("project_read");
   });
 });
 

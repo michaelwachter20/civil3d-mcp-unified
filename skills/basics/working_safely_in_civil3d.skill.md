@@ -22,6 +22,9 @@ parameters: []
   with `action=search` (words or codes like `MH-3`, `12+50`, `C-104`), `file`, `entity` or `timeline`.
 - Job folders are usually copies, so paths written in drawings (xrefs, images) point at the original location.
   Translate them with `civil3d_project_notes action=locate`; if it can't tell, ask the user rather than guess.
+- The overview also lists the job's **user knowledge**: the user's own documents for this job (proposal guidelines,
+  building-type requirements, standards, code books). Read the ones that apply with `action=read`, follow them and
+  name the document; when one conflicts with a fact, a practice or the drawings, tell the user rather than choose.
 
 ## Finding the right way to do something
 

@@ -24,6 +24,9 @@ export const SERVER_INSTRUCTIONS = [
     "Project Analyzer fills from the job folder and TBC MCP shares; the job is matched to the drawing by folder. Start on a drawing with " +
     "civil3d_project_notes action=overview, and use search, file, entity, timeline and locate before asking the user what the files already say. " +
     "Job folders are usually copies: translate paths written in files (xrefs, images) with action=locate. " +
+    "Each job also has a User Knowledge folder where the user puts their own documents for it (proposal guidelines, building-type " +
+    "requirements, standards, code books): overview lists them, files and read open them, search covers them. When one applies to " +
+    "the task, follow it and name the document; when it conflicts with a fact, a practice or the drawings, tell the user rather than choose. " +
     "(3) Engineering practice true on every job and in every program (minimum slopes, structure naming, the survey datum) goes in " +
     "civil3d_practices, shared with the other suite tools.",
   "Keep lessons, skills, scripts and practices GENERAL so they help on any project: no job names, drawing or file names, folders, point " +
