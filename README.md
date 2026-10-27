@@ -7,7 +7,7 @@
   [![Node.js](https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
   [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-  [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.29-blueviolet)](https://modelcontextprotocol.io)
+  [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.32-blueviolet)](https://modelcontextprotocol.io)
   [![Civil 3D](https://img.shields.io/badge/Civil%203D-2027-0696D7?logo=autodesk&logoColor=white)](https://www.autodesk.com/products/civil-3d)
   [![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
 
@@ -341,7 +341,8 @@ its `INSTALL.md`. In short:
    with `Uninstall-Civil3DPlugin.cmd` (saved scripts and logs are kept). No admin rights needed.
 2. **AI app:**
    - **Claude Desktop:** the installer offers to add the tools for you (needs Node.js 22.15+). Or install
-     `civil3d-mcp-<version>.mcpb` via Settings → Extensions → Advanced settings → Install Extension.
+     `civil3d-mcp-<version>.mcpb` via Settings → Extensions → Advanced settings → Install Extension: that needs no
+     Node.js, because the extension runs on the Node.js built into Claude Desktop (Node 24 in current versions).
    - **Claude Code:** `claude mcp add --scope project civil3d-mcp -- node "<extracted>\mcp-server\server\index.js"`.
    - **Other MCP clients:** a stdio server running `node <extracted>\mcp-server\server\index.js`.
 3. **Turn the AI connection on** when you want it: click **AI Connection** on the **Civil 3D MCP** ribbon tab
@@ -547,9 +548,9 @@ active. Nothing in Node.js touches the drawing directly.
 
 | Component | Version |
 |---|---|
-| Node.js | 22.15+ (built-in SQLite and zstd for project notes) |
+| Node.js | 22.15+ (built-in SQLite and zstd for project notes). Not needed for the Claude Desktop extension (`.mcpb`), which uses Claude Desktop's own Node.js |
 | Civil 3D | 2027 (AutoCAD 2027 requires .NET 10 plugins; 2025/2026 builds will not load). Tested only on 2027 English build 13.9.1308 |
-| .NET SDK | 10.0 |
+| .NET SDK | 10.0, only to build the plugin from source (releases ship it prebuilt) |
 | Civil 3D API refs | Licensed local installation or untracked reference directory |
 | Visual Studio | 2026 (optional; VS 2022 cannot target AutoCAD 2027) |
 
@@ -728,7 +729,7 @@ Restart your client. When you see the **hammer icon**, the MCP connection is liv
 
 ---
 
-## Tool Reference (214 catalog entries)
+## Tool Reference (215 catalog entries)
 
 The generated, release-checked inventory is [docs/tools.generated.md](./docs/tools.generated.md).
 It includes both canonical tools and specialized aliases. Canonical rows list
