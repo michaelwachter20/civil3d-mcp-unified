@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.3.1 — 2026-10-27
 
 - **Security updates for the server's dependencies**, so CI's `npm audit` passes again: zod 3 → 4 (zod 3 had a
   memory-exhaustion advisory with no fix in 3.x), plus fixed versions of `@modelcontextprotocol/sdk`, body-parser,
