@@ -11,7 +11,7 @@ const Civil3DOrchestrateInputShape = {
   execute: z.boolean().optional().describe("When true, execute the selected action if enough parameters are available."),
   toolName: z.string().optional().describe("Exact registered tool name to plan or execute through the orchestrator."),
   toolAction: z.string().optional().describe("Optional exact action when targeting a multi-action tool directly."),
-  toolParameters: z.record(z.unknown()).optional().describe("Optional exact tool parameters when targeting a tool directly."),
+  toolParameters: z.record(z.string(), z.unknown()).optional().describe("Optional exact tool parameters when targeting a tool directly."),
   name: z.string().optional(),
   alignmentName: z.string().optional(),
   corridorName: z.string().optional(),

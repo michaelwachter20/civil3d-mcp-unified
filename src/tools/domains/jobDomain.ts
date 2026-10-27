@@ -13,7 +13,7 @@ const JobCancelArgs = z.object({ action: z.literal("cancel"), jobId: z.string().
 const JobStartArgs = z.object({
   action: z.literal("start"),
   operation: JobOperationSchema,
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
 });
 
 const JobResponseSchema = z.object({
@@ -24,8 +24,10 @@ const JobResponseSchema = z.object({
   currentPhase: z.string().nullable().optional(),
   estimatedRemainingSeconds: z.number().nullable().optional(),
   result: z.unknown().nullable().optional(),
-  createdAt: z.string().or(z.date()).optional(),
-  completedAt: z.string().or(z.date()).nullable().optional(),
+  // ISO time strings: job data arrives from the plugin as JSON, so these are never Date objects (and zod 4 can't
+  // describe a Date in the JSON Schema the MCP client receives).
+  createdAt: z.string().optional(),
+  completedAt: z.string().nullable().optional(),
   durationMs: z.number().nullable().optional(),
   requestId: z.string().nullable().optional(),
   drawingIdentity: z.string().nullable().optional(),
@@ -87,7 +89,7 @@ export const JOB_DOMAIN_DEFINITION: DomainToolDefinition = {
       action: z.enum(["start", "status", "cancel"]),
       jobId: z.string().optional(),
       operation: JobOperationSchema.optional(),
-      parameters: z.record(z.unknown()).optional(),
+      parameters: z.record(z.string(), z.unknown()).optional(),
     },
     supportedActions: ["start", "status", "cancel"],
     resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),

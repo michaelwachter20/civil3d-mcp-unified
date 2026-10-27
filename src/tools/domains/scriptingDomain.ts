@@ -23,7 +23,7 @@ import { addPractice, describePractices, removePractice, searchPractices, update
  */
 
 const GenericResponseSchema = z.object({}).passthrough();
-const ScriptArgsSchema = z.record(z.unknown());
+const ScriptArgsSchema = z.record(z.string(), z.unknown());
 const PointTokenSchema = z.object({ x: z.number(), y: z.number(), z: z.number().optional() });
 const CommandTokenSchema = z.union([z.string(), z.number(), z.boolean(), PointTokenSchema]);
 const CommandSchema = z.union([z.string().min(1), z.array(CommandTokenSchema).min(1)]);

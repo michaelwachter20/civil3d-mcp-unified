@@ -21,7 +21,7 @@ const SubassemblySchema = z.object({
   name: z.string(),
   side: z.enum(["left", "right", "none"]),
   className: z.string(),
-  parameters: z.record(AssemblyParameterValueSchema),
+  parameters: z.record(z.string(), AssemblyParameterValueSchema),
 });
 
 const AssemblyDetailResponseSchema = z.object({
@@ -44,7 +44,7 @@ const canonicalAssemblyInputShape = {
   assemblyName: z.string().optional(),
   subassemblyType: z.string().optional(),
   side: z.enum(["Left", "Right", "Both"]).optional(),
-  parameters: z.record(AssemblyParameterValueSchema).optional(),
+  parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
   subassemblyName: z.string().optional(),
   delete: z.boolean().optional(),
 };
@@ -74,14 +74,14 @@ const AssemblyCreateSubassemblyArgsSchema = z.object({
   assemblyName: z.string(),
   subassemblyType: z.string(),
   side: z.enum(["Left", "Right", "Both"]),
-  parameters: z.record(AssemblyParameterValueSchema).optional(),
+  parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
 });
 
 const AssemblyEditArgsSchema = z.object({
   action: z.literal("edit"),
   assemblyName: z.string(),
   subassemblyName: z.string().optional(),
-  parameters: z.record(AssemblyParameterValueSchema).optional(),
+  parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
   delete: z.boolean().optional(),
 });
 
@@ -213,7 +213,7 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
         assemblyName: z.string(),
         subassemblyType: z.string(),
         side: z.enum(["Left", "Right", "Both"]),
-        parameters: z.record(AssemblyParameterValueSchema).optional(),
+        parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
       },
       supportedActions: ["create_subassembly"],
       resolveAction: (rawArgs) => ({
@@ -234,7 +234,7 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
       inputShape: {
         assemblyName: z.string(),
         subassemblyName: z.string().optional(),
-        parameters: z.record(AssemblyParameterValueSchema).optional(),
+        parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
         delete: z.boolean().optional(),
       },
       supportedActions: ["edit"],

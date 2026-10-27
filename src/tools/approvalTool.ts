@@ -9,7 +9,7 @@ type JsonObject = Record<string, unknown>;
 const approvalInputShape = {
   toolName: z.string().min(1),
   action: z.string().min(1),
-  parameters: z.record(z.unknown()),
+  parameters: z.record(z.string(), z.unknown()),
   ttlSeconds: z.number().int().min(30).max(600).optional(),
 };
 

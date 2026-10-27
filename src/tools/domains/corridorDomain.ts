@@ -59,7 +59,7 @@ const CorridorSurfacesResponseSchema = z.object({
   surfaces: z.array(CorridorSurfaceSchema),
 });
 
-const CorridorFeatureLineSchema = z.record(z.unknown());
+const CorridorFeatureLineSchema = z.record(z.string(), z.unknown());
 
 const CorridorFeatureLinesResponseSchema = z.object({
   corridorName: z.string().optional(),
