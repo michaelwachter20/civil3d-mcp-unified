@@ -25,6 +25,10 @@ on what to do before changing anything.
 
 ## Rules
 
+- Finding the go-by the user names: an open drawing that matches comes first (`civil3d_drawing action=list_open`);
+  otherwise its latest version from `civil3d_project_notes action=latest` (file = the name, near = the user's words
+  about its folder): pass `series[0].latest.fullPath` as `goby`. Say which file and date you used; ask when several
+  match or the folders look like different areas (phases, areas).
 - The go-by is read only. `Reference(...)` rolls back anything done to it; never switch to it to edit it.
 - All changes go to the active drawing (the one being worked on), each as its own approved, undoable step.
 - Keep the work drawing active. Use `civil3d_drawing action=list_open` to see what is open and

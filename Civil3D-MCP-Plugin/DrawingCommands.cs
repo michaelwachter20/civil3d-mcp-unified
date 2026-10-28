@@ -152,6 +152,85 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>Opens a drawing from disk in a new tab, or makes it the active tab when it is open already. It is opened
+  /// read-only when asked, or when someone else has it open: AutoCAD keeps the file in use and writes a .dwl lock file
+  /// next to it that names who (shown as lockedBy). The path must be inside the allowed folders (CIVIL3D_FILE_ROOTS /
+  /// CIVIL3D_IMPORT_ROOTS, default Documents), like every file the plugin reads.</summary>
+  public static async Task<object?> OpenDrawingAsync(JsonObject? parameters)
+  {
+    var path = FileBoundary.ResolveImportPath(PluginRuntime.GetRequiredString(parameters, "path"), ".dwg", ".dxf", ".dwt");
+    var readOnly = PluginRuntime.GetOptionalBool(parameters, "readOnly") ?? false;
+    return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>
+    {
+      var manager = App.DocumentManager;
+      foreach (Document open in manager)
+      {
+        if (string.Equals(open.Name, path, StringComparison.OrdinalIgnoreCase))
+        {
+          manager.MdiActiveDocument = open;
+          return Task.FromResult<object?>(new Dictionary<string, object?>
+          {
+            ["drawingName"] = Path.GetFileName(open.Name),
+            ["filePath"] = open.Name,
+            ["alreadyOpen"] = true,
+            ["readOnly"] = open.IsReadOnly,
+          });
+        }
+      }
+
+      string? lockedBy = null;
+      if (!readOnly && InUseElsewhere(path, out lockedBy))
+      {
+        readOnly = true;
+      }
+
+      var document = manager.Open(path, readOnly);
+      manager.MdiActiveDocument = document;
+      return Task.FromResult<object?>(new Dictionary<string, object?>
+      {
+        ["drawingName"] = Path.GetFileName(document.Name),
+        ["filePath"] = document.Name,
+        ["alreadyOpen"] = false,
+        ["readOnly"] = readOnly,
+        ["lockedBy"] = lockedBy,
+      });
+    });
+  }
+
+  /// <summary>True when another program (another person's AutoCAD) has the drawing open for writing; lockedBy is the
+  /// user and computer named in its .dwl lock file, when there is one.</summary>
+  private static bool InUseElsewhere(string path, out string? lockedBy)
+  {
+    lockedBy = null;
+    try
+    {
+      // Read access that refuses to share writing: fails while another program (AutoCAD) has it open for writing.
+      using var probe = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+      return false;
+    }
+    catch (IOException)
+    {
+      var dwl = Path.ChangeExtension(path, ".dwl");
+      try
+      {
+        if (File.Exists(dwl))
+        {
+          var lines = File.ReadAllLines(dwl).Select(line => line.Trim()).Where(line => line.Length > 0).Take(2).ToArray();
+          lockedBy = lines.Length > 0 ? string.Join(" on ", lines) : null;
+        }
+      }
+      catch (IOException)
+      {
+      }
+
+      return true;
+    }
+    catch (UnauthorizedAccessException)
+    {
+      return true;
+    }
+  }
+
   /// <summary>Drawings open in this Civil 3D window, and which one is active.</summary>
   public static Task<object?> ListOpenDrawingsAsync()
   {

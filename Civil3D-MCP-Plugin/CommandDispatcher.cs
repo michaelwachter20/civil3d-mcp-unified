@@ -39,6 +39,7 @@ public static class CommandDispatcher
       "listOpenDrawings" => DrawingCommands.ListOpenDrawingsAsync(),
       "getCommandLine" => CommandLineMonitor.GetCommandLineAsync(parameters),
       "activateDrawing" => DrawingCommands.ActivateDrawingAsync(parameters),
+      "openDrawing" => DrawingCommands.OpenDrawingAsync(parameters),
       "saveDrawing" => DrawingCommands.SaveDrawingAsync(parameters),
       "undoDrawing" => DrawingCommands.UndoDrawingAsync(parameters),
       "redoDrawing" => DrawingCommands.RedoDrawingAsync(parameters),

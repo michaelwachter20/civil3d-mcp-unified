@@ -8,7 +8,7 @@ parameters:
   - name: drawing
     type: string
     required: false
-    description: Name of another open drawing to summarize (the go-by); empty = the active drawing
+    description: The go-by to summarize - an open drawing's name, or a full .dwg path (found as below); empty = the active drawing
   - name: part
     type: string
     required: true
@@ -19,8 +19,21 @@ parameters:
 
 ## When to use
 The user has a work drawing (frequently a save-as of a previous job) and a completed go-by of the same kind, and wants
-the work drawing converted "the way the go-by does it". The go-by is read only: open it in the same Civil 3D window
-and read it with `Reference(name)` (changes are always rolled back). Edit only the work drawing.
+the work drawing converted "the way the go-by does it" ("look at C-101 and do what we did there"). The go-by is read
+only: `Reference(name or path)` reads it without opening it (changes are always rolled back). Edit only the work
+drawing.
+
+## Finding the go-by the user names
+1. **An open drawing first** (the user has usually opened what matters): `civil3d_drawing` action=list_open; a drawing
+   whose name matches (with or without .dwg, or the same name without "rev N", dates, "current") is the go-by: pass its
+   name as `drawing`.
+2. Otherwise **its latest version in the job's database**: `civil3d_project_notes` action=latest (file = the name; near =
+   the user's words about its folder, e.g. "phase 2 area b"). Pass `series[0].latest.fullPath` as `drawing`.
+3. Say which file you used and when it was modified. When the result has several series, or `folders` > 1 with folders
+   that look like different areas (phases, areas) rather than dated deliveries of one drawing, ask which. When an
+   open drawing isn't the newest (`newerOnDrive`), use it and mention the newer one once.
+4. A path outside the allowed folders (CIVIL3D_FILE_ROOTS / CIVIL3D_IMPORT_ROOTS) can't be read: tell the user to add
+   the job folder there.
 
 ## How to run
 1. Summarize both drawings with this script, each `part` for each drawing (save the JSON to files and diff them):
@@ -45,7 +58,8 @@ and read it with `Reference(name)` (changes are always rolled back). Edit only t
 
 ## Script
 ```csharp
-// Read-only summary of a drawing (active, or another open drawing by name) for comparison with a go-by.
+// Read-only summary of a drawing (active, another open drawing by name, or a drawing on disk by full path) for
+// comparison with a go-by.
 // part=layouts|layers|civil|model
 var which = Args.GetString("drawing", "");
 var part = Args.GetString("part");

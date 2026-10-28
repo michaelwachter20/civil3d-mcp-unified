@@ -10,7 +10,7 @@ import {
 } from "../knowledgeBase.js";
 import {
   addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectEntity, projectFileDetails, projectNotesOnce,
-  projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
+  projectLatest, projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
 } from "../projectNotes.js";
 import { checkGeneral } from "../generalKnowledge.js";
 import { addPractice, describePractices, removePractice, searchPractices, updatePractice } from "../practices.js";
@@ -106,6 +106,7 @@ const ProjectTimelineArgs = z.object({
   limit: z.number().int().min(1).max(1_000).optional(),
 });
 const ProjectLocateArgs = z.object({ action: z.literal("project_locate"), path: z.string().min(1).max(1_000), project: ProjectNameSchema.optional() });
+const ProjectLatestArgs = z.object({ action: z.literal("project_latest"), file: z.string().min(1).max(1_000), near: z.string().max(200).optional(), project: ProjectNameSchema.optional() });
 const PracticesListArgs = z.object({ action: z.literal("practices_list"), includeRetired: z.boolean().optional() });
 const PracticesSearchArgs = z.object({ action: z.literal("practices_search"), query: z.string().min(1).max(500) });
 const PracticesAddArgs = z.object({ action: z.literal("practices_add"), practice: z.string().min(1).max(1_000), topics: TopicsSchema.optional() });
@@ -352,6 +353,11 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => locatePath(args.path as string, args.project as string | undefined),
     },
+    project_latest: {
+      action: "project_latest", inputSchema: ProjectLatestArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectLatest(args.file as string, args.project as string | undefined, args.near as string | undefined),
+    },
     practices_list: {
       action: "practices_list", inputSchema: PracticesListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
@@ -541,7 +547,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "details, summary, references, facts citing it, start of its text); entity (entity: a person, organization, structure, sheet or " +
         "document); timeline (optional from, to: YYYY[-MM[-DD]]); locate (path written in a file, e.g. an xref: job folders are usually " +
         "COPIES, so paths in files point at the original location; this says where the file is in the copy, or that it isn't known: then ask " +
-        "the user rather than guess); list (this tool's own notes and the job's folders). User knowledge, the user's own documents for the job " +
+        "the user rather than guess); latest (file: a name or path, e.g. C-101; optional near: words about its folder, e.g. 'phase 2 " +
+        "area b') = the latest version of a file on the drive (the one modified last), its older versions and full paths; drawings already " +
+        "open come first, so check civil3d_drawing list_open before this; list (this tool's own notes and the job's folders). User " +
+        "knowledge, the user's own documents for the job " +
         "(proposal guidelines, building-type requirements, standards, code books) in <shared folder>\\projects\\<job>\\User Knowledge\\: files " +
         "lists them (readByAnalyzer, readableHere); read (file: its path there; optional maxChars, default 20000, and offset) returns its " +
         "text; search and overview cover them too. Follow a document that applies to the task and name it; when it conflicts with a fact, " +
@@ -551,7 +560,8 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "retires a note (kept, hidden). All take an optional project (default: the active drawing's job). Ask the user before adding or " +
         "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12.",
       inputShape: {
-        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "list", "link", "unlink", "add", "update", "remove", "files", "read"]),
+        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "latest", "list", "link", "unlink", "add", "update", "remove", "files", "read"]),
+        near: z.string().optional(),
         project: z.string().optional(),
         folder: z.string().optional(),
         note: z.string().optional(),
@@ -570,7 +580,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         offset: z.number().int().optional(),
       },
       supportedActions: [
-        "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate",
+        "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate", "project_latest",
         "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files",
         "project_read",
       ],

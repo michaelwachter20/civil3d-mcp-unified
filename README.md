@@ -187,6 +187,9 @@ three kinds, and each has its place:
 - **Copied job folders.** Job folders are usually copies of a project kept elsewhere, so paths written in drawings
   (xrefs, images) still point at the original place. `civil3d_project_notes action=locate` says where such a file is
   in the copy, from the references Project Analyzer resolved, or that it isn't known.
+- **The latest version of a file.** `civil3d_project_notes action=latest` (file: a name such as `C-101`; optional
+  `near`) lists a file's versions in the job folder and their full paths, the latest last. It's built by Project
+  Analyzer (table `intel_series`), and the go-by skills use it for "look at C-101 and do what we did there".
 - **Each tool changes only its own.** Civil 3D MCP adds, changes and retires only its own notes, folders and
   practices; a fact from Project Analyzer or TBC MCP is corrected by adding a note that supersedes it. Removing
   retires an entry (hidden, kept, its id never reused). Nothing is deleted.
@@ -329,6 +332,15 @@ it on there.
 - **Several drawings.** `civil3d_drawing action=list_open` lists the open drawings and `action=switch` changes the
   active tab. Scripts can read the others with `Reference(name)`, e.g. to compare against a finished go-by, while
   every change goes to the active drawing.
+- **"Open C-101" opens the one you mean.** `civil3d_drawing action=open` (name, or a full path) looks in this order:
+  1. **A drawing already open** that matches becomes the active tab, since you've usually opened what matters.
+  2. **Otherwise the latest version** from the job's database: the DWG modified last, with or without "rev N", dates
+     or "current" in its name. It's opened read-only when someone else has it open (the result says who).
+
+  The result names the file and the older versions. If an open drawing isn't the newest on the drive, it says so
+  once. When one name is used in several folders for different drawings (each phase's package), words about the
+  folder pick one (`near: "phase 2 area b"`); otherwise the AI asks. The file must be inside the allowed folders:
+  add the job folder to `CIVIL3D_FILE_ROOTS`.
 - **The view follows the work.** After each write, the view pans to show what
   changed, and zooms out only if it doesn't fit. A script that names its area with `FocusOn(...)` zooms to that
   area instead, in or out. It doesn't move if the change is already visible. It's model space only. Type

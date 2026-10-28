@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS files (
     name         TEXT NOT NULL,
     ext          TEXT NOT NULL,      -- lower case with the dot, '' when none
     kind         TEXT NOT NULL,      -- word pdf excel powerpoint visio cad email mailbox archive image text landxml
-                                     -- jobxml points media noreader unknown ignored
+                                     -- jobxml points pointcloud plotstyle gis sqlite rinex media noreader
+                                     -- unknown ignored
     size         INTEGER,
     mtime        TEXT,
     ctime        TEXT,
@@ -56,6 +57,7 @@ CREATE INDEX IF NOT EXISTS files_sha ON files(sha256);
 CREATE INDEX IF NOT EXISTS files_status ON files(status);
 CREATE INDEX IF NOT EXISTS files_root ON files(root_id);
 CREATE INDEX IF NOT EXISTS files_path ON files(path);
+CREATE INDEX IF NOT EXISTS files_size ON files(size);
 
 -- Details of a file, one row per value: document properties, photo date / camera / GPS, title-block fields of a
 -- drawing ('title_block.sheet' = 'C-104'), LandXML / JobXML summaries, sheet names. Keys are dotted lower case.
@@ -124,6 +126,12 @@ CREATE TABLE IF NOT EXISTS intel_thread_messages (thread_id TEXT, position INTEG
                                                   sender TEXT, recipients TEXT, subject TEXT, snippet TEXT);
 CREATE TABLE IF NOT EXISTS intel_versions (group_id TEXT, position INTEGER, file_id TEXT, label TEXT, similarity REAL,
                                            added TEXT, removed TEXT);
+-- The latest version of each file (analyzer/series.py): files on the drive of one kind whose names are the same once
+-- dates, "rev N", "current", "copy" and the like are taken out are one series (key), oldest modified first; latest = 1
+-- on the one modified last. title_date and revision come from the title block when there is one. note says when the
+-- highest revision in the names isn't the newest file. Every file on the drive is in a series (alone if need be).
+CREATE TABLE IF NOT EXISTS intel_series (series_id TEXT, key TEXT, kind TEXT, position INTEGER, file_id TEXT, path TEXT,
+                                         modified TEXT, title_date TEXT, revision TEXT, latest INTEGER, note TEXT);
 CREATE TABLE IF NOT EXISTS intel_edges (src TEXT, dst TEXT, kind TEXT, weight INTEGER, first_date TEXT,
                                         last_date TEXT, evidence TEXT);
 CREATE TABLE IF NOT EXISTS intel_stories (id TEXT PRIMARY KEY, title TEXT, subject TEXT, refs TEXT, first_date TEXT,
@@ -206,6 +214,37 @@ CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY, tool TEXT NOT NULL, a
 
 -- Merges of someone else's database into this one (kb.py merge).
 CREATE TABLE IF NOT EXISTS merges (at TEXT NOT NULL, source TEXT, by TEXT, knowledge_id TEXT, counts TEXT);
+
+-- What changed in the job folder from one run to the next (analyze.py update; analyzer/updates.py). One row per
+-- file and change:
+--   added      new since the last run              changed   its size or modified time changed (what changed: details)
+--   removed    no longer in the folder (its knowledge is kept; props key 'gone' = when noticed)
+--   moved      a removed file's content found under another path (old_path)      restored   back after being removed
+-- details (JSON, changed files): {"text": {"added": lines, "removed": lines, "parts_changed": [...], "parts_added":
+-- [...], "parts_removed": [...], "lines_added": ["p.2: ...", ...], "lines_removed": [...]}, "format": [sentences],
+-- "title_block": ["revision B -> C"], "messages": new messages in a mailbox}. Nothing is recorded on a first run.
+CREATE TABLE IF NOT EXISTS file_changes (
+    id          INTEGER PRIMARY KEY,
+    file_id     TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    change      TEXT NOT NULL,
+    seen        TEXT NOT NULL,       -- when the analyzer noticed it (time)
+    mtime       TEXT,                -- the file's modified time (new version; removed: the last one known)
+    old_path    TEXT,
+    old_sha256  TEXT,
+    new_sha256  TEXT,
+    summary     TEXT,                -- one line: "title block revision B -> C; 12 lines added, 3 removed (p.2)"
+    details     TEXT
+);
+CREATE INDEX IF NOT EXISTS file_changes_seen ON file_changes(seen);
+CREATE INDEX IF NOT EXISTS file_changes_file ON file_changes(file_id);
+
+-- The previous version of a changed file (its text, zlib-compressed JSON [[label, text], ...], and its format and
+-- title-block details), kept only from the walk until the new version has been read and compared, then deleted.
+CREATE TABLE IF NOT EXISTS file_versions (
+    file_id TEXT PRIMARY KEY, path TEXT, kind TEXT, size INTEGER, mtime TEXT, sha256 TEXT, status TEXT, summary TEXT,
+    inside INTEGER, text BLOB, props TEXT, saved TEXT
+);
 
 -- What happened during runs (replaces log.txt).
 CREATE TABLE IF NOT EXISTS log (time TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL, file_id TEXT);

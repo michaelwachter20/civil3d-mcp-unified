@@ -2,6 +2,24 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **`civil3d_drawing action=open`** opens a drawing the way the user means it:
+  - **A drawing already open** that matches the name comes first: with or without `.dwg`, or the same name without
+    "rev N", dates or "current". It becomes the active tab.
+  - **Otherwise the latest version** in the job's database: the DWG modified last (`civil3d_project_notes
+    action=latest`).
+  - **`near`** gives words about the folder, for one name used for different drawings in several folders.
+  - The result names the file, why it was chosen, its older versions, and a newer version on the drive when an open
+    drawing was used. Several matches give `choices` to ask about.
+  - The plugin's new `openDrawing` opens a path inside the allowed folders (`CIVIL3D_FILE_ROOTS`). It opens
+    read-only when asked or when someone else has the file open, and names them from the `.dwl` lock file. A drawing
+    already open becomes the active tab.
+- **`civil3d_project_notes action=latest`** (file, optional near): a file's versions in the job folder, the latest
+  last, with full paths, title-block date and revision. It is read from Project Analyzer's `intel_series` (schema
+  updated).
+- **The go-by skills** (`compare_to_goby`, `convert_drawing_from_goby`) find the go-by by name. They try an open
+  drawing first, then its latest version. They say which file they used, and ask when the folders look like different
+  areas.
+
 - **The shared folder is `Documents\Project Knowledge`, and no tool owns it** (project-analyzer's
   `docs/suite-knowledge.md`, "Where"). The folder is the first of `PROJECT_KNOWLEDGE_DIR`; `CIVIL3D_KNOWLEDGE_DIR`
   (its earlier name, still honoured); `Documents\Project Knowledge` if it exists; an earlier default that exists,

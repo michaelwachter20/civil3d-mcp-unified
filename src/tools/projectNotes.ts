@@ -710,6 +710,95 @@ export async function locatePath(written: string, name?: string) {
   });
 }
 
+// ---------------------------------------------------------------- the latest version of a file
+
+// Contract: intel_series (project-analyzer's analyzer/series.py). A series is the files on the drive of one kind whose
+// names are the same once dates, "rev N", "current", "copy" and the like are taken out; the latest is the one modified
+// last. The key below is drawing_history.series_key without the title block, so lookups match the analyzer's.
+const SERIES_REMOVE = /\b(?:\d{8}|\d{6}|\d{2}[-_ ]\d{2}[-_ ]\d{2,4}|current|copy|backup|bak|old|new|test|void|draft|final|rev(?:ision)?\s*\d*|v\d+|to)\b|\(\d+\)/gi;
+
+/** 'C-101 rev2 (2).dwg' -> 'c 101'; the analyzer's series key of a file name. */
+export function seriesKey(fileName: string): string {
+  const stem = path.win32.parse(fileName.replace(/\//g, "\\")).name;
+  const key = stem.replace(SERIES_REMOVE, " ").replace(/[\s_.-]+/g, " ").trim().toLowerCase();
+  return key || stem.toLowerCase();
+}
+
+const wordsOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+
+interface SeriesRow {
+  series_id: string; key: string; kind: string; position: number; file_id: string; path: string; modified: string | null;
+  title_date: string | null; revision: string | null; latest: number; note: string | null;
+}
+
+/**
+ * The series a name or path points to (an exact path, a file name at the end of a path, the series key of the name, a
+ * key starting with it), drawings first. `near`: words about the folder ("phase 2 area b"); only members whose path
+ * holds all of them as whole words are kept, and the latest is the newest of those.
+ */
+export async function projectLatest(name: string, project?: string, near?: string) {
+  const { job } = await resolveProject(project);
+  const wanted = name.trim().replace(/^"|"$/g, "").replace(/\//g, "\\");
+  if (!wanted) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give a file name or path, e.g. C-101 or Drawings\\C-101.dwg.");
+  return withProjectDb(job.file, ({ db }) => {
+    const hasTable = all<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'intel_series'").length > 0;
+    if (!hasTable) {
+      return { project: job.name, name, series: [], hint: "This job's database has no version list yet: it is built by Project Analyzer (analyze.py intel, also at the end of every run). Ask the user, or look in the job folder." };
+    }
+    const escaped = (text: string) => text.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_");
+    const key = seriesKey(wanted.split("\\").pop() ?? wanted);
+    const tries: Array<[string, string]> = [
+      ["SELECT DISTINCT series_id FROM intel_series WHERE lower(path) = lower(?)", wanted],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE lower(path) LIKE lower(?) ESCAPE '!'", `%\\${escaped(wanted)}`],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE key = ?", key],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE key LIKE ? ESCAPE '!'", `${escaped(key)}%`],
+    ];
+    let found: SeriesRow[][] = [];
+    for (const [sql, value] of tries) {
+      const ids = all<{ series_id: string }>(db, sql, value).map((row) => row.series_id).slice(0, 20);
+      if (ids.length) {
+        found = ids.map((id) => all<SeriesRow>(db, "SELECT * FROM intel_series WHERE series_id = ? ORDER BY position", id));
+        break;
+      }
+    }
+    const hints = near ? wordsOf(near) : [];
+    if (hints.length) {
+      found = found.map((members) => members.filter((member) => {
+        const have = new Set(wordsOf(member.path));
+        return hints.every((hint) => have.has(hint));
+      })).filter((members) => members.length > 0);
+    }
+    found.sort((left, right) => Number(left[0].kind !== "cad") - Number(right[0].kind !== "cad") || left[0].key.localeCompare(right[0].key));
+    const sourceRoot = metaValue(db, "source_root");
+    const onDisk = (relative: string) => (sourceRoot ? path.win32.join(sourceRoot, relative) : undefined);
+    const describeMember = (member: SeriesRow) => {
+      const full = onDisk(member.path);
+      return {
+        path: member.path, fullPath: full, exists: !!full && existsSync(full), modified: member.modified?.slice(0, 10) ?? null,
+        ...(member.title_date ? { titleBlockDate: member.title_date } : {}), ...(member.revision ? { revision: member.revision } : {}),
+      };
+    };
+    const series = found.map((members) => {
+      const latest = members[members.length - 1];
+      const folders = new Set(members.map((member) => path.win32.dirname(member.path).toLowerCase()));
+      return {
+        key: latest.key, kind: latest.kind, versions: members.length, latest: describeMember(latest),
+        ...(latest.note && !hints.length ? { note: latest.note } : {}),
+        older: members.slice(0, -1).reverse().slice(0, 10).map(describeMember),
+        ...(folders.size > 1 ? { folders: folders.size } : {}),
+      };
+    });
+    return {
+      project: job.name, name, ...(near ? { near } : {}), series,
+      hint: series.length === 0
+        ? "No file by that name in the job's database. Ask the user, or check list_open in civil3d_drawing."
+        : "Drawings already open come first (civil3d_drawing list_open). The latest is the one modified last. When one name is in several " +
+          "folders (folders > 1) that look like different areas (phases, areas, sites) rather than dated deliveries of one drawing, " +
+          "ask which, or pass near with the user's words about the folder.",
+    };
+  });
+}
+
 // ---------------------------------------------------------------- once per session, with the first code result
 
 // A short overview is attached to code results once per project per server session, so it reaches the assistant
