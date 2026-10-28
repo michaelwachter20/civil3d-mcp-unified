@@ -92,7 +92,7 @@ describe("good practices shared by the suite (practices.json)", () => {
   it("refuses practices that name a job, its folders or its files", () => {
     mkdirSync(join(root, "projects"));
     copyFileSync(join(FIXTURES, "fixture.db"), join(root, "projects", "elm-street-drainage.db"));
-    expect(() => addPractice("On Elm Street Drainage use 1% slope.")).toThrow(/names the job 'Elm Street Drainage'/);
+    expect(() => addPractice("On Elm Street Drainage use 1% slope.")).toThrow(/the name of the job 'Elm Street Drainage'/);
     expect(() => addPractice("Templates are in P:\\Standards\\C3D.")).toThrow(/folder path/);
     expect(() => addPractice("Copy layers from C-104.dwg.")).toThrow(/names a file/);
     expect(addPractice("Storm pipe maximum velocity is 10 ft/s.").action).toBe("added");

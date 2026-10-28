@@ -84,7 +84,8 @@ practices are read-only. Write references the way every suite tool does: `2026-1
 Lessons, skills, scripts and practices must be general: write the technique, not this job. No job, drawing or
 file names, folders, point numbers, coordinates, elevations, dates, crew initials, point group or layer names,
 company details or site features. Make project-specific values parameters, or steps that ask the user. Those facts
-belong in project notes.
+belong in project notes. Saving is refused when the text has a job's name, a real drawing or survey file name, or
+an absolute, network or profile path; write `<drawing>.dwg`, "the project folder" or a script parameter instead.
 
 Add, never delete: improving a skill archives the old version; a skill verified on another Civil 3D release gets a
 new section (`append_version_section`) instead of being overwritten.

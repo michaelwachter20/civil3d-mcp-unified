@@ -394,3 +394,42 @@ export function jobByName(name: string): Job | undefined {
   if (!key) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give the project a name with letters or digits.");
   return jobIndex().jobs.find((job) => job.slug === key || slug(job.name) === key);
 }
+
+/**
+ * What names each job in a projects folder (its name, its file's slug and its folders), read without changing
+ * anything: databases are opened read-only, nothing is created or imported. Used to keep job data out of general
+ * know-how (generalKnowledge.ts). Unreadable files are skipped; never throws.
+ */
+export function jobIdentities(directory = projectsDirectory()): Array<{ name: string; slug: string; folders: string[] }> {
+  let names: string[];
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const jobs: Array<{ name: string; slug: string; folders: string[] }> = [];
+  for (const entry of names) {
+    const file = path.join(directory, entry);
+    try {
+      if (/\.db$/i.test(entry)) {
+        const db = new (sqliteModule().DatabaseSync)(file, { readOnly: true });
+        try {
+          const folders = (db.prepare("SELECT path FROM folders").all() as Array<{ path: string }>).map((row) => row.path);
+          const sourceRoot = metaValue(db, "source_root");
+          jobs.push({ name: metaValue(db, "project_name") ?? "", slug: entry.replace(/\.db$/i, ""), folders: sourceRoot ? [sourceRoot, ...folders] : folders });
+        } finally {
+          db.close();
+        }
+      } else if (/\.json(\.imported)?$/i.test(entry)) {
+        const data = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) as { name?: unknown; folders?: unknown };
+        const folders = (Array.isArray(data.folders) ? data.folders : [])
+          .map((folder) => (typeof folder === "string" ? folder : (folder as { path?: unknown })?.path))
+          .filter((folder): folder is string => typeof folder === "string");
+        jobs.push({ name: typeof data.name === "string" ? data.name : "", slug: entry.replace(/\.json(\.imported)?$/i, ""), folders });
+      }
+    } catch {
+      // Not a job file, or in use: nothing to compare against from it.
+    }
+  }
+  return jobs;
+}

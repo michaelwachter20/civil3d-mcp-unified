@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkGeneral } from "./generalKnowledge.js";
 import { knowHowPath, knowledgeError, writeAtomically } from "./knowledgeBase.js";
 
 /**
@@ -364,6 +365,7 @@ export function writeSkill(input: SkillWriteInput, release: string) {
   if (!NAME_PATTERN.test(category)) throw knowledgeError("CIVIL3D.INVALID_INPUT", `Invalid category '${input.category}'. Use 1-64 lowercase letters, digits, '-' or '_'.`);
   if (!input.description.trim()) throw knowledgeError("CIVIL3D.INVALID_INPUT", "A description is required; it is how the skill is found later.");
   if (!input.content.trim()) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Skill content is empty.");
+  checkGeneral("skill", name, category, input.description, input.content, input.parameters);
 
   const existing = findSkill(name);
   if (existing && existing.versions.length > 0 && !existing.versions.includes(release)) {
@@ -403,6 +405,7 @@ export function appendVersionSection(skillName: string, sectionContent: string, 
   const skill = findSkill(skillName);
   if (!skill) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `Skill '${skillName}' not found.`);
   if (!sectionContent.trim()) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The section is empty.");
+  checkGeneral("skill section", sectionContent);
   if (skill.versions.includes(release)) {
     throw knowledgeError("CIVIL3D.CONFLICT", `'${skill.name}' is already verified on Civil 3D ${release}; improve it with action=write instead.`);
   }

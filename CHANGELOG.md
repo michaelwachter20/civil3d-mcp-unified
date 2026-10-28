@@ -45,6 +45,23 @@
 - `link`, `list` and `files` return `userKnowledgeFolder` (was `filesFolder`).
 - README: "Works on its own, better together" (what Civil 3D MCP does alone, with Project Analyzer and with TBC MCP)
   and the User Knowledge folder; also described in the release's INSTALL.md.
+- **No job data in Civil 3D's know-how, checked on every save.** Before 2.4.0 only practices were checked. Now every
+  preference, lesson (and its topics), skill (name, category, description, content, parameters), skill section and
+  saved script (name, description, code, parameters) is refused when it contains:
+  - an absolute path outside `C:\Program Files`, `C:\ProgramData` and `C:\Windows`, also escaped in C# code;
+  - a network path (`\\server\share`), also escaped;
+  - a path inside the user's profile;
+  - the name of a job in `<shared>\projects` (its name, its slug, or the last folder name of its folders; generic
+    names such as `Survey` left out), read without changing anything (`jobIdentities`);
+  - a drawing or survey file named for real (`C-104.dwg`, `Elm St.vce`; `<drawing>.dwg`, `*.dwg` and `.dwg` are
+    fine).
+
+  The rules are TBC MCP's (`knowledge.job_data_problems`), so both tools refuse the same things
+  (`src/tools/generalKnowledge.ts`). The refusal says what was found and points to `civil3d_project_notes`.
+  Practices keep their stricter rules (no path or file name at all) and get the job-name check by slug and folder.
+- **Audit test for the shipped know-how** (`tests/knowledge_audit.test.ts`): every file under `skills\` that git
+  tracks, `lessons.seed.jsonl` included, is checked line by line with the same rules, against the jobs on the PC
+  running the tests. All 38 pass.
 
 ## v2.3.1 — 2026-10-27
 

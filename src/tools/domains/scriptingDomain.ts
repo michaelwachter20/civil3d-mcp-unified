@@ -12,6 +12,7 @@ import {
   addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectEntity, projectFileDetails, projectNotesOnce,
   projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
 } from "../projectNotes.js";
+import { checkGeneral } from "../generalKnowledge.js";
 import { addPractice, describePractices, removePractice, searchPractices, updatePractice } from "../practices.js";
 
 /**
@@ -379,10 +380,13 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["scriptSave"],
-      execute: async (args) => await sendCommand("scriptSave", {
-        name: args.name, description: args.description, code: args.code, mode: args.mode ?? "write",
-        parameters: args.parameters ?? [], overwrite: args.overwrite ?? false,
-      }),
+      execute: async (args) => {
+        checkGeneral("script", args.name, args.description, args.code, args.parameters);
+        return await sendCommand("scriptSave", {
+          name: args.name, description: args.description, code: args.code, mode: args.mode ?? "write",
+          parameters: args.parameters ?? [], overwrite: args.overwrite ?? false,
+        });
+      },
     },
     script_list: {
       action: "script_list", inputSchema: ScriptListArgs, responseSchema: GenericResponseSchema,

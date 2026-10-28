@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
+import { checkGeneral } from "./generalKnowledge.js";
 
 /**
  * The assistant's knowledge base: everything it learns while working, kept as plain files so the next chat, or a
@@ -19,6 +20,8 @@ import { withApplicationConnection } from "../utils/ConnectionManager.js";
  *     scripts\*.csx             reusable scripts (managed by the Civil 3D plugin)
  *
  * Rule: add, never delete. Knowledge from another Civil 3D release is kept; new releases add to it.
+ * Rule: general only. Every preference, lesson, skill and script is checked for job data before it is saved
+ * (generalKnowledge.ts); facts about one job go in the project database.
  * Built-in seed lessons ship with the server (skills\lessons.seed.jsonl) and can't be removed.
  */
 
@@ -225,6 +228,7 @@ const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 export function addPreference(rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
+  checkGeneral("preference", text);
   const preferences = listPreferences();
   const duplicate = preferences.find((preference) => preference.rule.toLowerCase() === text.toLowerCase());
   if (duplicate) return { success: true, action: "unchanged", preference: duplicate, note: "That preference already exists." };
@@ -237,6 +241,7 @@ export function addPreference(rule: string) {
 export function updatePreference(id: string, rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
+  checkGeneral("preference", text);
   const preferences = listPreferences();
   const preference = preferences.find((candidate) => candidate.id === id);
   if (!preference) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No preference with id '${id}'. Use action=list to see them.`);
@@ -293,6 +298,7 @@ export function recordLesson(lesson: string, topics: string[], release: string) 
   if (cleanTopics.length === 0) {
     throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give at least one topic (an API name, tool or subject) so the lesson can surface when relevant.");
   }
+  checkGeneral("lesson", text, cleanTopics.join(" "));
   const existing = allLessons();
   const duplicate = existing.find((candidate) => candidate.lesson.toLowerCase() === text.toLowerCase());
   if (duplicate) return { success: true, action: "unchanged", lesson: duplicate, note: "That lesson is already recorded." };

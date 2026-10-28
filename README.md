@@ -171,6 +171,12 @@ three kinds, and each has its place:
 | **User knowledge**: your own documents for one job (proposal guidelines, building-type requirements, a client's standards, design manuals, code books; subfolders are fine) | `projects\<job>\User Knowledge\` | Drop files in; `civil3d_project_notes action=files / read`, and `search` and `overview` include them. See [below](#user-knowledge-your-documents-for-a-job) |
 | **Good practices**: engineering and company practice for every job ("storm pipe minimum slope is 0.5%", "label structures MH-n") | `practices.json` | `civil3d_practices action=add / update / remove` |
 
+- **Know-how stays general.** Every preference, lesson, skill, script and practice is checked before it's saved, and
+  refused when it names a job (by its name or its folders), a drawing or survey file (`C-104.dwg`), an absolute or
+  network path, or a folder in your profile. Facts about a job go in its project notes instead. A test runs the same
+  check over every skill and lesson shipped in `skills\`. The check finds names and paths, not meaning: "the client
+  wants a 6 ft fence" has no name in it, so read what the assistant wants to save before you say yes.
+
 - **Every new chat starts informed.** Your preferences, the good practices and the list of your own skills are sent
   with the server's instructions, and the assistant first reads the built-in `working_safely_in_civil3d` skill.
 - **The job comes to the assistant.** The first code result of a session in a drawing that belongs to a known job

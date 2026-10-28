@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { jobDataProblems } from "./generalKnowledge.js";
 import { knowledgeError, sharedRoot, writeAtomically } from "./knowledgeBase.js";
-import { jobIndex, TOOL } from "./projectDb.js";
+import { TOOL } from "./projectDb.js";
 
 /**
  * Good practices: engineering and company practice that doesn't depend on a program ("storm pipe minimum slope is
@@ -107,19 +108,14 @@ export function searchPractices(query: string) {
 
 /**
  * Practices are general know-how: refuse text that names a job, its folders or its files (contract: no job data in
- * general knowledge). Returns the reason, or undefined when the text is fine.
+ * general knowledge). Stricter than the check on Civil 3D's own know-how (generalKnowledge.ts), which it also applies:
+ * a practice is one sentence, so any path or file name is refused. Returns the reason, or undefined when it's fine.
  */
 export function jobDataIn(text: string): string | undefined {
   if (/[a-zA-Z]:\\|\\\\[^\\\s]+\\/.test(text)) return "it contains a folder path";
   if (/\b[\w-]+\.(dwg|dxf|dwt|pdf|docx?|xlsx?|csv|vce|msg|jxl|job)\b/i.test(text)) return "it names a file";
-  try {
-    const lower = text.toLowerCase();
-    const named = jobIndex().jobs.find((job) => job.name.trim().length >= 4 && lower.includes(job.name.trim().toLowerCase()));
-    if (named) return `it names the job '${named.name}'`;
-  } catch {
-    // No project databases readable: nothing to compare against.
-  }
-  return undefined;
+  const problem = jobDataProblems(text)[0];
+  return problem ? `it contains ${problem}` : undefined;
 }
 
 function cleanText(practice: string): string {
