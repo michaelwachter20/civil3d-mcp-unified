@@ -623,12 +623,18 @@ export async function projectEntity(entity: string, name?: string) {
       db, "SELECT id, title, subject, refs, people, first_date, last_date FROM intel_stories")
       .filter((story) => story.subject === found.id || allNames.some((value) =>
         story.title?.toLowerCase().includes(value) || story.refs?.toLowerCase().includes(value) || story.people?.toLowerCase().includes(value)))
-      .map((story) => ({
-        id: story.id, title: story.title, first: story.first_date, last: story.last_date,
-        steps: all<{ date: string; kind: string; who: string; what: string; file_id: string }>(
-          db, "SELECT date, kind, who, what, file_id FROM intel_story_steps WHERE story_id = ? ORDER BY position", story.id)
-          .map((step) => ({ date: step.date, kind: step.kind, who: step.who, what: step.what, file: filePath(db, step.file_id) })),
-      }));
+      // At most 10 stories of 30 steps each, as TBC MCP: one RFI on a real job made a 143,000-character answer.
+      .slice(0, 10)
+      .map((story) => {
+        const stepsTotal = all<{ n: number }>(db, "SELECT count(*) AS n FROM intel_story_steps WHERE story_id = ?", story.id)[0]?.n ?? 0;
+        return {
+          id: story.id, title: story.title, first: story.first_date, last: story.last_date,
+          steps: all<{ date: string; kind: string; who: string; what: string; file_id: string }>(
+            db, "SELECT date, kind, who, what, file_id FROM intel_story_steps WHERE story_id = ? ORDER BY position LIMIT 30", story.id)
+            .map((step) => ({ date: step.date, kind: step.kind, who: step.who, what: step.what, file: filePath(db, step.file_id) })),
+          ...(stepsTotal > 30 ? { stepsTotal, stepsHint: "The first 30 steps; action=timeline lists the rest by date." } : {}),
+        };
+      });
     const like = allNames.map(() => "lower(f.topics) LIKE ?").join(" OR ");
     return {
       project: job.name,
