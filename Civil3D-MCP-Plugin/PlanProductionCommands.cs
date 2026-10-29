@@ -132,7 +132,7 @@ public static class PlanProductionCommands
   {
     var sheetSetName = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
     var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
-    var titleBlockPath = FileBoundary.ResolveImportPath(
+    var titleBlockPath = FileBoundary.ResolveReferencePath(
       PluginRuntime.GetRequiredString(parameters, "titleBlockPath"),
       ".dwg", ".dwt");
 

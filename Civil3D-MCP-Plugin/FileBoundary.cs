@@ -22,15 +22,29 @@ internal static class FileBoundary
   private static readonly Lazy<string[]> ImportRoots = new(() => LoadRoots(ImportRootsVariable));
   private static readonly Lazy<string[]> ExportRoots = new(() => LoadRoots(ExportRootsVariable));
 
-  public static string ResolveImportPath(string rawPath, params string[] allowedExtensions)
+  /// <summary>A file whose data goes into the drawing (points, surfaces, a drawing opened to edit): never one from the
+  /// suite's shared folder, whose job databases are a snapshot for reference only.</summary>
+  public static string ResolveImportPath(string rawPath, params string[] allowedExtensions) =>
+    ResolveRead(rawPath, userKnowledgeAllowed: false, allowedExtensions);
+
+  /// <summary>
+  /// A file only read for reference (a go-by drawing, a template, a title block, a drawing opened read-only): it may be one
+  /// of the user's own standards in a job's User Knowledge folder (&lt;shared&gt;\projects\&lt;job&gt;\User Knowledge\), but
+  /// nothing else in the shared folder.
+  /// </summary>
+  public static string ResolveReferencePath(string rawPath, params string[] allowedExtensions) =>
+    ResolveRead(rawPath, userKnowledgeAllowed: true, allowedExtensions);
+
+  private static string ResolveRead(string rawPath, bool userKnowledgeAllowed, string[] allowedExtensions)
   {
     var path = ResolvePath(rawPath, ImportRoots.Value, "import", allowedExtensions);
-    if (IsInSharedKnowledgeFolder(path))
+    if (IsInSharedKnowledgeFolder(path) && !(userKnowledgeAllowed && IsInUserKnowledge(path)))
     {
       throw new JsonRpcDispatchException(
         "CIVIL3D.PATH_NOT_ALLOWED",
         $"'{path}' is in the suite's shared knowledge folder (job databases, backups, User Knowledge), which is for reference only " +
-        "and never a source for a drawing. Ask the user for the current source file in the job folder.");
+        "and never a source for a drawing's data. Ask the user for the current source file in the job folder. (The user's own " +
+        "standards in a job's User Knowledge folder can be read as a go-by, template or title block, or opened read-only.)");
     }
 
     if (!File.Exists(path))
@@ -316,6 +330,23 @@ internal static class FileBoundary
     try
     {
       return IsWithinRoot(path, Path.GetFullPath(SharedFolder.Root()));
+    }
+    catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+    {
+      return false;
+    }
+  }
+
+  /// <summary>True when the path is inside a job's User Knowledge folder: &lt;shared&gt;\projects\&lt;job&gt;\User Knowledge\...</summary>
+  private static bool IsInUserKnowledge(string path)
+  {
+    try
+    {
+      var parts = Path.GetRelativePath(Path.GetFullPath(SharedFolder.Root()), path)
+        .Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+      return parts.Length > 3
+        && string.Equals(parts[0], "projects", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(parts[2], "User Knowledge", StringComparison.OrdinalIgnoreCase);
     }
     catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
     {

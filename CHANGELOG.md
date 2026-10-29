@@ -2,6 +2,11 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **The user's own standards stay usable:** a drawing in a job's User Knowledge folder can be read as a go-by
+  (`Reference(name)`), used as a template or title block, or opened read-only (`FileBoundary.ResolveReferencePath`).
+  Data imports (points, surfaces, LandXML) and drawings opened to edit are still refused from anywhere in the shared
+  folder.
+
 - **More than one folder per job** (project-analyzer's `docs/suite-knowledge.md`, "More than one folder per job"):
   a job's other folders (`meta.job_folders`, files under `<job folder: NAME>\`) count for finding a drawing's job;
   `locate`, `latest` and `file` (new `onDisk`) give each file's place in its own folder, and `file` also takes a path

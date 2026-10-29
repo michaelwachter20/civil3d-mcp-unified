@@ -133,7 +133,7 @@ public static class DrawingCommands
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
     if (!string.IsNullOrWhiteSpace(templatePath))
     {
-      templatePath = FileBoundary.ResolveImportPath(templatePath, ".dwt", ".dwg");
+      templatePath = FileBoundary.ResolveReferencePath(templatePath, ".dwt", ".dwg");
     }
 
     return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>
@@ -158,8 +158,12 @@ public static class DrawingCommands
   /// CIVIL3D_IMPORT_ROOTS, default Documents), like every file the plugin reads.</summary>
   public static async Task<object?> OpenDrawingAsync(JsonObject? parameters)
   {
-    var path = FileBoundary.ResolveImportPath(PluginRuntime.GetRequiredString(parameters, "path"), ".dwg", ".dxf", ".dwt");
     var readOnly = PluginRuntime.GetOptionalBool(parameters, "readOnly") ?? false;
+    // Opened read-only, a drawing is only looked at: one of the user's standards in User Knowledge is fine then.
+    var rawPath = PluginRuntime.GetRequiredString(parameters, "path");
+    var path = readOnly
+      ? FileBoundary.ResolveReferencePath(rawPath, ".dwg", ".dxf", ".dwt")
+      : FileBoundary.ResolveImportPath(rawPath, ".dwg", ".dxf", ".dwt");
     return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>
     {
       var manager = App.DocumentManager;

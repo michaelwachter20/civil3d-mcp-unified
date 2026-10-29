@@ -54,6 +54,17 @@ try
   File.WriteAllText(sharedImport, "dem-data");
   Environment.SetEnvironmentVariable("PROJECT_KNOWLEDGE_DIR", sharedRoot);
   ExpectCode("CIVIL3D.PATH_NOT_ALLOWED", () => FileBoundary.ResolveImportPath(sharedImport, ".dem"));
+  // The user's own standards in a job's User Knowledge folder: readable for reference, never imported as data.
+  var standards = Path.Combine(sharedRoot, "projects", "elm-street", "User Knowledge");
+  Directory.CreateDirectory(standards);
+  var standard = Path.Combine(standards, "Standard details.dwg");
+  File.WriteAllText(standard, "dwg");
+  Assert(FileBoundary.ResolveReferencePath(standard, ".dwg") == Path.GetFullPath(standard), "A User Knowledge standard was refused as a go-by.");
+  ExpectCode("CIVIL3D.PATH_NOT_ALLOWED", () => FileBoundary.ResolveImportPath(standard, ".dwg"));
+  var notStandards = Path.Combine(sharedRoot, "projects", "elm-street.backups", "copy.dwg");
+  Directory.CreateDirectory(Path.GetDirectoryName(notStandards)!);
+  File.WriteAllText(notStandards, "dwg");
+  ExpectCode("CIVIL3D.PATH_NOT_ALLOWED", () => FileBoundary.ResolveReferencePath(notStandards, ".dwg"));
   Assert(FileBoundary.ResolveImportPath(importPath, ".dem") == Path.GetFullPath(importPath), "An import next to the shared folder was rejected.");
   Environment.SetEnvironmentVariable("PROJECT_KNOWLEDGE_DIR", null);
 

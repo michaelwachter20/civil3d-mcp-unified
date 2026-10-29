@@ -149,7 +149,7 @@ public sealed class ReferenceDrawing
         " To read a drawing that isn't open, pass its full .dwg path.");
     }
 
-    var path = FileBoundary.ResolveImportPath(wanted, ".dwg");
+    var path = FileBoundary.ResolveReferencePath(wanted, ".dwg");
     var database = new Database(false, true);
     try
     {
