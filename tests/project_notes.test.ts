@@ -215,6 +215,7 @@ describe("project notes on the suite's project database", () => {
     ]);
     expect((await projectTimeline(ELM, "2026-10", "2026-10-05")).timeline.map((entry) => entry.date)).toEqual(["2026-10-03", "2026-10-03", "2026-10-05"]);
     expect((await projectTimeline(ELM, undefined, "2026-09")).count).toBe(1);
+    expect(await projectTimeline(ELM, undefined, undefined, 2)).toMatchObject({ count: 5, truncated: true, timeline: [{ date: "2026-09-14" }, { date: "2026-10-03" }] });
     await expect(projectTimeline(ELM, "10/3/26")).rejects.toThrow(/YYYY/);
   });
 

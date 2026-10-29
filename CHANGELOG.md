@@ -5,6 +5,9 @@
 - **`civil3d_project_notes action=entity` stays a readable size:** at most 10 story lines of 30 steps each (as TBC
   MCP), with `stepsTotal` when a story has more. On a real job one RFI's answer was 143,000 characters; it is now
   26,000.
+- **`civil3d_project_notes action=timeline` and `entity` ask SQLite for just the events they show,** instead of
+  reading every event and filtering them here. On a real job a timeline went from 1.5 s to 15 ms and an entity from
+  about 1 s to 0.1–0.3 s, with the same answers.
 
 - **`civil3d_drawing action=open`** opens a drawing the way the user means it:
   - **A drawing already open** that matches the name comes first: with or without `.dwg`, or the same name without

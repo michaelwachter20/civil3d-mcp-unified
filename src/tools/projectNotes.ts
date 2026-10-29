@@ -614,10 +614,11 @@ export async function projectEntity(entity: string, name?: string) {
     }
     const allNames = names(found);
     const entityFiles = all<{ file_id: string; count: number }>(db, "SELECT file_id, count FROM intel_entity_files WHERE entity_id = ? ORDER BY count DESC", found.id);
-    const fileIds = new Set(entityFiles.map((row) => row.file_id));
-    const events = all<{ date: string; kind: string; title: string; file_id: string | null }>(db, "SELECT date, kind, title, file_id FROM intel_events ORDER BY date")
-      .filter((event) => (event.file_id && fileIds.has(event.file_id)) || allNames.some((value) => event.title?.toLowerCase().includes(value)))
-      .slice(0, 50)
+    // Filtered in SQLite, not here: a big job has hundreds of thousands of events (reading them all took about a second).
+    const named = allNames.map(() => "instr(lower(title), ?) > 0").join(" OR ");
+    const events = all<{ date: string; kind: string; title: string; file_id: string | null }>(
+      db, `SELECT date, kind, title, file_id FROM intel_events WHERE file_id IN (SELECT file_id FROM intel_entity_files WHERE entity_id = ?) OR ${named} ORDER BY date LIMIT 50`,
+      found.id, ...allNames)
       .map((event) => ({ date: event.date, kind: event.kind, title: event.title, file: filePath(db, event.file_id) }));
     const stories = all<{ id: string; title: string; subject: string | null; refs: string; people: string; first_date: string; last_date: string }>(
       db, "SELECT id, title, subject, refs, people, first_date, last_date FROM intel_stories")
@@ -658,16 +659,22 @@ export async function projectTimeline(name?: string, from?: string, to?: string,
   }
   const inRange = (date: string | null) => !!date && (!from || date >= from || date.startsWith(from)) && (!to || date.slice(0, to.length) <= to);
   return withProjectDb(job.file, ({ db }) => {
+    // The same range as inRange, in SQLite so the intel_events_date index answers it: a date at or after `from`, and
+    // one that starts with `to` or sorts before it ("￿" sorts after every character a date has).
+    const range = "date IS NOT NULL AND date >= ? AND date <= ?";
+    const bounds = [from ?? "", `${to ?? ""}￿`];
+    const total = all<{ n: number }>(db, `SELECT count(*) AS n FROM intel_events WHERE ${range}`, ...bounds)[0]?.n ?? 0;
+    const shown = Math.max(limit, 1);
     const events = all<{ date: string; kind: string; title: string; confidence: string; file_id: string | null }>(
-      db, "SELECT date, kind, title, confidence, file_id FROM intel_events")
-      .filter((event) => inRange(event.date))
+      db, `SELECT date, kind, title, confidence, file_id FROM intel_events WHERE ${range} ORDER BY date LIMIT ?`, ...bounds, shown)
       .map((event) => ({ date: event.date, kind: event.kind, title: event.title, ...(event.confidence && event.confidence !== "high" ? { confidence: event.confidence } : {}), file: filePath(db, event.file_id) }));
     const dated = facts(db, `${CURRENT} AND f.date IS NOT NULL`).filter((fact) => inRange(fact.date ?? null))
       .map((fact) => ({ date: fact.date!, kind: "fact", title: fact.fact, fact: fact.id, tool: fact.tool }));
     const timeline = [...events, ...dated].sort((left, right) => left.date.localeCompare(right.date));
+    const count = total + dated.length;
     return {
-      project: job.name, from: from ?? null, to: to ?? null, count: timeline.length,
-      timeline: timeline.slice(0, Math.max(limit, 1)), ...(timeline.length > limit ? { truncated: true } : {}),
+      project: job.name, from: from ?? null, to: to ?? null, count,
+      timeline: timeline.slice(0, shown), ...(count > limit ? { truncated: true } : {}),
     };
   });
 }
