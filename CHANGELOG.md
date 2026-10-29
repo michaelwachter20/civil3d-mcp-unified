@@ -2,6 +2,52 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **The job's database is opened the way the suite contract now says** (project-analyzer's
+  `docs/suite-knowledge.md`, "Opening"; `project-db.sql` and the test fixture updated from project-analyzer):
+  - **Read actions open it read-only.** Only `link`, `unlink` and the note actions open it read-write; the job list
+    reads read-only too. A read changes nothing: WAL is set only when a database is created or written, and nothing
+    is created or imported.
+  - **The readers' indexes:** a write adds the schema's `CREATE INDEX IF NOT EXISTS` indexes an older database lacks
+    (paths, series keys and entity names case-insensitively, the timeline by date and by file, story steps).
+  - **Busy:** SQLite waits 2 s at a time instead of 30 s, and the server waits between tries on a timer, so it keeps
+    answering. After about 10 s it says "The job's database is busy (Project Analyzer is probably writing to it); try
+    again in a moment." instead of "database is locked".
+  - **Damaged:** a database SQLite can't read, or whose `PRAGMA quick_check` isn't ok, is never written or made again
+    from the schema (an unreadable `meta` no longer counts as a new database). The error says how to restore a
+    backup: `python analyze.py restore --project "<job>"`, or the newest copy in `projects\<job>.backups\`. The job
+    stays in the list with a `note`, and sections no longer come back silently empty from a damaged file.
+  - **Backups of the databases it makes:** before the first write of each day to a job database Civil 3D MCP made
+    itself (no `source_root`), a copy goes to `projects\<job>.backups\<job> <date> <time>.db` (Project Analyzer's
+    naming), checked with `PRAGMA quick_check`; the newest 3 are kept. A failed backup never stops the write.
+- **`civil3d_project_notes action=checks`:** what Project Analyzer found worth a look, high first, then medium and
+  info, by kind and title, with up to 10 file paths each and the counts by severity and kind. Optional `severity`,
+  `kind`, `limit` (default 50).
+- **`civil3d_project_notes action=changes`:** requirement changes (events of kind `change`) and the file changes an
+  update found (`file_changes`), newest first. The last 30 days by default; optional `since` (YYYY[-MM[-DD]]),
+  `file`, `limit`.
+- **Faster on big jobs, same answers:** `entity` finds the name and its stories in SQLite instead of reading every
+  entity and story; each answer looks up its file paths in one query; `file`, `locate` and `latest` use the
+  case-insensitive indexes; `latest` reads all its series in one query; `search` keeps the blocks it decompressed;
+  the job-data check on every save of know-how no longer reopens databases that didn't change.
+- **Knowledge files several programs share:**
+  - `preferences.json`, `memory\lessons.jsonl` and `practices.json` are changed under a lock file (`<file>.lock`,
+    holding the process id): two AI apps adding at the same moment no longer lose one of the two. A lock whose process
+    is gone, or older than a minute, is taken over; after 5 s of waiting the error names the lock file.
+  - Before each change the file as it was goes to `<name>.backups\` next to it (the newest 3).
+  - Writes go through a temp file that never stays behind, and the rename is retried while Windows holds the file
+    (virus scanner, indexer). Temp files a crash left (older than an hour) are removed at startup.
+  - A line of `lessons.jsonl` that isn't a lesson is skipped and reported, and kept in the file, instead of breaking
+    every lesson. A `preferences.json` that doesn't parse gives an error naming it and is never rewritten; a copy of
+    it is kept next to it when a change is refused.
+- **User Knowledge paths longer than Windows' limit** are listed and read (the `\\?\` form); a document or folder that
+  can't be read is left out and named under `unreadable` in `action=files`.
+- **The plugin finds the same shared folder as the server** when Documents is redirected (OneDrive):
+  `%USERPROFILE%\Documents`, not the shell's Documents folder. The uninstaller's "Kept" message matches. Prebuilt
+  plugin rebuilt (still 2.4.0).
+- Tests: the three contract copies (`project-db.sql`, `fixture.db`, `fixture-practices.json`) are checked against
+  their recorded SHA-256 always, and against project-analyzer's `schema\` when it is checked out next to this
+  repository.
+
 - **`civil3d_project_notes action=entity` stays a readable size:** at most 10 story lines of 30 steps each (as TBC
   MCP), with `stepsTotal` when a story has more. On a real job one RFI's answer was 143,000 characters; it is now
   26,000.

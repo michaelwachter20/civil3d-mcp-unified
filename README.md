@@ -120,7 +120,7 @@ this repo's serialized host queue, approval flow, and logging.
 | `civil3d_skills` | Lists, searches, and reads skills (built-in ones in [`skills/`](./skills), plus the user's own); `write`, `append_version_section` and `retire` let the assistant learn new ones. | Not required |
 | `civil3d_preferences` | `list` / `add` / `update` / `remove` the user's standing rules, which are sent with every new chat. | remove |
 | `civil3d_memory` | `record` / `search` / `remove` lessons tagged with API topics; matching lessons come back with code results. | remove |
-| `civil3d_project_notes` | What is known about the drawing's job: `overview` / `search` / `file` / `entity` / `timeline` / `locate` read the project database; `list` / `link` / `unlink` / `add` / `update` / `remove` / `files` manage Civil 3D MCP's own notes and folders. | remove |
+| `civil3d_project_notes` | What is known about the drawing's job: `overview` / `search` / `file` / `entity` / `timeline` / `locate` / `latest` / `checks` / `changes` read the project database; `list` / `link` / `unlink` / `add` / `update` / `remove` / `files` manage Civil 3D MCP's own notes and folders. | remove |
 | `civil3d_practices` | `list` / `search` / `add` / `update` / `remove` good practices shared by the suite (`practices.json`), sent with every new chat. | remove |
 | `civil3d_script` | `save` / `list` / `get` / `run` / `delete` reusable scripts, `compile` to check code without running it, and `status`. | save, run, delete |
 
@@ -190,6 +190,16 @@ three kinds, and each has its place:
 - **The latest version of a file.** `civil3d_project_notes action=latest` (file: a name such as `C-101`; optional
   `near`) lists a file's versions in the job folder and their full paths, the latest last. It's built by Project
   Analyzer (table `intel_series`), and the go-by skills use it for "look at C-101 and do what we did there".
+- **What to look at, and what changed.** `civil3d_project_notes action=checks` lists what Project Analyzer found
+  worth a look (missing referenced files, RFIs without a reply, amounts that don't add up), high first, with their
+  files; `severity`, `kind` and `limit` narrow it. `action=changes` lists requirement changes found in emails and
+  documents ("going forward", "revised spec") and the file changes an update of the job folder found, newest first:
+  the last 30 days by default, or `since` a date, or for one `file`.
+- **Shared safely.** Reading the job's database opens it read-only; only `link`, `unlink` and the note actions write.
+  While Project Analyzer is writing, a call waits a few seconds (the server keeps answering), then says the database
+  is busy. A damaged database is never written: the answer says how to restore a backup (`python analyze.py restore`,
+  or the newest copy in `projects\<job>.backups\`). For a job database Civil 3D MCP made itself, a checked copy is
+  kept there before the first change of each day (the newest 3).
 - **Each tool changes only its own.** Civil 3D MCP adds, changes and retires only its own notes, folders and
   practices; a fact from Project Analyzer or TBC MCP is corrected by adding a note that supersedes it. Removing
   retires an entry (hidden, kept, its id never reused). Nothing is deleted.

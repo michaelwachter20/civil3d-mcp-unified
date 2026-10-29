@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -85,12 +86,12 @@ describe("project notes on the suite's project database", () => {
     drawing = "C:\\Work\\Elm extra\\Extra.dwg";
     expect((await linkProjectFolder(ELM)).action).toBe("linked");
     expect(projectForDrawing(drawing)?.name).toBe(ELM);
-    expect(unlinkProjectFolder(ELM, "c:\\work\\elm extra\\").folders).not.toContain("C:\\Work\\Elm extra");
+    expect((await unlinkProjectFolder(ELM, "c:\\work\\elm extra\\")).folders).not.toContain("C:\\Work\\Elm extra");
     expect(projectForDrawing(drawing)).toBeUndefined();
-    expect(() => unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street\\TBC")).toThrow(/linked by tbc/);
-    expect(() => unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street")).toThrow(/source_root/);
-    expect(() => unlinkProjectFolder(ELM, "C:\\Elsewhere")).toThrow(/isn't linked/);
-    expect(unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street\\Drawings").action).toBe("unlinked");
+    await expect(unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street\\TBC")).rejects.toThrow(/linked by tbc/);
+    await expect(unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street")).rejects.toThrow(/source_root/);
+    await expect(unlinkProjectFolder(ELM, "C:\\Elsewhere")).rejects.toThrow(/isn't linked/);
+    expect((await unlinkProjectFolder(ELM, "C:\\Jobs\\Elm Street\\Drawings")).action).toBe("unlinked");
   });
 
   it("adds notes as civil3d facts with the next fact id, a drawing source and duplicate checks", async () => {
@@ -323,7 +324,7 @@ describe("project notes on the suite's project database", () => {
     };
     expect([
       "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_files", "project_read",
-      "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate",
+      "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate", "project_checks", "project_changes",
     ].map(risk).every((value) => value === false)).toBe(true);
     expect(risk("project_remove")).toBe(true);
     const tool = SCRIPTING_DOMAIN_DEFINITION.exposures.find((exposure) => exposure.toolName === "civil3d_project_notes")!;
@@ -332,17 +333,32 @@ describe("project notes on the suite's project database", () => {
   });
 });
 
-describe("shipped project database schema", () => {
-  it("matches project-analyzer's schema/project-db.sql when that repository is checked out (else skipped)", ({ skip }) => {
+describe("shipped copies of the suite contract", () => {
+  // The contract's files this repository ships a copy of, with the SHA-256 of the copy project-analyzer published
+  // (text files read with CRLF as LF). A new contract means new copies and new hashes here, on purpose.
+  const COPIES = [
+    { copy: join(import.meta.dirname, "..", "src", "tools", "project-db.sql"), original: "project-db.sql", text: true,
+      sha256: "44c31481779f67dc3187f4f66e3a81f48c40b1c1c0452505456550473a218abb" },
+    { copy: join(FIXTURES, "fixture.db"), original: "fixture.db", text: false,
+      sha256: "451ee3ea467c7bcdc5ebad3b0866ce0b6597ea5e102582a7831ae2e9cfbf8a0b" },
+    { copy: join(FIXTURES, "fixture-practices.json"), original: "fixture-practices.json", text: true,
+      sha256: "f2021ce1b963686cec2270567e8050e25bdb814c6cff76412c2f8338dbcdafa6" },
+  ];
+  const content = (file: string, text: boolean) => (text ? Buffer.from(readFileSync(file, "utf8").replace(/\r\n/g, "\n"), "utf8") : readFileSync(file));
+
+  it.each(COPIES)("$original is the recorded copy of the contract", ({ copy, text, sha256 }) => {
+    expect(createHash("sha256").update(content(copy, text)).digest("hex")).toBe(sha256);
+  });
+
+  it.for(COPIES)("$original matches project-analyzer's schema folder when that repository is checked out (else skipped)", ({ copy, original, text }, { skip }) => {
     // PROJECT_ANALYZER_DIR, else a project-analyzer folder next to this repository or next to any folder above it
     // (a git worktree of this repository lives a few levels below the main checkout).
-    const candidates = process.env.PROJECT_ANALYZER_DIR ? [join(process.env.PROJECT_ANALYZER_DIR, "schema", "project-db.sql")] : [];
+    const candidates = process.env.PROJECT_ANALYZER_DIR ? [join(process.env.PROJECT_ANALYZER_DIR, "schema", original)] : [];
     for (let dir = join(import.meta.dirname, ".."); dirname(dir) !== dir; dir = dirname(dir)) {
-      candidates.push(join(dirname(dir), "project-analyzer", "schema", "project-db.sql"));
+      candidates.push(join(dirname(dir), "project-analyzer", "schema", original));
     }
     const found = candidates.find((candidate) => existsSync(candidate));
     if (!found) skip("project-analyzer is not checked out next to this repository");
-    const normalize = (text: string) => text.replace(/\r\n/g, "\n");
-    expect(normalize(readFileSync(join(import.meta.dirname, "..", "src", "tools", "project-db.sql"), "utf8"))).toBe(normalize(readFileSync(found!, "utf8")));
+    expect(content(copy, text).equals(content(found!, text))).toBe(true);
   });
 });

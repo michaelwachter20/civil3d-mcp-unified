@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { keepBackup, withFileLock } from "../utils/atomicFiles.js";
 import { jobDataProblems } from "./generalKnowledge.js";
 import { knowledgeError, sharedRoot, writeAtomically } from "./knowledgeBase.js";
 import { TOOL } from "./projectDb.js";
@@ -14,6 +15,7 @@ import { TOOL } from "./projectDb.js";
  *   - each tool changes only entries whose "source" is its own; fields it doesn't know are kept
  *   - written atomically (temp file + rename), UTF-8 without BOM, LF, 2-space indent; re-read right before writing;
  *     a file that doesn't parse is never rewritten
+ *   - each change holds practices.json.lock, so another Civil 3D MCP on this PC waits instead of losing an update
  */
 
 export interface Practice {
@@ -52,13 +54,23 @@ function readPracticesFile(): { data: Record<string, unknown>; practices: Practi
   return { data: record, practices };
 }
 
-/** Re-reads the file, applies the change to the fresh list and writes it back (other tools may have written since). */
-function change<T>(work: (practices: Practice[]) => T): T {
-  const { data } = readPracticesFile();
-  const entries = Array.isArray(data.practices) ? (data.practices as Practice[]) : [];
-  const result = work(entries);
-  writeAtomically(practicesFile(), `${JSON.stringify({ ...data, practices: entries }, null, 2)}\n`);
-  return result;
+/**
+ * Re-reads the file under its lock, applies the change to the fresh list and writes it back (other tools may have
+ * written since); the file as it was is kept in practices.backups\ first (the newest 3).
+ */
+function change<T>(work: (practices: Practice[]) => T): Promise<T> {
+  const file = practicesFile();
+  return withFileLock(file, () => {
+    const { data } = readPracticesFile();
+    const entries = Array.isArray(data.practices) ? (data.practices as Practice[]) : [];
+    const before = JSON.stringify(entries);
+    const result = work(entries);
+    if (JSON.stringify(entries) !== before) {
+      keepBackup(file);
+      writeAtomically(file, `${JSON.stringify({ ...data, practices: entries }, null, 2)}\n`);
+    }
+    return result;
+  });
 }
 
 const present = (practice: Practice) => ({
@@ -130,7 +142,7 @@ function cleanText(practice: string): string {
 
 const cleanTopics = (topics: string[] | undefined) => [...new Set((topics ?? []).map(oneLine).filter(Boolean))];
 
-export function addPractice(practice: string, topics?: string[]) {
+export async function addPractice(practice: string, topics?: string[]) {
   const text = cleanText(practice);
   return change((entries) => {
     const duplicate = entries.find((entry) => entry && !entry.retired && String(entry.practice ?? "").toLowerCase() === text.toLowerCase());
@@ -152,7 +164,7 @@ function ownEntry(entries: Practice[], id: string): Practice {
   return entry;
 }
 
-export function updatePractice(id: string, practice: string, topics?: string[]) {
+export async function updatePractice(id: string, practice: string, topics?: string[]) {
   const text = cleanText(practice);
   return change((entries) => {
     const entry = ownEntry(entries, id);
@@ -163,7 +175,7 @@ export function updatePractice(id: string, practice: string, topics?: string[]) 
   });
 }
 
-export function removePractice(id: string) {
+export async function removePractice(id: string) {
   return change((entries) => {
     const entry = ownEntry(entries, id);
     entry.retired = new Date().toISOString();

@@ -9,8 +9,9 @@ import {
   removePreference, searchLessons, updatePreference,
 } from "../knowledgeBase.js";
 import {
-  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectEntity, projectFileDetails, projectNotesOnce,
-  projectLatest, projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder, updateProjectNote,
+  addProjectNote, linkProjectFolder, listProjectFiles, listProjectNotes, locatePath, projectChanges, projectChecks, projectEntity, projectFileDetails,
+  projectNotesOnce, projectLatest, projectOverview, projectTimeline, readUserKnowledge, removeProjectNote, searchProject, unlinkProjectFolder,
+  updateProjectNote,
 } from "../projectNotes.js";
 import { checkGeneral } from "../generalKnowledge.js";
 import { addPractice, describePractices, removePractice, searchPractices, updatePractice } from "../practices.js";
@@ -107,6 +108,14 @@ const ProjectTimelineArgs = z.object({
 });
 const ProjectLocateArgs = z.object({ action: z.literal("project_locate"), path: z.string().min(1).max(1_000), project: ProjectNameSchema.optional() });
 const ProjectLatestArgs = z.object({ action: z.literal("project_latest"), file: z.string().min(1).max(1_000), near: z.string().max(200).optional(), project: ProjectNameSchema.optional() });
+const ProjectChecksArgs = z.object({
+  action: z.literal("project_checks"), project: ProjectNameSchema.optional(), severity: z.string().min(1).max(40).optional(),
+  kind: z.string().min(1).max(120).optional(), limit: z.number().int().min(1).max(500).optional(),
+});
+const ProjectChangesArgs = z.object({
+  action: z.literal("project_changes"), project: ProjectNameSchema.optional(), since: JobDateSchema.optional(), file: z.string().min(1).max(1_000).optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+});
 const PracticesListArgs = z.object({ action: z.literal("practices_list"), includeRetired: z.boolean().optional() });
 const PracticesSearchArgs = z.object({ action: z.literal("practices_search"), query: z.string().min(1).max(500) });
 const PracticesAddArgs = z.object({ action: z.literal("practices_add"), practice: z.string().min(1).max(1_000), topics: TopicsSchema.optional() });
@@ -358,6 +367,20 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => projectLatest(args.file as string, args.project as string | undefined, args.near as string | undefined),
     },
+    project_checks: {
+      action: "project_checks", inputSchema: ProjectChecksArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectChecks(args.project as string | undefined, {
+        severity: args.severity as string | undefined, kind: args.kind as string | undefined, limit: args.limit as number | undefined,
+      }),
+    },
+    project_changes: {
+      action: "project_changes", inputSchema: ProjectChangesArgs, responseSchema: GenericResponseSchema,
+      capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
+      execute: async (args) => projectChanges(args.project as string | undefined, {
+        since: args.since as string | undefined, file: args.file as string | undefined, limit: args.limit as number | undefined,
+      }),
+    },
     practices_list: {
       action: "practices_list", inputSchema: PracticesListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
@@ -549,7 +572,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "COPIES, so paths in files point at the original location; this says where the file is in the copy, or that it isn't known: then ask " +
         "the user rather than guess); latest (file: a name or path, e.g. C-101; optional near: words about its folder, e.g. 'phase 2 " +
         "area b') = the latest version of a file on the drive (the one modified last), its older versions and full paths; drawings already " +
-        "open come first, so check civil3d_drawing list_open before this; list (this tool's own notes and the job's folders). User " +
+        "open come first, so check civil3d_drawing list_open before this; checks (what Project Analyzer found worth a look: missing files, " +
+        "unanswered RFIs, amounts that don't add up; high first; optional severity high|medium|info, kind, limit default 50); changes " +
+        "(requirement changes such as 'going forward' or 'revised spec', and file changes an update found, newest first; optional since " +
+        "YYYY[-MM[-DD]], default 30 days back, file, limit); list (this tool's own notes and the job's folders). User " +
         "knowledge, the user's own documents for the job " +
         "(proposal guidelines, building-type requirements, standards, code books) in <shared folder>\\projects\\<job>\\User Knowledge\\: files " +
         "lists them (readByAnalyzer, readableHere); read (file: its path there; optional maxChars, default 20000, and offset) returns its " +
@@ -560,8 +586,14 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "retires a note (kept, hidden). All take an optional project (default: the active drawing's job). Ask the user before adding or " +
         "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12.",
       inputShape: {
-        action: z.enum(["overview", "search", "file", "entity", "timeline", "locate", "latest", "list", "link", "unlink", "add", "update", "remove", "files", "read"]),
+        action: z.enum([
+          "overview", "search", "file", "entity", "timeline", "locate", "latest", "checks", "changes", "list", "link", "unlink", "add", "update", "remove",
+          "files", "read",
+        ]),
         near: z.string().optional(),
+        severity: z.string().optional(),
+        kind: z.string().optional(),
+        since: z.string().optional(),
         project: z.string().optional(),
         folder: z.string().optional(),
         note: z.string().optional(),
@@ -581,7 +613,7 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       },
       supportedActions: [
         "project_overview", "project_search", "project_file", "project_entity", "project_timeline", "project_locate", "project_latest",
-        "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files",
+        "project_checks", "project_changes", "project_list", "project_link", "project_unlink", "project_add", "project_update", "project_remove", "project_files",
         "project_read",
       ],
       resolveAction: (rawArgs) => {

@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { keepBackup, localStamp, sweepTemporaryFiles, withFileLock, writeAtomically } from "../utils/atomicFiles.js";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
 import { checkGeneral } from "./generalKnowledge.js";
 
@@ -23,6 +24,9 @@ import { checkGeneral } from "./generalKnowledge.js";
  * Rule: general only. Every preference, lesson, skill and script is checked for job data before it is saved
  * (generalKnowledge.ts); facts about one job go in the project database.
  * Built-in seed lessons ship with the server (skills\lessons.seed.jsonl) and can't be removed.
+ * Writing: every read-modify-write of preferences and lessons holds <file>.lock and first keeps the file as it was in
+ * <stem>.backups\ next to it, the newest 3 (utils/atomicFiles.ts); a bad lessons line is skipped, not fatal; a
+ * preferences file that doesn't parse is never rewritten.
  */
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -149,11 +153,18 @@ function seedLessonsFile(): string | undefined {
   ].find((candidate) => existsSync(candidate));
 }
 
-export function writeAtomically(file: string, text: string) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(temporary, text, "utf8");
-  renameSync(temporary, file);
+export { writeAtomically };
+
+/**
+ * Removes temp files a crashed or killed write left behind (older than an hour) in Civil 3D's know-how folder and at
+ * the top of the shared folder (practices.json's); once at startup. Never throws.
+ */
+export function sweepKnowledgeTemporaryFiles(): string[] {
+  try {
+    return [...sweepTemporaryFiles(knowHowRoot()), ...sweepTemporaryFiles(sharedRoot(), { depth: 0 })];
+  } catch {
+    return [];
+  }
 }
 
 export function knowledgeError(code: "CIVIL3D.INVALID_INPUT" | "CIVIL3D.OBJECT_NOT_FOUND" | "CIVIL3D.CONFLICT", message: string) {
@@ -212,51 +223,91 @@ export interface Preference {
   updated?: string;
 }
 
-export function listPreferences(): Preference[] {
-  const file = preferencesFile();
+function readPreferences(file: string): Preference[] {
   if (!existsSync(file)) return [];
-  const parsed = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) as { preferences?: Preference[] };
-  return Array.isArray(parsed.preferences) ? parsed.preferences : [];
+  let parsed: { preferences?: unknown } | null;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")) as { preferences?: unknown } | null;
+  } catch (error) {
+    throw knowledgeError("CIVIL3D.CONFLICT", `${file} doesn't parse (${(error as Error).message}); it isn't rewritten. Fix it by hand (it is plain JSON).`);
+  }
+  const list = parsed && typeof parsed === "object" && Array.isArray(parsed.preferences) ? parsed.preferences as unknown[] : [];
+  return list.filter((entry): entry is Preference => !!entry && typeof entry === "object"
+    && typeof (entry as Preference).id === "string" && typeof (entry as Preference).rule === "string");
 }
 
-function savePreferences(preferences: Preference[]) {
-  writeAtomically(preferencesFile(), `${JSON.stringify({ preferences }, null, 2)}\n`);
+export function listPreferences(): Preference[] {
+  return readPreferences(preferencesFile());
+}
+
+/** A copy of a file that doesn't parse (<file>.unreadable-<date> <time>), kept before refusing to change it. */
+function keepUnreadableCopy(file: string): string | undefined {
+  try {
+    const { date, time } = localStamp();
+    const copy = `${file}.unreadable-${date} ${time}`;
+    copyFileSync(file, copy);
+    return copy;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Re-reads preferences.json under its lock, applies the change and writes it back (the version before kept). */
+function changePreferences<T>(work: (preferences: Preference[]) => { result: T; save?: Preference[] }): Promise<T> {
+  const file = preferencesFile();
+  return withFileLock(file, () => {
+    let preferences: Preference[];
+    try {
+      preferences = readPreferences(file);
+    } catch (error) {
+      const copy = keepUnreadableCopy(file);
+      throw knowledgeError("CIVIL3D.CONFLICT", `${(error as Error).message}${copy ? ` A copy of it is kept at ${copy}.` : ""}`);
+    }
+    const { result, save } = work(preferences);
+    if (save) {
+      keepBackup(file);
+      writeAtomically(file, `${JSON.stringify({ preferences: save }, null, 2)}\n`);
+    }
+    return result;
+  });
 }
 
 const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 
-export function addPreference(rule: string) {
+type PreferenceResult = { success: boolean; action: string; preference: Preference; note?: string; path?: string };
+
+export async function addPreference(rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
   checkGeneral("preference", text);
-  const preferences = listPreferences();
-  const duplicate = preferences.find((preference) => preference.rule.toLowerCase() === text.toLowerCase());
-  if (duplicate) return { success: true, action: "unchanged", preference: duplicate, note: "That preference already exists." };
-  const next = Math.max(0, ...preferences.map((preference) => Number(preference.id.replace(/\D/g, "")) || 0)) + 1;
-  const preference = { id: `pref-${next}`, rule: text, added: new Date().toISOString() };
-  savePreferences([...preferences, preference]);
-  return { success: true, action: "added", preference, path: preferencesFile() };
+  return changePreferences<PreferenceResult>((preferences) => {
+    const duplicate = preferences.find((preference) => preference.rule.toLowerCase() === text.toLowerCase());
+    if (duplicate) return { result: { success: true, action: "unchanged", preference: duplicate, note: "That preference already exists." } };
+    const next = Math.max(0, ...preferences.map((preference) => Number(preference.id.replace(/\D/g, "")) || 0)) + 1;
+    const preference: Preference = { id: `pref-${next}`, rule: text, added: new Date().toISOString() };
+    return { result: { success: true, action: "added", preference, path: preferencesFile() }, save: [...preferences, preference] };
+  });
 }
 
-export function updatePreference(id: string, rule: string) {
+export async function updatePreference(id: string, rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
   checkGeneral("preference", text);
-  const preferences = listPreferences();
-  const preference = preferences.find((candidate) => candidate.id === id);
-  if (!preference) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No preference with id '${id}'. Use action=list to see them.`);
-  preference.rule = text;
-  preference.updated = new Date().toISOString();
-  savePreferences(preferences);
-  return { success: true, action: "updated", preference };
+  return changePreferences<PreferenceResult>((preferences) => {
+    const preference = preferences.find((candidate) => candidate.id === id);
+    if (!preference) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No preference with id '${id}'. Use action=list to see them.`);
+    preference.rule = text;
+    preference.updated = new Date().toISOString();
+    return { result: { success: true, action: "updated", preference }, save: preferences };
+  });
 }
 
-export function removePreference(id: string) {
-  const preferences = listPreferences();
-  const preference = preferences.find((candidate) => candidate.id === id);
-  if (!preference) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No preference with id '${id}'. Use action=list to see them.`);
-  savePreferences(preferences.filter((candidate) => candidate.id !== id));
-  return { success: true, action: "removed", preference };
+export async function removePreference(id: string) {
+  return changePreferences<PreferenceResult>((preferences) => {
+    const preference = preferences.find((candidate) => candidate.id === id);
+    if (!preference) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No preference with id '${id}'. Use action=list to see them.`);
+    return { result: { success: true, action: "removed", preference }, save: preferences.filter((candidate) => candidate.id !== id) };
+  });
 }
 
 // ---------------------------------------------------------------- lessons
@@ -271,16 +322,44 @@ export interface Lesson {
   source: "seed" | "learned";
 }
 
-function readJsonl(file: string | undefined, source: Lesson["source"]): Lesson[] {
+interface LessonLine { text: string; lesson?: Lesson }
+
+/** Every non-empty line of a lessons file, each with its lesson when it is one (a bad line is kept as text, not fatal). */
+function readLessonLines(file: string | undefined, source: Lesson["source"]): LessonLine[] {
   if (!file || !existsSync(file)) return [];
   return readFileSync(file, "utf8").replace(/^﻿/, "").split(/\r?\n/)
     .filter((line) => line.trim())
-    .map((line) => ({ ...(JSON.parse(line) as Omit<Lesson, "source">), source }));
+    .map((text) => {
+      try {
+        const parsed = JSON.parse(text) as Partial<Lesson> | null;
+        if (!parsed || typeof parsed !== "object" || typeof parsed.id !== "string" || typeof parsed.lesson !== "string") return { text };
+        const topics = Array.isArray(parsed.topics) ? parsed.topics.filter((topic): topic is string => typeof topic === "string") : [];
+        return { text, lesson: { ...parsed, topics, civil3d_release: String(parsed.civil3d_release ?? ""), added: String(parsed.added ?? ""), source } as Lesson };
+      } catch {
+        return { text };
+      }
+    });
 }
+
+const readJsonl = (file: string | undefined, source: Lesson["source"]): Lesson[] =>
+  readLessonLines(file, source).flatMap((line) => (line.lesson ? [line.lesson] : []));
 
 export function allLessons(): Lesson[] {
   return [...readJsonl(seedLessonsFile(), "seed"), ...readJsonl(lessonsFile(), "learned")];
 }
+
+/** How many lines of the learned lessons file aren't lessons (skipped when reading; never removed). */
+export function badLessonLines(): number {
+  try {
+    return readLessonLines(lessonsFile(), "learned").filter((line) => !line.lesson).length;
+  } catch {
+    return 0;
+  }
+}
+
+const badLinesNote = (count: number) => (count
+  ? { note: `${count} line${count === 1 ? "" : "s"} of ${lessonsFile()} ${count === 1 ? "isn't a lesson" : "aren't lessons"} (not JSON); skipped, and kept in the file.` }
+  : {});
 
 function versionNote(release: string, current: string) {
   return release === current ? undefined : `Learned on Civil 3D ${release}; you're running ${current}. Check it still applies.`;
@@ -291,7 +370,7 @@ function present(lesson: Lesson, current: string) {
   return { ...lesson, ...(note ? { version_note: note } : {}) };
 }
 
-export function recordLesson(lesson: string, topics: string[], release: string) {
+export async function recordLesson(lesson: string, topics: string[], release: string) {
   const text = oneLine(lesson);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The lesson is empty.");
   const cleanTopics = [...new Set(topics.map((topic) => oneLine(topic)).filter(Boolean))];
@@ -299,16 +378,20 @@ export function recordLesson(lesson: string, topics: string[], release: string) 
     throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give at least one topic (an API name, tool or subject) so the lesson can surface when relevant.");
   }
   checkGeneral("lesson", text, cleanTopics.join(" "));
-  const existing = allLessons();
-  const duplicate = existing.find((candidate) => candidate.lesson.toLowerCase() === text.toLowerCase());
-  if (duplicate) return { success: true, action: "unchanged", lesson: duplicate, note: "That lesson is already recorded." };
-  const learned = existing.filter((candidate) => candidate.source === "learned");
-  const next = Math.max(0, ...learned.map((candidate) => Number(candidate.id.replace(/\D/g, "")) || 0)) + 1;
-  const entry = { id: `lesson-${next}`, lesson: text, topics: cleanTopics, civil3d_release: release, added: new Date().toISOString() };
   const file = lessonsFile();
-  const previous = existsSync(file) ? readFileSync(file, "utf8") : "";
-  writeAtomically(file, `${previous}${previous && !previous.endsWith("\n") ? "\n" : ""}${JSON.stringify(entry)}\n`);
-  return { success: true, action: "recorded", lesson: { ...entry, source: "learned" as const }, path: file };
+  // Read again under the lock: another server may have added a lesson since (its id is then taken).
+  return withFileLock(file, () => {
+    const existing = allLessons();
+    const duplicate = existing.find((candidate) => candidate.lesson.toLowerCase() === text.toLowerCase());
+    if (duplicate) return { success: true, action: "unchanged", lesson: duplicate, note: "That lesson is already recorded." };
+    const learned = existing.filter((candidate) => candidate.source === "learned");
+    const next = Math.max(0, ...learned.map((candidate) => Number(candidate.id.replace(/\D/g, "")) || 0)) + 1;
+    const entry = { id: `lesson-${next}`, lesson: text, topics: cleanTopics, civil3d_release: release, added: new Date().toISOString() };
+    const previous = existsSync(file) ? readFileSync(file, "utf8") : "";
+    keepBackup(file);
+    writeAtomically(file, `${previous}${previous && !previous.endsWith("\n") ? "\n" : ""}${JSON.stringify(entry)}\n`);
+    return { success: true, action: "recorded", lesson: { ...entry, source: "learned" as const }, path: file, ...badLinesNote(badLessonLines()) };
+  });
 }
 
 export function searchLessons(query: string | undefined, current: string) {
@@ -322,7 +405,9 @@ export function searchLessons(query: string | undefined, current: string) {
     })
     .filter((entry) => entry.score > 0)
     .sort((left, right) => right.score - left.score);
-  return { query: query ?? null, count: lessons.length, lessons: lessons.slice(0, 50).map((entry) => present(entry.lesson, current)) };
+  return {
+    query: query ?? null, count: lessons.length, lessons: lessons.slice(0, 50).map((entry) => present(entry.lesson, current)), ...badLinesNote(badLessonLines()),
+  };
 }
 
 /** Lessons whose topics appear in the given text (e.g. C# code about to run). */
@@ -335,15 +420,19 @@ export function lessonsRelevantTo(text: string, current: string, limit = 6) {
 }
 
 /** Only lessons learned on the running release can be removed; seed lessons and other releases' lessons are kept. */
-export function removeLesson(id: string, current: string) {
-  const lesson = allLessons().find((candidate) => candidate.id === id);
-  if (!lesson) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No lesson with id '${id}'.`);
-  if (lesson.source === "seed") throw knowledgeError("CIVIL3D.CONFLICT", "Built-in lessons can't be removed. Record a new lesson that corrects it.");
-  if (lesson.civil3d_release !== current) {
-    throw knowledgeError("CIVIL3D.CONFLICT", `This lesson was learned on Civil 3D ${lesson.civil3d_release} and is kept for that release. Record a new lesson for ${current} instead.`);
-  }
-  const remaining = readJsonl(lessonsFile(), "learned").filter((candidate) => candidate.id !== id)
-    .map(({ source: _source, ...rest }) => JSON.stringify(rest)).join("\n");
-  writeAtomically(lessonsFile(), remaining ? `${remaining}\n` : "");
-  return { success: true, action: "removed", id };
+export async function removeLesson(id: string, current: string) {
+  const file = lessonsFile();
+  return withFileLock(file, () => {
+    const lesson = allLessons().find((candidate) => candidate.id === id);
+    if (!lesson) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No lesson with id '${id}'.`);
+    if (lesson.source === "seed") throw knowledgeError("CIVIL3D.CONFLICT", "Built-in lessons can't be removed. Record a new lesson that corrects it.");
+    if (lesson.civil3d_release !== current) {
+      throw knowledgeError("CIVIL3D.CONFLICT", `This lesson was learned on Civil 3D ${lesson.civil3d_release} and is kept for that release. Record a new lesson for ${current} instead.`);
+    }
+    // Every other line stays as it was, lines that aren't lessons included.
+    const remaining = readLessonLines(file, "learned").filter((line) => line.lesson?.id !== id).map((line) => line.text).join("\n");
+    keepBackup(file);
+    writeAtomically(file, remaining ? `${remaining}\n` : "");
+    return { success: true, action: "removed", id };
+  });
 }

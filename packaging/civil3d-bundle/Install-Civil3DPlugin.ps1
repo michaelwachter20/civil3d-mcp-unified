@@ -81,10 +81,12 @@ if ($Uninstall) {
     Write-Host 'The Civil 3D MCP plugin was not installed; nothing to remove.'
   }
   Write-Host 'Kept (delete by hand if you no longer want them):'
-  # The suite's shared folder, found the way every suite tool finds it (an existing earlier folder is used as it is).
+  # The suite's shared folder, found the way every suite tool finds it (an existing earlier folder is used as it is),
+  # in %USERPROFILE%\Documents: not the shell's Documents folder, which may be redirected to OneDrive.
   $shared = @($env:PROJECT_KNOWLEDGE_DIR, $env:CIVIL3D_KNOWLEDGE_DIR) | Where-Object { $_ -and $_.Trim() } | Select-Object -First 1
   if (-not $shared) {
-    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $profileFolder = if ($env:USERPROFILE -and $env:USERPROFILE.Trim()) { $env:USERPROFILE.Trim() } else { [Environment]::GetFolderPath('UserProfile') }
+    $documents = Join-Path $profileFolder 'Documents'
     $shared = @('Project Knowledge', 'Civil3DMcp-KnowledgeBase', 'Civil3DMcp') | ForEach-Object { Join-Path $documents $_ } |
       Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1
     if (-not $shared) { $shared = Join-Path $documents 'Project Knowledge' }

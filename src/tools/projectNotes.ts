@@ -5,12 +5,12 @@ import { withApplicationConnection } from "../utils/ConnectionManager.js";
 import { knowledgeError } from "./knowledgeBase.js";
 import { listPractices } from "./practices.js";
 import {
-  baseName, databaseFileFor, directoryOf, fullText, immediate, invalidateJobIndex, jobByName, jobForPath, jobIndex, metaValue, nextId, normalizePath,
-  nowIso, pathKey, relativeTo, searchText, searchTokens, TOOL, withoutProfile, withProjectDb, type Job,
+  baseName, databaseFileFor, directoryOf, fullText, immediate, invalidateJobIndex, isBusy, isCorrupt, isMissingTableOrColumn, jobByName, jobForPath,
+  jobIndex, metaValue, nextId, normalizePath, nowIso, pathKey, relativeTo, searchText, searchTokens, TOOL, withoutProfile, withProjectDb, type Job,
 } from "./projectDb.js";
 import {
-  analyzerDocuments, ensureUserKnowledgeDirectory, extractText, insideFolder, jobDirectoryOf, joinParts, legacyFiles, listFolder, MAX_DIRECT_BYTES,
-  readableHere, readByAnalyzer, USER_KNOWLEDGE_PREFIX, userKnowledgeDirectoryOf, type AnalyzerDocument, type FolderEntry, type TextPart,
+  analyzerDocuments, ensureUserKnowledgeDirectory, extractText, insideFolder, jobDirectoryOf, joinParts, legacyFiles, listFolder, longPath, MAX_DIRECT_BYTES,
+  readableHere, readByAnalyzer, USER_KNOWLEDGE_PREFIX, USER_KNOWLEDGE_RANGE, userKnowledgeDirectoryOf, type AnalyzerDocument, type FolderEntry, type TextPart,
 } from "./userKnowledge.js";
 
 export { projectsDirectory } from "./projectDb.js";
@@ -23,6 +23,7 @@ export { projectsDirectory } from "./projectDb.js";
  * drawing belongs to the job whose source_root or linked folder contains it (deepest wins).
  * The user's own documents for the job (guidelines, requirements, standards) go in
  * <shared folder>\projects\<slug>\User Knowledge\ (see userKnowledge.ts); this tool only creates and reads that folder.
+ * Read actions open the database read-only; only link, unlink and the note actions write (projectDb.ts).
  */
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -44,18 +45,18 @@ const analyzerCommand = (job: Job) => `python analyze.py knowledge --project "${
 /** The User Knowledge folder (created when missing) and, for each document, whether the database has it as it is now. */
 function userKnowledgeStatus(db: DatabaseSync, job: Job) {
   const folder = ensureUserKnowledgeDirectory(job.file);
-  const { files, truncated } = listFolder(folder);
+  const { files, truncated, skipped } = listFolder(folder);
   const rows = analyzerDocuments(db);
   const entries = files.map((entry) => {
     const row = rows.get(entry.path.toLowerCase());
     return { entry, row, read: readByAnalyzer(entry, row) };
   });
-  return { folder, entries, truncated, rows };
+  return { folder, entries, truncated, skipped, rows };
 }
 
-/** Every known job: name, database and folders. */
+/** Every known job: name, database and folders; a job whose database can't be read now has a note saying why. */
 export function listProjects() {
-  return jobIndex().jobs.map((job) => ({ name: job.name, path: job.file, folders: job.roots.map((root) => root.path) }));
+  return jobIndex().jobs.map((job) => ({ name: job.name, path: job.file, folders: job.roots.map((root) => root.path), ...(job.problem ? { note: job.problem } : {}) }));
 }
 
 /** The job whose folder contains the drawing (deepest folder wins). */
@@ -144,7 +145,7 @@ function presentFact(row: FactRow) {
 const facts = (db: DatabaseSync, where: string, ...params: Array<string | number | null>) =>
   (db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE ${where}`).all(...params) as unknown as FactRow[]).map(presentFact);
 
-function describe(job: Job) {
+async function describe(job: Job) {
   const userKnowledgeFolder = ensureUserKnowledgeDirectory(job.file);
   const { files } = listFolder(userKnowledgeFolder);
   return withProjectDb(job.file, ({ db }) => {
@@ -188,7 +189,7 @@ export async function listProjectNotes(name?: string) {
  */
 export async function listProjectFiles(name?: string) {
   const { job } = await resolveProject(name);
-  const { folder, entries, truncated } = withProjectDb(job.file, ({ db }) => userKnowledgeStatus(db, job));
+  const { folder, entries, truncated, skipped } = await withProjectDb(job.file, ({ db }) => userKnowledgeStatus(db, job));
   const files = entries.map(({ entry, row, read }) => ({
     path: entry.path, size: entry.size, modified: entry.modified, readByAnalyzer: read,
     ...(row && !read ? { changedSinceAnalyzerRead: true } : {}),
@@ -198,6 +199,10 @@ export async function listProjectFiles(name?: string) {
   const unreadable = files.filter((file) => !file.readByAnalyzer && !file.readableHere).length;
   return {
     project: job.name, userKnowledgeFolder: folder, files, ...(truncated ? { truncated } : {}),
+    ...(skipped.length ? {
+      unreadable: skipped.slice(0, 30),
+      unreadableHint: "These couldn't be read from the folder (no access, in use, or a name Windows can't open); they are left out. Tell the user.",
+    } : {}),
     ...(legacy.length ? {
       elsewhere: legacy.map((file) => ({ path: file.path, size: file.size, modified: file.modified })),
       elsewhereHint: `These files are in ${jobDirectoryOf(job.file)}, where versions before 2.4.0 kept reference files, outside User Knowledge; ` +
@@ -236,7 +241,7 @@ export async function readUserKnowledge(file: string, name?: string, options: { 
   if (!absolute) {
     throw knowledgeError("CIVIL3D.INVALID_INPUT", `'${file}' isn't in the job's User Knowledge folder (${folder}); only documents there can be read with action=read.`);
   }
-  if (!existsSync(absolute)) {
+  if (!existsSync(longPath(absolute))) {
     // A bare file name: the one document with that name anywhere in the folder.
     const byName = /[\\/]/.test(file) ? [] : listFolder(folder).files.filter((entry) => baseName(entry.path).toLowerCase() === file.trim().toLowerCase());
     if (byName.length !== 1) {
@@ -246,17 +251,17 @@ export async function readUserKnowledge(file: string, name?: string, options: { 
     }
     absolute = byName[0].absolute;
   }
-  const stat = statSync(absolute);
+  const stat = statSync(longPath(absolute));
   if (!stat.isFile()) throw knowledgeError("CIVIL3D.INVALID_INPUT", `'${file}' is a folder; action=files lists the documents in it.`);
   const entry: FolderEntry = {
     path: path.relative(folder, absolute).split(/[\\/]+/).join("\\"), absolute, size: stat.size, modified: stat.mtime.toISOString(), mtimeMs: stat.mtimeMs,
   };
-  const stored = withProjectDb(job.file, ({ db }) => {
+  const stored = await withProjectDb(job.file, ({ db }) => {
     const row = analyzerDocuments(db).get(entry.path.toLowerCase());
     const read = readByAnalyzer(entry, row);
     let text = "";
     if (read && row) {
-      try { text = fullText(db, row.id); } catch { /* no text stored */ }
+      try { text = fullText(db, row.id); } catch (error) { passOnDamage(error); /* no text stored */ }
     }
     return { row, read, text };
   });
@@ -292,7 +297,7 @@ export async function linkProjectFolder(name: string, folder?: string) {
   const existing = jobByName(name);
   const file = existing?.file ?? databaseFileFor(name);
   const normalized = normalizePath(target);
-  const result = withProjectDb(file, ({ db }) => immediate(db, () => {
+  const result = await withProjectDb(file, ({ db }) => immediate(db, () => {
     const roots = [metaValue(db, "source_root"), ...(db.prepare("SELECT path FROM folders").all() as Array<{ path: string }>).map((row) => row.path)]
       .filter((root): root is string => !!root);
     if (roots.some((root) => pathKey(root) === pathKey(normalized))) return "unchanged";
@@ -306,11 +311,11 @@ export async function linkProjectFolder(name: string, folder?: string) {
 }
 
 /** Removes a folder this tool linked (notes are kept; other tools' folders and source_root stay). */
-export function unlinkProjectFolder(name: string, folder: string) {
+export async function unlinkProjectFolder(name: string, folder: string) {
   const job = jobByName(name);
   if (!job) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No project named '${name}'.`);
   const key = pathKey(folder);
-  withProjectDb(job.file, ({ db }) => immediate(db, () => {
+  await withProjectDb(job.file, ({ db }) => immediate(db, () => {
     if (job.sourceRoot && pathKey(job.sourceRoot) === key) {
       throw knowledgeError("CIVIL3D.CONFLICT", `'${folder}' is the job folder Project Analyzer read (source_root); it can't be unlinked here.`);
     }
@@ -407,12 +412,39 @@ export async function removeProjectNote(id: string, name?: string) {
 
 // ---------------------------------------------------------------- reading what the suite knows
 
+/** Busy and damage always reach the caller (withProjectDb waits, or says how to restore); other errors are the caller's. */
+function passOnDamage(error: unknown) {
+  if (isBusy(error) || isCorrupt(error)) throw error;
+}
+
+/**
+ * Rows of a query on tables a database may not have (an MCP-made database, an older analyzer): a missing table or
+ * column gives no rows. Anything else (busy, a damaged file) is thrown, never turned into an empty answer.
+ */
 const all = <T>(db: DatabaseSync, sql: string, ...params: Array<string | number | null>): T[] => {
-  try { return db.prepare(sql).all(...params) as unknown as T[]; } catch { return []; }
+  try {
+    return db.prepare(sql).all(...params) as unknown as T[];
+  } catch (error) {
+    if (isMissingTableOrColumn(error)) return [];
+    throw error;
+  }
 };
 
-const filePath = (db: DatabaseSync, fileId: string | null | undefined) =>
-  fileId ? (db.prepare("SELECT path FROM files WHERE id = ?").get(fileId) as { path: string } | undefined)?.path ?? fileId : undefined;
+/** The paths of these file ids, in one query per answer (500 ids at a time). */
+function filePaths(db: DatabaseSync, ids: Iterable<string | null | undefined>): Map<string, string> {
+  const wanted = [...new Set([...ids].filter((id): id is string => !!id))];
+  const found = new Map<string, string>();
+  for (let at = 0; at < wanted.length; at += 500) {
+    const chunk = wanted.slice(at, at + 500);
+    for (const row of all<{ id: string; path: string }>(db, `SELECT id, path FROM files WHERE id IN (${chunk.map(() => "?").join(", ")})`, ...chunk)) {
+      found.set(row.id, row.path);
+    }
+  }
+  return found;
+}
+
+/** A file id's path from filePaths' answer: the id itself when it has no row, undefined for none. */
+const pathIn = (paths: Map<string, string>, fileId: string | null | undefined) => (fileId ? paths.get(fileId) ?? fileId : undefined);
 
 function copyInfo(db: DatabaseSync) {
   return {
@@ -428,8 +460,7 @@ export async function projectOverview(name?: string) {
   return withProjectDb(job.file, ({ db }) => {
     // Job files only: user-knowledge documents are counted under userKnowledge.
     const statuses = all<{ status: string; n: number }>(
-      db, "SELECT status, COUNT(*) AS n FROM files WHERE substr(path, 1, ?) <> ? GROUP BY status ORDER BY n DESC",
-      USER_KNOWLEDGE_PREFIX.length, USER_KNOWLEDGE_PREFIX);
+      db, "SELECT status, COUNT(*) AS n FROM files WHERE NOT (path >= ? AND path < ?) GROUP BY status ORDER BY n DESC", ...USER_KNOWLEDGE_RANGE);
     const knowledge = userKnowledgeStatus(db, job);
     const legacy = legacyFiles(job.file).files.length;
     const lastRun = metaValue(db, "last_run_finished");
@@ -458,7 +489,8 @@ export async function projectOverview(name?: string) {
           `action=files lists them, read (file) reads one, search covers them. ${USE_USER_KNOWLEDGE}` +
           (legacy ? " Files kept next to the folder by older versions aren't read: action=files lists them (elsewhere)." : ""),
       },
-      hint: "search (query), file (file id or path), entity (name), timeline (from, to) and locate (path) read more. " +
+      hint: "search (query), file (file id or path), entity (name), timeline (from, to), checks (what Project Analyzer found to look at), " +
+        "changes (requirement and file changes, the last 30 days by default) and locate (path) read more. " +
         "Paths in the job's files point at the original location when the job folder is a copy: translate them with action=locate.",
     };
   });
@@ -522,11 +554,14 @@ export async function searchProject(query: string, name?: string, limit = 20) {
     let hits: SearchHit[] = [];
     let note: string | undefined;
     try {
-      hits = searchText(db, query, max).map((hit) => {
-        const found = filePath(db, hit.fileId);
-        return { file: hit.fileId, path: found, part: hit.label, snippet: hit.snippet, ...(found?.startsWith(USER_KNOWLEDGE_PREFIX) ? { userKnowledge: true as const } : {}) };
+      const found = searchText(db, query, max);
+      const paths = filePaths(db, found.map((hit) => hit.fileId));
+      hits = found.map((hit) => {
+        const at = pathIn(paths, hit.fileId);
+        return { file: hit.fileId, path: at, part: hit.label, snippet: hit.snippet, ...(at?.startsWith(USER_KNOWLEDGE_PREFIX) ? { userKnowledge: true as const } : {}) };
       });
     } catch (error) {
+      passOnDamage(error);
       note = `Text search failed: ${(error as Error).message}`;
     }
     const direct = searchUnreadDocuments(userKnowledgeStatus(db, job).entries, tokens, max);
@@ -556,16 +591,20 @@ function findFile(db: DatabaseSync, file: string): FileRow {
   const wanted = file.replace(/\//g, "\\");
   const byId = db.prepare(`SELECT ${columns} FROM files WHERE id = ?`).get(file) as unknown as FileRow | undefined;
   if (byId) return byId;
-  const byPath = db.prepare(`SELECT ${columns} FROM files WHERE lower(path) = lower(?)`).get(wanted) as unknown as FileRow | undefined;
+  // `= ? COLLATE NOCASE` so files_path_nocase answers it.
+  const byPath = db.prepare(`SELECT ${columns} FROM files WHERE path = ? COLLATE NOCASE`).get(wanted) as unknown as FileRow | undefined;
   if (byPath) return byPath;
-  const candidates = db.prepare(`SELECT ${columns} FROM files WHERE lower(name) = lower(?) OR lower(path) LIKE lower(?) LIMIT 11`)
-    .all(baseName(wanted), `%\\${wanted}`) as unknown as FileRow[];
+  const candidates = db.prepare(`SELECT ${columns} FROM files WHERE name = ? COLLATE NOCASE OR path LIKE ? ESCAPE '!' LIMIT 11`)
+    .all(baseName(wanted), `%\\${escapeLike(wanted)}`) as unknown as FileRow[];
   if (candidates.length === 1) return candidates[0];
   if (candidates.length > 1) {
     throw knowledgeError("CIVIL3D.INVALID_INPUT", `Several files match '${file}': ${candidates.slice(0, 10).map((row) => row.path).join("; ")}. Give the path.`);
   }
   throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No file '${file}' in the project database. Use action=search to find it.`);
 }
+
+/** A value for LIKE ... ESCAPE '!': its own % and _ match only themselves. */
+const escapeLike = (text: string) => text.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_");
 
 const TEXT_PREVIEW_CHARS = 4_000;
 
@@ -576,19 +615,22 @@ export async function projectFileDetails(file: string, name?: string) {
     const row = findFile(db, file);
     const textOf = row.status === "duplicate" && row.duplicate_of ? row.duplicate_of : row.id;
     let text = "";
-    try { text = fullText(db, textOf); } catch { /* no text stored */ }
+    try { text = fullText(db, textOf); } catch (error) { passOnDamage(error); /* no text stored */ }
     const summary = all<{ summary: string; points: string; people: string; tool: string; added: string }>(
       db, "SELECT summary, points, people, tool, added FROM summaries WHERE file_id = ? ORDER BY added DESC, id DESC LIMIT 1", row.id)[0];
+    const refsTo = all<{ file_id: string; kind: string; raw: string; status: string }>(
+      db, "SELECT file_id, kind, raw, status FROM refs WHERE target_id = ? OR target_path = ? COLLATE NOCASE", row.id, row.path);
+    const paths = filePaths(db, refsTo.map((ref) => ref.file_id));
     return {
       project: job.name,
       file: Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)),
       props: Object.fromEntries(all<{ key: string; value: string }>(db, "SELECT key, value FROM props WHERE file_id = ? ORDER BY key", row.id).map((prop) => [prop.key, prop.value])),
       ...(summary ? { summary: { ...summary, points: parseJson(summary.points, []), people: parseJson(summary.people, []) } } : {}),
       refsFrom: all<Record<string, unknown>>(db, "SELECT kind, raw, location, status, target_path, expected_path FROM refs WHERE file_id = ?", row.id),
-      refsTo: all<{ file_id: string; kind: string; raw: string; status: string }>(
-        db, "SELECT file_id, kind, raw, status FROM refs WHERE target_id = ? OR lower(target_path) = lower(?)", row.id, row.path)
-        .map((ref) => ({ ...ref, from: filePath(db, ref.file_id) })),
-      facts: facts(db, `${CURRENT} AND EXISTS (SELECT 1 FROM json_each(f.sources) WHERE json_extract(value, '$.file') = ?) ORDER BY f.added`, row.id),
+      refsTo: refsTo.map((ref) => ({ ...ref, from: pathIn(paths, ref.file_id) })),
+      // Facts whose sources name the file: the text holds the quoted id (no JSON parsing of every fact), then checked.
+      facts: facts(db, `${CURRENT} AND instr(f.sources, ?) > 0 ORDER BY f.added`, JSON.stringify(row.id))
+        .filter((fact) => (fact.sources ?? []).some((source) => (source as { file?: unknown } | null)?.file === row.id)),
       text: text.length > TEXT_PREVIEW_CHARS ? `${text.slice(0, TEXT_PREVIEW_CHARS)}\n[... ${text.length - TEXT_PREVIEW_CHARS} more characters]` : text,
     };
   });
@@ -601,11 +643,20 @@ export async function projectEntity(entity: string, name?: string) {
   if (!wanted) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give the name to look up (a person, organization, structure, sheet or document).");
   return withProjectDb(job.file, ({ db }) => {
     type EntityRow = { id: string; type: string; name: string; aliases: string; files: number; mentions: number; first_date: string | null; last_date: string | null };
-    const rows = all<EntityRow>(db, "SELECT id, type, name, aliases, files, mentions, first_date, last_date FROM intel_entities");
+    const columns = "id, type, name, aliases, files, mentions, first_date, last_date";
     const names = (row: EntityRow) => [row.name, ...parseJson<string[]>(row.aliases, [])].map((value) => String(value).toLowerCase());
-    const found = rows.find((row) => row.id.toLowerCase() === wanted || names(row).includes(wanted));
+    // Found in SQLite, not by reading every entity (a big job has tens of thousands): the id, then the name
+    // (intel_entities_name), then an alias (rows whose aliases text holds it, checked here).
+    const found = all<EntityRow>(db, `SELECT ${columns} FROM intel_entities WHERE id = ? LIMIT 1`, wanted)[0]
+      ?? all<EntityRow>(db, `SELECT ${columns} FROM intel_entities WHERE name = ? COLLATE NOCASE LIMIT 1`, wanted)[0]
+      ?? all<EntityRow>(db, `SELECT ${columns} FROM intel_entities WHERE instr(lower(aliases), ?) > 0 LIMIT 200`, wanted).find((row) => names(row).includes(wanted));
     if (!found) {
-      const similar = rows.filter((row) => names(row).some((value) => value.includes(wanted) || wanted.includes(value))).slice(0, 10).map((row) => row.name);
+      // Names or aliases that hold the words, or are held in them; the aliases' JSON read only where it is valid.
+      const similar = all<EntityRow>(
+        db, `SELECT ${columns} FROM intel_entities WHERE instr(lower(name), ?) > 0 OR instr(?, lower(name)) > 0 OR instr(lower(aliases), ?) > 0 ` +
+          "OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(aliases) THEN aliases ELSE '[]' END) WHERE instr(?, lower(value)) > 0) LIMIT 50",
+        wanted, wanted, wanted, wanted)
+        .filter((row) => names(row).some((value) => value.includes(wanted) || wanted.includes(value))).slice(0, 10).map((row) => row.name);
       const matchingFacts = facts(db, `${CURRENT} AND lower(f.topics || ' ' || f.fact) LIKE ? ORDER BY f.added LIMIT 50`, `%${wanted}%`);
       return {
         project: job.name, entity: null, query: entity, ...(similar.length ? { similar } : {}), facts: matchingFacts,
@@ -618,24 +669,21 @@ export async function projectEntity(entity: string, name?: string) {
     const named = allNames.map(() => "instr(lower(title), ?) > 0").join(" OR ");
     const events = all<{ date: string; kind: string; title: string; file_id: string | null }>(
       db, `SELECT date, kind, title, file_id FROM intel_events WHERE file_id IN (SELECT file_id FROM intel_entity_files WHERE entity_id = ?) OR ${named} ORDER BY date LIMIT 50`,
-      found.id, ...allNames)
-      .map((event) => ({ date: event.date, kind: event.kind, title: event.title, file: filePath(db, event.file_id) }));
-    const stories = all<{ id: string; title: string; subject: string | null; refs: string; people: string; first_date: string; last_date: string }>(
-      db, "SELECT id, title, subject, refs, people, first_date, last_date FROM intel_stories")
-      .filter((story) => story.subject === found.id || allNames.some((value) =>
-        story.title?.toLowerCase().includes(value) || story.refs?.toLowerCase().includes(value) || story.people?.toLowerCase().includes(value)))
-      // At most 10 stories of 30 steps each, as TBC MCP: one RFI on a real job made a 143,000-character answer.
-      .slice(0, 10)
-      .map((story) => {
-        const stepsTotal = all<{ n: number }>(db, "SELECT count(*) AS n FROM intel_story_steps WHERE story_id = ?", story.id)[0]?.n ?? 0;
-        return {
-          id: story.id, title: story.title, first: story.first_date, last: story.last_date,
-          steps: all<{ date: string; kind: string; who: string; what: string; file_id: string }>(
-            db, "SELECT date, kind, who, what, file_id FROM intel_story_steps WHERE story_id = ? ORDER BY position LIMIT 30", story.id)
-            .map((step) => ({ date: step.date, kind: step.kind, who: step.who, what: step.what, file: filePath(db, step.file_id) })),
-          ...(stepsTotal > 30 ? { stepsTotal, stepsHint: "The first 30 steps; action=timeline lists the rest by date." } : {}),
-        };
-      });
+      found.id, ...allNames);
+    // Stories about it (its id as subject) or naming it in the title, references or people; at most 10 of 30 steps
+    // each, as TBC MCP: one RFI on a real job made a 143,000-character answer.
+    const mentions = allNames.map(() => "instr(lower(title), ?) > 0 OR instr(lower(refs), ?) > 0 OR instr(lower(people), ?) > 0").join(" OR ");
+    const stories = all<{ id: string; title: string; first_date: string; last_date: string }>(
+      db, `SELECT id, title, first_date, last_date FROM intel_stories WHERE subject = ? OR ${mentions} LIMIT 10`,
+      found.id, ...allNames.flatMap((value) => [value, value, value]))
+      .map((story) => ({
+        story,
+        stepsTotal: all<{ n: number }>(db, "SELECT count(*) AS n FROM intel_story_steps WHERE story_id = ?", story.id)[0]?.n ?? 0,
+        steps: all<{ date: string; kind: string; who: string; what: string; file_id: string }>(
+          db, "SELECT date, kind, who, what, file_id FROM intel_story_steps WHERE story_id = ? ORDER BY position LIMIT 30", story.id),
+      }));
+    const shownFiles = entityFiles.slice(0, 50);
+    const paths = filePaths(db, [...shownFiles.map((row) => row.file_id), ...events.map((event) => event.file_id), ...stories.flatMap((story) => story.steps.map((step) => step.file_id))]);
     const like = allNames.map(() => "lower(f.topics) LIKE ?").join(" OR ");
     return {
       project: job.name,
@@ -643,9 +691,13 @@ export async function projectEntity(entity: string, name?: string) {
         id: found.id, type: found.type, name: found.name, aliases: parseJson<string[]>(found.aliases, []),
         files: found.files, mentions: found.mentions, first: found.first_date, last: found.last_date,
       },
-      files: entityFiles.slice(0, 50).map((row) => ({ file: row.file_id, path: filePath(db, row.file_id), count: row.count })),
-      events,
-      stories,
+      files: shownFiles.map((row) => ({ file: row.file_id, path: pathIn(paths, row.file_id), count: row.count })),
+      events: events.map((event) => ({ date: event.date, kind: event.kind, title: event.title, file: pathIn(paths, event.file_id) })),
+      stories: stories.map(({ story, stepsTotal, steps }) => ({
+        id: story.id, title: story.title, first: story.first_date, last: story.last_date,
+        steps: steps.map((step) => ({ date: step.date, kind: step.kind, who: step.who, what: step.what, file: pathIn(paths, step.file_id) })),
+        ...(stepsTotal > 30 ? { stepsTotal, stepsHint: "The first 30 steps; action=timeline lists the rest by date." } : {}),
+      })),
       facts: facts(db, `${CURRENT} AND (${like}) ORDER BY f.added`, ...allNames.map((value) => `%${value}%`)),
     };
   });
@@ -665,9 +717,12 @@ export async function projectTimeline(name?: string, from?: string, to?: string,
     const bounds = [from ?? "", `${to ?? ""}￿`];
     const total = all<{ n: number }>(db, `SELECT count(*) AS n FROM intel_events WHERE ${range}`, ...bounds)[0]?.n ?? 0;
     const shown = Math.max(limit, 1);
-    const events = all<{ date: string; kind: string; title: string; confidence: string; file_id: string | null }>(
-      db, `SELECT date, kind, title, confidence, file_id FROM intel_events WHERE ${range} ORDER BY date LIMIT ?`, ...bounds, shown)
-      .map((event) => ({ date: event.date, kind: event.kind, title: event.title, ...(event.confidence && event.confidence !== "high" ? { confidence: event.confidence } : {}), file: filePath(db, event.file_id) }));
+    const rows = all<{ date: string; kind: string; title: string; confidence: string; file_id: string | null }>(
+      db, `SELECT date, kind, title, confidence, file_id FROM intel_events WHERE ${range} ORDER BY date LIMIT ?`, ...bounds, shown);
+    const paths = filePaths(db, rows.map((event) => event.file_id));
+    const events = rows.map((event) => ({
+      date: event.date, kind: event.kind, title: event.title, ...(event.confidence && event.confidence !== "high" ? { confidence: event.confidence } : {}), file: pathIn(paths, event.file_id),
+    }));
     const dated = facts(db, `${CURRENT} AND f.date IS NOT NULL`).filter((fact) => inRange(fact.date ?? null))
       .map((fact) => ({ date: fact.date!, kind: "fact", title: fact.fact, fact: fact.id, tool: fact.tool }));
     const timeline = [...events, ...dated].sort((left, right) => left.date.localeCompare(right.date));
@@ -690,8 +745,11 @@ export async function locatePath(written: string, name?: string) {
   return withProjectDb(job.file, ({ db }) => {
     const sourceRoot = metaValue(db, "source_root");
     const inCopy = (relative: string | null | undefined) => (relative && sourceRoot ? path.win32.join(sourceRoot, relative) : undefined);
-    const refs = all<{ file_id: string; kind: string; status: string; target_path: string | null; expected_path: string | null; candidates: string | null; location: string | null }>(
-      db, "SELECT file_id, kind, status, target_path, expected_path, candidates, location FROM refs WHERE lower(normalized) = lower(?) OR lower(raw) = lower(?)", wanted, wanted);
+    type RefRow = { file_id: string; kind: string; status: string; target_path: string | null; expected_path: string | null; candidates: string | null; location: string | null };
+    const columns = "file_id, kind, status, target_path, expected_path, candidates, location";
+    // By refs.normalized (refs_normalized_nocase answers it), else as written (raw has no index: only when needed).
+    const byNormalized = all<RefRow>(db, `SELECT ${columns} FROM refs WHERE normalized = ? COLLATE NOCASE`, wanted);
+    const refs = byNormalized.length ? byNormalized : all<RefRow>(db, `SELECT ${columns} FROM refs WHERE raw = ? COLLATE NOCASE`, wanted);
     if (refs.length > 0) {
       const ref = refs.find((candidate) => candidate.target_path) ?? refs[0];
       const target = inCopy(ref.target_path);
@@ -700,7 +758,10 @@ export async function locatePath(written: string, name?: string) {
         ...(ref.target_path ? { relative: ref.target_path, path: target, exists: !!target && existsSync(target) } : {}),
         ...(ref.expected_path ? { expected: ref.expected_path } : {}),
         ...(ref.candidates ? { candidates: parseJson<string[]>(ref.candidates, []) } : {}),
-        writtenIn: [...new Set(refs.map((candidate) => filePath(db, candidate.file_id)))],
+        writtenIn: (() => {
+          const paths = filePaths(db, refs.map((candidate) => candidate.file_id));
+          return [...new Set(refs.map((candidate) => pathIn(paths, candidate.file_id)))];
+        })(),
       };
     }
     const lower = wanted.toLowerCase();
@@ -719,6 +780,109 @@ export async function locatePath(written: string, name?: string) {
       project: job.name, written, method: null, path: null, ...copyInfo(db),
       hint: "Not found in the references Project Analyzer read, and no known original location matches. Ask the user where it is rather than guess; " +
         "once found, record it as a note (e.g. 'TOPO xref of CAD\\Site.dwg is CAD\\Topo.dwg in the copy').",
+    };
+  });
+}
+
+// ---------------------------------------------------------------- checks and changes
+
+const SEVERITY_ORDER = "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'info' THEN 2 ELSE 3 END";
+const CHECK_FILES_SHOWN = 10;
+
+export interface ChecksOptions { severity?: string; kind?: string; limit?: number }
+
+/**
+ * What Project Analyzer found worth a look (intel_checks: missing files, unanswered RFIs, amounts that don't add up...),
+ * high first, then medium, then info, each by kind and title; optionally one severity or kind. Each with the paths of
+ * its files (at most 10), plus how many there are of each severity and kind.
+ */
+export async function projectChecks(name?: string, options: ChecksOptions = {}) {
+  const { job } = await resolveProject(name);
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 500);
+  return withProjectDb(job.file, ({ db }) => {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (options.severity?.trim()) { where.push("severity = ? COLLATE NOCASE"); params.push(options.severity.trim()); }
+    if (options.kind?.trim()) { where.push("kind = ? COLLATE NOCASE"); params.push(options.kind.trim()); }
+    const filter = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const counts = (column: "severity" | "kind") => Object.fromEntries(
+      all<{ value: string | null; n: number }>(db, `SELECT ${column} AS value, COUNT(*) AS n FROM intel_checks GROUP BY ${column} ORDER BY ${column === "severity" ? SEVERITY_ORDER : "kind"}`)
+        .map((row) => [row.value ?? "(none)", row.n]));
+    const bySeverity = counts("severity");
+    const byKind = counts("kind");
+    const count = all<{ n: number }>(db, `SELECT COUNT(*) AS n FROM intel_checks ${filter}`, ...params)[0]?.n ?? 0;
+    const rows = all<{ id: string; severity: string | null; kind: string | null; title: string | null; detail: string | null; files: string | null }>(
+      db, `SELECT id, severity, kind, title, detail, files FROM intel_checks ${filter} ORDER BY ${SEVERITY_ORDER}, kind, title LIMIT ?`, ...params, limit);
+    const fileIds = rows.map((row) => parseJson<unknown[]>(row.files, []).filter((id): id is string => typeof id === "string"));
+    const paths = filePaths(db, fileIds.flatMap((ids) => ids.slice(0, CHECK_FILES_SHOWN)));
+    const total = Object.values(bySeverity).reduce((sum, n) => sum + n, 0);
+    return {
+      project: job.name,
+      ...(options.severity ? { severity: options.severity } : {}), ...(options.kind ? { kind: options.kind } : {}),
+      count, bySeverity, byKind,
+      checks: rows.map((row, at) => ({
+        id: row.id, severity: row.severity, kind: row.kind, title: row.title, ...(row.detail ? { detail: row.detail } : {}),
+        files: fileIds[at].slice(0, CHECK_FILES_SHOWN).map((id) => pathIn(paths, id)),
+        ...(fileIds[at].length > CHECK_FILES_SHOWN ? { moreFiles: fileIds[at].length - CHECK_FILES_SHOWN } : {}),
+      })),
+      ...(count > rows.length ? { truncated: true } : {}),
+      hint: total === 0
+        ? "No checks: Project Analyzer makes them when it reads the job folder (analyze.py intel, also at the end of every run)."
+        : "Checks are what Project Analyzer found worth a look, not decisions: tell the user about the ones that matter for the task. " +
+          "action=file (a path) shows a file; severity and kind filter the list.",
+    };
+  });
+}
+
+/** YYYY-MM-DD of the day `days` days before today (local). */
+const daysAgo = (days: number) => {
+  const at = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+};
+
+export interface ChangesOptions { since?: string; file?: string; limit?: number }
+
+/**
+ * What changed: requirement changes ("going forward", "no longer", "revised spec": intel_events of kind change, dated
+ * by the email or document that says them) and changes to files the analyzer noticed on an update (file_changes),
+ * newest first. Since a date (default: 30 days back, unless a file is given) and/or for one file.
+ */
+export async function projectChanges(name?: string, options: ChangesOptions = {}) {
+  const { job } = await resolveProject(name);
+  if (options.since && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(options.since)) {
+    throw knowledgeError("CIVIL3D.INVALID_INPUT", `Dates are YYYY, YYYY-MM or YYYY-MM-DD, not '${options.since}'.`);
+  }
+  const since = options.since ?? (options.file ? undefined : daysAgo(30));
+  const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 500);
+  return withProjectDb(job.file, ({ db }) => {
+    const target = options.file ? findFile(db, options.file) : undefined;
+    const eventWhere = ["kind = 'change'", ...(since ? ["date >= ?"] : []), ...(target ? ["file_id = ?"] : [])].join(" AND ");
+    const changeWhere = [...(since ? ["seen >= ?"] : []), ...(target ? ["file_id = ?"] : [])].join(" AND ") || "1";
+    const params = [...(since ? [since] : []), ...(target ? [target.id] : [])];
+    const eventCount = all<{ n: number }>(db, `SELECT COUNT(*) AS n FROM intel_events WHERE ${eventWhere}`, ...params)[0]?.n ?? 0;
+    const events = all<{ date: string; title: string; confidence: string | null; file_id: string | null; location: string | null }>(
+      db, `SELECT date, title, confidence, file_id, location FROM intel_events WHERE ${eventWhere} ORDER BY date DESC LIMIT ?`, ...params, limit);
+    const fileCount = all<{ n: number }>(db, `SELECT COUNT(*) AS n FROM file_changes WHERE ${changeWhere}`, ...params)[0]?.n ?? 0;
+    const fileChanges = all<{ file_id: string; path: string; change: string; seen: string; mtime: string | null; old_path: string | null; summary: string | null }>(
+      db, `SELECT file_id, path, change, seen, mtime, old_path, summary FROM file_changes WHERE ${changeWhere} ORDER BY seen DESC, id DESC LIMIT ?`, ...params, limit);
+    const paths = filePaths(db, events.map((event) => event.file_id));
+    return {
+      project: job.name, since: since ?? null, ...(target ? { file: target.path } : {}),
+      count: { changes: eventCount, fileChanges: fileCount },
+      changes: events.map((event) => ({
+        date: event.date, title: event.title, file: pathIn(paths, event.file_id),
+        ...(event.location ? { where: event.location } : {}), ...(event.confidence && event.confidence !== "high" ? { confidence: event.confidence } : {}),
+      })),
+      fileChanges: fileChanges.map((row) => ({
+        seen: row.seen, change: row.change, path: row.path, ...(row.old_path ? { oldPath: row.old_path } : {}),
+        ...(row.mtime ? { modified: row.mtime } : {}), ...(row.summary ? { summary: row.summary } : {}),
+      })),
+      ...(eventCount > events.length || fileCount > fileChanges.length ? { truncated: true } : {}),
+      hint: eventCount + fileCount === 0
+        ? `No changes ${since ? `since ${since}` : "recorded"}${target ? ` for ${target.path}` : ""}. Project Analyzer finds them when it reads or updates the job folder; ` +
+          "pass since (YYYY[-MM[-DD]]) to look further back."
+        : "changes are requirement changes found by their wording (the newest one about a thing is the one to follow, unless a fact says otherwise); " +
+          "fileChanges are what an update of the job folder found (changed in place, removed, moved). Tell the user about the ones that matter for the task.",
     };
   });
 }
@@ -758,19 +922,23 @@ export async function projectLatest(name: string, project?: string, near?: strin
     if (!hasTable) {
       return { project: job.name, name, series: [], hint: "This job's database has no version list yet: it is built by Project Analyzer (analyze.py intel, also at the end of every run). Ask the user, or look in the job folder." };
     }
-    const escaped = (text: string) => text.replace(/!/g, "!!").replace(/%/g, "!%").replace(/_/g, "!_");
     const key = seriesKey(wanted.split("\\").pop() ?? wanted);
+    // Case-insensitive as `= ? COLLATE NOCASE` / LIKE, so intel_series_key_nocase answers the key lookups.
     const tries: Array<[string, string]> = [
-      ["SELECT DISTINCT series_id FROM intel_series WHERE lower(path) = lower(?)", wanted],
-      ["SELECT DISTINCT series_id FROM intel_series WHERE lower(path) LIKE lower(?) ESCAPE '!'", `%\\${escaped(wanted)}`],
-      ["SELECT DISTINCT series_id FROM intel_series WHERE key = ?", key],
-      ["SELECT DISTINCT series_id FROM intel_series WHERE key LIKE ? ESCAPE '!'", `${escaped(key)}%`],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE path = ? COLLATE NOCASE", wanted],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE path LIKE ? ESCAPE '!'", `%\\${escapeLike(wanted)}`],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE key = ? COLLATE NOCASE", key],
+      ["SELECT DISTINCT series_id FROM intel_series WHERE key LIKE ? ESCAPE '!'", `${escapeLike(key)}%`],
     ];
     let found: SeriesRow[][] = [];
     for (const [sql, value] of tries) {
       const ids = all<{ series_id: string }>(db, sql, value).map((row) => row.series_id).slice(0, 20);
       if (ids.length) {
-        found = ids.map((id) => all<SeriesRow>(db, "SELECT * FROM intel_series WHERE series_id = ? ORDER BY position", id));
+        // Every member of every series found, in one query.
+        const members = all<SeriesRow>(db, `SELECT * FROM intel_series WHERE series_id IN (${ids.map(() => "?").join(", ")}) ORDER BY series_id, position`, ...ids);
+        const bySeries = new Map(ids.map((id) => [id, [] as SeriesRow[]]));
+        for (const member of members) bySeries.get(member.series_id)?.push(member);
+        found = [...bySeries.values()].filter((group) => group.length > 0);
         break;
       }
     }
@@ -832,14 +1000,14 @@ export async function projectNotesOnce(): Promise<ProjectBriefing | undefined> {
   try {
     const job = projectForDrawing(await activeDrawingPath());
     if (!job || announced.has(job.file)) return undefined;
-    const briefing = withProjectDb(job.file, ({ db }): ProjectBriefing => {
+    const briefing = await withProjectDb(job.file, ({ db }): ProjectBriefing => {
       const knowledge = listFolder(ensureUserKnowledgeDirectory(job.file)).files;
       return {
         project: job.name,
         keyFacts: facts(db, `${CURRENT} AND f.key = 1 AND ${NOT_SUPERSEDED} ORDER BY f.added, f.id LIMIT 15`).map((fact) => `[${fact.id}] ${fact.fact}`),
         notes: Number((db.prepare(`SELECT COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND f.tool = ?`).get(TOOL) as { n: number }).n),
         highChecks: all<{ title: string }>(db, "SELECT title FROM intel_checks WHERE severity = 'high' ORDER BY id LIMIT 10").map((row) => row.title),
-        missingFiles: Number(all<{ n: number }>(db, "SELECT COUNT(DISTINCT lower(normalized)) AS n FROM refs WHERE status = 'missing'")[0]?.n ?? 0),
+        missingFiles: Number(all<{ n: number }>(db, "SELECT COUNT(DISTINCT normalized COLLATE NOCASE) AS n FROM refs WHERE status = 'missing'")[0]?.n ?? 0),
         userKnowledge: { documents: knowledge.length, ...(knowledge.length ? { names: knowledge.slice(0, 10).map((entry) => entry.path) } : {}) },
         hint: "civil3d_project_notes action=overview for everything known about this job (facts, questions, rules, checks, people, practices). " +
           (knowledge.length

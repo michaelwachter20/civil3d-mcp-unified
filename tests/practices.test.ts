@@ -37,11 +37,11 @@ describe("good practices shared by the suite (practices.json)", () => {
     expect(searchPractices("labels").practices.map((practice) => practice.id)).toEqual(["practice-2"]);
   });
 
-  it("adds with the next id, one line, a duplicate check, and writes UTF-8 without BOM, LF, 2-space indent", () => {
-    const added = addPractice("Minimum cover over storm pipe\nis 2 ft.", ["storm", "cover"]);
+  it("adds with the next id, one line, a duplicate check, and writes UTF-8 without BOM, LF, 2-space indent", async () => {
+    const added = await addPractice("Minimum cover over storm pipe\nis 2 ft.", ["storm", "cover"]);
     expect(added).toMatchObject({ action: "added", practice: { id: "practice-3", practice: "Minimum cover over storm pipe is 2 ft.", source: "civil3d" } });
-    expect(addPractice("minimum cover over storm pipe is 2 ft.").action).toBe("unchanged");
-    expect(addPractice("Label structures MH-n, CB-n, FES-n.").action).toBe("unchanged");
+    expect((await addPractice("minimum cover over storm pipe is 2 ft.")).action).toBe("unchanged");
+    expect((await addPractice("Label structures MH-n, CB-n, FES-n.")).action).toBe("unchanged");
     const text = raw();
     expect(text.charCodeAt(0)).not.toBe(0xfeff);
     expect(text).not.toContain("\r");
@@ -50,57 +50,57 @@ describe("good practices shared by the suite (practices.json)", () => {
     expect(JSON.parse(text).practices[2]).toMatchObject({ id: "practice-3", topics: ["storm", "cover"], added: expect.stringMatching(/Z$/) });
   });
 
-  it("changes and retires only its own entries; retired ids are never reused", () => {
-    expect(() => updatePractice("practice-2", "Label structures S-n.")).toThrow(/belongs to tbc/);
-    expect(() => removePractice("practice-2")).toThrow(/belongs to tbc/);
-    expect(() => updatePractice("practice-9", "x")).toThrow(/No practice/);
-    expect(updatePractice("practice-1", "Storm pipe minimum slope is 0.4%.", ["storm"]).practice).toMatchObject({ practice: "Storm pipe minimum slope is 0.4%.", topics: ["storm"] });
-    expect(removePractice("practice-1").action).toBe("retired");
+  it("changes and retires only its own entries; retired ids are never reused", async () => {
+    await expect(updatePractice("practice-2", "Label structures S-n.")).rejects.toThrow(/belongs to tbc/);
+    await expect(removePractice("practice-2")).rejects.toThrow(/belongs to tbc/);
+    await expect(updatePractice("practice-9", "x")).rejects.toThrow(/No practice/);
+    expect((await updatePractice("practice-1", "Storm pipe minimum slope is 0.4%.", ["storm"])).practice).toMatchObject({ practice: "Storm pipe minimum slope is 0.4%.", topics: ["storm"] });
+    expect((await removePractice("practice-1")).action).toBe("retired");
     expect(listPractices().map((practice) => practice.id)).toEqual(["practice-2"]);
     expect(listPractices(true).find((practice) => practice.id === "practice-1")?.retired).toBeTruthy();
-    expect(() => updatePractice("practice-1", "again")).toThrow(/was removed/);
-    expect(addPractice("Use 0.5% minimum slope.").practice.id).toBe("practice-3");
+    await expect(updatePractice("practice-1", "again")).rejects.toThrow(/was removed/);
+    expect((await addPractice("Use 0.5% minimum slope.")).practice.id).toBe("practice-3");
   });
 
-  it("keeps fields and entries it doesn't know, and re-reads the file right before writing", () => {
+  it("keeps fields and entries it doesn't know, and re-reads the file right before writing", async () => {
     const data = JSON.parse(raw());
     data.owner = "suite";
     data.practices[1].reviewed_by = "R. Lee";
     data.practices.push({ id: "practice-7", practice: "Written by another tool meanwhile.", source: "project-analyzer" });
     writeFileSync(practicesFile(), `${JSON.stringify(data, null, 2)}\n`);
-    addPractice("Benchmarks are on NAVD88.");
+    await addPractice("Benchmarks are on NAVD88.");
     const after = JSON.parse(raw());
     expect(after.owner).toBe("suite");
     expect(after.practices[1].reviewed_by).toBe("R. Lee");
     expect(after.practices.map((practice: { id: string }) => practice.id)).toEqual(["practice-1", "practice-2", "practice-7", "practice-8"]);
   });
 
-  it("never rewrites a file that doesn't parse", () => {
+  it("never rewrites a file that doesn't parse", async () => {
     writeFileSync(practicesFile(), "{ not json");
-    expect(() => addPractice("Anything.")).toThrow(/doesn't parse/);
+    await expect(addPractice("Anything.")).rejects.toThrow(/doesn't parse/);
     expect(raw()).toBe("{ not json");
     expect(buildServerInstructions()).not.toMatch(/Good practices/);
   });
 
-  it("starts the file when there is none", () => {
+  it("starts the file when there is none", async () => {
     rmSync(practicesFile());
     expect(describePractices().practices).toEqual([]);
-    expect(addPractice("Survey in NAD83.").practice.id).toBe("practice-1");
+    expect((await addPractice("Survey in NAD83.")).practice.id).toBe("practice-1");
     expect(JSON.parse(raw())).toEqual({ practices: [expect.objectContaining({ id: "practice-1", source: "civil3d" })] });
   });
 
-  it("refuses practices that name a job, its folders or its files", () => {
+  it("refuses practices that name a job, its folders or its files", async () => {
     mkdirSync(join(root, "projects"));
     copyFileSync(join(FIXTURES, "fixture.db"), join(root, "projects", "elm-street-drainage.db"));
-    expect(() => addPractice("On Elm Street Drainage use 1% slope.")).toThrow(/the name of the job 'Elm Street Drainage'/);
-    expect(() => addPractice("Templates are in P:\\Standards\\C3D.")).toThrow(/folder path/);
-    expect(() => addPractice("Copy layers from C-104.dwg.")).toThrow(/names a file/);
-    expect(addPractice("Storm pipe maximum velocity is 10 ft/s.").action).toBe("added");
+    await expect(addPractice("On Elm Street Drainage use 1% slope.")).rejects.toThrow(/the name of the job 'Elm Street Drainage'/);
+    await expect(addPractice("Templates are in P:\\Standards\\C3D.")).rejects.toThrow(/folder path/);
+    await expect(addPractice("Copy layers from C-104.dwg.")).rejects.toThrow(/names a file/);
+    expect((await addPractice("Storm pipe maximum velocity is 10 ft/s.")).action).toBe("added");
   });
 
-  it("shows current practices to the AI next to the preferences", () => {
+  it("shows current practices to the AI next to the preferences", async () => {
     writeFileSync(join(root, "preferences.json"), JSON.stringify({ preferences: [{ id: "pref-1", rule: "Plot at 1\" = 30'.", added: "2026-10-20T12:00:00.000Z" }] }));
-    removePractice("practice-1");
+    await removePractice("practice-1");
     const instructions = buildServerInstructions();
     expect(instructions).toMatch(/standing preferences[\s\S]*\[pref-1\][\s\S]*Good practices shared by the suite[^\n]*\n- \[practice-2\] Label structures MH-n/);
     expect(instructions).not.toContain("practice-1");

@@ -5,6 +5,7 @@ import { startHttpBridge } from "./httpBridge.js";
 import { createLogger } from "./utils/logger.js";
 import { APP_VERSION } from "./version.js";
 import { buildServerInstructions } from "./serverInstructions.js";
+import { sweepKnowledgeTemporaryFiles } from "./tools/knowledgeBase.js";
 
 const log = createLogger("MCP");
 
@@ -17,6 +18,8 @@ const server = new McpServer(
 );
 
 async function main() {
+  // Temp files a crashed or killed write left in the knowledge folders (older than an hour).
+  sweepKnowledgeTemporaryFiles();
   await registerTools(server);
   const httpServer = startHttpBridge();
 

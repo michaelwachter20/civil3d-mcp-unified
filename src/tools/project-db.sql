@@ -248,3 +248,19 @@ CREATE TABLE IF NOT EXISTS file_versions (
 
 -- What happened during runs (replaces log.txt).
 CREATE TABLE IF NOT EXISTS log (time TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL, file_id TEXT);
+
+-- Indexes the readers rely on. Every tool may run these lines on a database it can write (they only ever add an
+-- index); Project Analyzer runs them again whenever it rebuilds the tables they are on (projectdb.ensure_indexes).
+-- One line each, starting "CREATE INDEX IF NOT EXISTS", so a tool can pick them out of this file.
+-- COLLATE NOCASE ones answer case-insensitive lookups written `col = ? COLLATE NOCASE` (paths, names, series keys).
+CREATE INDEX IF NOT EXISTS files_path_nocase ON files(path COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS refs_normalized_nocase ON refs(normalized COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS refs_target ON refs(target_id);
+CREATE INDEX IF NOT EXISTS facts_supersedes ON facts(supersedes);
+CREATE INDEX IF NOT EXISTS intel_entities_name ON intel_entities(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS intel_entity_files_entity ON intel_entity_files(entity_id);
+CREATE INDEX IF NOT EXISTS intel_events_date ON intel_events(date);
+CREATE INDEX IF NOT EXISTS intel_events_file ON intel_events(file_id);
+CREATE INDEX IF NOT EXISTS intel_series_key_nocase ON intel_series(key COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS intel_series_id ON intel_series(series_id);
+CREATE INDEX IF NOT EXISTS intel_story_steps_story ON intel_story_steps(story_id, position);

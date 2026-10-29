@@ -60,17 +60,17 @@ describe("no job data in Civil 3D's general know-how", () => {
     expect(problems("Streets in the drainage area")).toEqual([]);
   });
 
-  it("refuses preferences and lessons that name a job, and saves general ones", () => {
-    expect(() => addPreference("On Elm Street Drainage plot at 1\" = 20'.")).toThrow(/Not saved: this preference .*the job 'Elm Street Drainage'.*civil3d_project_notes/);
+  it("refuses preferences and lessons that name a job, and saves general ones", async () => {
+    await expect(addPreference("On Elm Street Drainage plot at 1\" = 20'.")).rejects.toThrow(/Not saved: this preference .*the job 'Elm Street Drainage'.*civil3d_project_notes/);
     expect(existsSync(preferencesFile())).toBe(false);
-    const added = addPreference("Plot at 1\" = 30'.");
-    expect(() => updatePreference(added.preference.id, "Plot the OR-Topo sheets at 1\" = 20'.")).toThrow(/the job 'OR-Topo'/);
+    const added = await addPreference("Plot at 1\" = 30'.");
+    await expect(updatePreference(added.preference.id, "Plot the OR-Topo sheets at 1\" = 20'.")).rejects.toThrow(/the job 'OR-Topo'/);
     expect(listPreferences().map((preference) => preference.rule)).toEqual(["Plot at 1\" = 30'."]);
 
-    expect(() => recordLesson("Points from P:\\Jobs\\OR-Topo\\pts.csv import in PNEZD order.", ["points"], "2027")).toThrow(/Not saved: this lesson/);
-    expect(() => recordLesson("Import PNEZD points with the default format.", ["oak-ridge"], "2027")).toThrow(/oak-ridge/);   // topics too
+    await expect(recordLesson("Points from P:\\Jobs\\OR-Topo\\pts.csv import in PNEZD order.", ["points"], "2027")).rejects.toThrow(/Not saved: this lesson/);
+    await expect(recordLesson("Import PNEZD points with the default format.", ["oak-ridge"], "2027")).rejects.toThrow(/oak-ridge/);   // topics too
     expect(existsSync(lessonsFile())).toBe(false);
-    expect(recordLesson("CogoPoint.LabelLocation can't be set before the label exists.", ["CogoPoint.LabelLocation"], "2027").action).toBe("recorded");
+    expect((await recordLesson("CogoPoint.LabelLocation can't be set before the label exists.", ["CogoPoint.LabelLocation"], "2027")).action).toBe("recorded");
   });
 
   it("refuses skills and skill sections with job data, in any field", () => {

@@ -84,12 +84,12 @@ describe("knowledge base: skills, preferences and lessons", () => {
     expect(() => writeSkill({ name: "ok", category: "a/b", description: "x", content: "x" }, "2027")).toThrow(/Invalid category/);
   });
 
-  it("keeps standing preferences and puts them into every chat's instructions", () => {
-    const first = addPreference("Hide group is 'HIDDEN POINTS'");
+  it("keeps standing preferences and puts them into every chat's instructions", async () => {
+    const first = await addPreference("Hide group is 'HIDDEN POINTS'");
     expect(first.action).toBe("added");
-    expect(addPreference("hide group is 'hidden points'").action).toBe("unchanged");
-    addPreference("We plot at 1\" = 30'");
-    updatePreference(first.preference.id, "Hide group is 'Hidden Points'");
+    expect((await addPreference("hide group is 'hidden points'")).action).toBe("unchanged");
+    await addPreference("We plot at 1\" = 30'");
+    await updatePreference(first.preference.id, "Hide group is 'Hidden Points'");
     expect(listPreferences().map((preference) => preference.rule)).toEqual(["Hide group is 'Hidden Points'", "We plot at 1\" = 30'"]);
 
     writeSkill({ name: "my_workflow", description: "Office label cleanup", content: "x" }, "2027");
@@ -98,13 +98,13 @@ describe("knowledge base: skills, preferences and lessons", () => {
     expect(instructions).toContain("my_workflow: Office label cleanup");
     expect(instructions).toContain("working_safely_in_civil3d");
 
-    removePreference(first.preference.id);
+    await removePreference(first.preference.id);
     expect(listPreferences()).toHaveLength(1);
   });
 
-  it("records lessons with topics and surfaces them for matching code", () => {
-    expect(() => recordLesson("Something", [], "2027")).toThrow(/topic/);
-    const recorded = recordLesson("FeatureLine.AssignElevationsFromSurface needs a surface id, not a name", ["AssignElevationsFromSurface"], "2027");
+  it("records lessons with topics and surfaces them for matching code", async () => {
+    await expect(recordLesson("Something", [], "2027")).rejects.toThrow(/topic/);
+    const recorded = await recordLesson("FeatureLine.AssignElevationsFromSurface needs a surface id, not a name", ["AssignElevationsFromSurface"], "2027");
     expect(recorded.action).toBe("recorded");
     expect(allLessons().some((lesson) => lesson.source === "seed")).toBe(true);
 
@@ -113,11 +113,11 @@ describe("knowledge base: skills, preferences and lessons", () => {
     expect(lessonsRelevantTo("p.LabelLocation = pt;", "2028")[0].version_note).toMatch(/Learned on Civil 3D 2027/);
   });
 
-  it("only removes lessons learned on the running release", () => {
-    const lesson = recordLesson("Wrong lesson", ["SomeApi"], "2027").lesson;
-    expect(() => removeLesson("seed-1", "2027")).toThrow(/Built-in lessons/);
-    expect(() => removeLesson(lesson.id, "2028")).toThrow(/learned on Civil 3D 2027/);
-    expect(removeLesson(lesson.id, "2027").action).toBe("removed");
+  it("only removes lessons learned on the running release", async () => {
+    const lesson = (await recordLesson("Wrong lesson", ["SomeApi"], "2027")).lesson;
+    await expect(removeLesson("seed-1", "2027")).rejects.toThrow(/Built-in lessons/);
+    await expect(removeLesson(lesson.id, "2028")).rejects.toThrow(/learned on Civil 3D 2027/);
+    expect((await removeLesson(lesson.id, "2027")).action).toBe("removed");
   });
 
   it("stamps only the release, never the licensee name in ACADVER", () => {

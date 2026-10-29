@@ -167,7 +167,7 @@ Generated from the runtime manifest for civil3d-mcp 2.4.0. Do not edit by hand.
 | `civil3d_memory` | scripting | memory_record, memory_search, memory_remove | — | yes |
 | `civil3d_practices` | scripting | practices_list, practices_search, practices_add, practices_update, practices_remove | — | yes |
 | `civil3d_preferences` | scripting | preferences_list, preferences_add, preferences_update, preferences_remove | — | yes |
-| `civil3d_project_notes` | scripting | project_overview, project_search, project_file, project_entity, project_timeline, project_locate, project_latest, project_list, project_link, project_unlink, project_add, project_update, project_remove, project_files, project_read | — | yes |
+| `civil3d_project_notes` | scripting | project_overview, project_search, project_file, project_entity, project_timeline, project_locate, project_latest, project_checks, project_changes, project_list, project_link, project_unlink, project_add, project_update, project_remove, project_files, project_read | — | yes |
 | `civil3d_query` | scripting | — | queryCode | yes |
 | `civil3d_script` | scripting | script_save, script_list, script_get, script_run, script_delete, compile, status | scriptSave, scriptList, scriptGet, scriptRun, scriptDelete, compileCode, getScriptingStatus | no |
 | `civil3d_skills` | scripting | skills_list, skills_search, skills_read, skills_write, skills_append_version_section, skills_retire | — | no |

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import MiniSearch from "minisearch";
+import { writeAtomically } from "../utils/atomicFiles.js";
 import {
   discoverOfflineHelpInstallations,
   selectHelpInstallation,
@@ -193,10 +194,8 @@ export class OfflineHelpIndex {
   }
 
   private writeCache(cache: HelpIndexCache): void {
-    fs.mkdirSync(path.dirname(this.cachePath), { recursive: true });
-    const temporaryPath = `${this.cachePath}.${process.pid}.tmp`;
-    fs.writeFileSync(temporaryPath, gzipSync(JSON.stringify(cache)));
-    fs.renameSync(temporaryPath, this.cachePath);
+    // Temp file + rename (retried while Windows holds the cache open); the temp file never stays behind.
+    writeAtomically(this.cachePath, gzipSync(JSON.stringify(cache)));
   }
 
   private loadTopics(topics: HelpTopicIndexEntry[]): void {

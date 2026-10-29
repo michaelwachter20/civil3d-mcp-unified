@@ -19,6 +19,8 @@ import zlib from "node:zlib";
 export const USER_KNOWLEDGE = "User Knowledge";
 /** How Project Analyzer writes a user-knowledge document's path in `files.path`. */
 export const USER_KNOWLEDGE_PREFIX = "<user knowledge>\\";
+/** Paths that start with the prefix: at or after it and before the prefix with its last character raised. */
+export const USER_KNOWLEDGE_RANGE = [USER_KNOWLEDGE_PREFIX, `${USER_KNOWLEDGE_PREFIX.slice(0, -1)}${String.fromCharCode(USER_KNOWLEDGE_PREFIX.charCodeAt(USER_KNOWLEDGE_PREFIX.length - 1) + 1)}`] as const;
 
 /** <shared folder>\projects\<slug> for a job database <slug>.db. */
 export const jobDirectoryOf = (databaseFile: string) => databaseFile.replace(/\.db$/i, "");
@@ -27,9 +29,21 @@ export const userKnowledgeDirectoryOf = (databaseFile: string) => path.join(jobD
 /** Creates the (empty) User Knowledge folder when it doesn't exist; the only thing this tool ever writes there. */
 export function ensureUserKnowledgeDirectory(databaseFile: string): string {
   const dir = userKnowledgeDirectoryOf(databaseFile);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(longPath(dir))) mkdirSync(longPath(dir), { recursive: true });
   return dir;
 }
+
+// Windows refuses most paths of 260 characters or more unless they are written \\?\C:\... (or \\?\UNC\server\...).
+const LONG_PATH = 240;
+
+/** The path to hand the file system: the \\?\ form of an absolute Windows path longer than about 240 characters. */
+export function longPath(file: string): string {
+  if (process.platform !== "win32" || file.length <= LONG_PATH || !path.win32.isAbsolute(file) || file.startsWith("\\\\?\\")) return file;
+  return path.win32.toNamespacedPath(path.win32.resolve(file));
+}
+
+/** A path from the file system without the \\?\ prefix, for showing and comparing. */
+const plainPath = (file: string) => file.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
 
 // ---------------------------------------------------------------- listing
 
@@ -48,14 +62,26 @@ const isLitter = (name: string) => LITTER.has(name.toLowerCase()) || name.starts
 
 const toStoredPath = (relative: string) => relative.split(/[\\/]+/).join("\\");
 
-/** Files under `dir` (subfolders included), sorted by path; `skipTop` names top-level folders to leave out. */
-export function listFolder(dir: string, options: { limit?: number; skipTop?: string } = {}): { files: FolderEntry[]; truncated: boolean } {
+/**
+ * Files under `dir` (subfolders included), sorted by path; `skipTop` names top-level folders to leave out. Long paths
+ * are read in their \\?\ form; a file or folder that can't be read is left out and named in `skipped` with why.
+ */
+export function listFolder(dir: string, options: { limit?: number; skipTop?: string } = {}): {
+  files: FolderEntry[]; truncated: boolean; skipped: Array<{ path: string; reason: string }>;
+} {
   const limit = options.limit ?? 500;
   const files: FolderEntry[] = [];
+  const skipped: Array<{ path: string; reason: string }> = [];
   let truncated = false;
+  const relative = (full: string) => toStoredPath(path.relative(dir, full));
   const walk = (current: string, top: boolean) => {
     let entries;
-    try { entries = readdirSync(current, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = readdirSync(longPath(current), { withFileTypes: true });
+    } catch (error) {
+      if (!top) skipped.push({ path: `${relative(current)}\\`, reason: (error as Error).message });
+      return;
+    }
     for (const entry of entries) {
       if (files.length >= limit) { truncated = true; return; }
       const full = path.join(current, entry.name);
@@ -65,14 +91,16 @@ export function listFolder(dir: string, options: { limit?: number; skipTop?: str
       }
       if (!entry.isFile() || isLitter(entry.name)) continue;
       try {
-        const stat = statSync(full);
-        files.push({ path: toStoredPath(path.relative(dir, full)), absolute: full, size: stat.size, modified: stat.mtime.toISOString(), mtimeMs: stat.mtimeMs });
-      } catch { /* removed while listing */ }
+        const stat = statSync(longPath(full));
+        files.push({ path: relative(full), absolute: full, size: stat.size, modified: stat.mtime.toISOString(), mtimeMs: stat.mtimeMs });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") skipped.push({ path: relative(full), reason: (error as Error).message });   // ENOENT: removed while listing
+      }
     }
   };
-  if (existsSync(dir)) walk(dir, true);
+  if (existsSync(longPath(dir))) walk(dir, true);
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, truncated };
+  return { files, truncated, skipped };
 }
 
 /** Files put directly in <slug>\ by versions before User Knowledge existed (they aren't read any more). */
@@ -86,8 +114,9 @@ export interface AnalyzerDocument { id: string; path: string; size: number | nul
 export function analyzerDocuments(db: DatabaseSync): Map<string, AnalyzerDocument> {
   const found = new Map<string, AnalyzerDocument>();
   try {
-    const rows = db.prepare("SELECT id, path, size, mtime, status, error FROM files WHERE substr(path, 1, ?) = ?")
-      .all(USER_KNOWLEDGE_PREFIX.length, USER_KNOWLEDGE_PREFIX) as unknown as AnalyzerDocument[];
+    // A range on path (files_path answers it) rather than substr() over every file of the job.
+    const rows = db.prepare("SELECT id, path, size, mtime, status, error FROM files WHERE path >= ? AND path < ?")
+      .all(...USER_KNOWLEDGE_RANGE) as unknown as AnalyzerDocument[];
     for (const row of rows) found.set(row.path.slice(USER_KNOWLEDGE_PREFIX.length).toLowerCase(), row);
   } catch { /* not a project database Project Analyzer wrote to */ }
   return found;
@@ -128,11 +157,11 @@ export interface TextPart { label: string | null; text: string }
 export function extractText(file: string): TextPart[] | undefined {
   const extension = extensionOf(file);
   if (PLAIN_TEXT.has(extension)) {
-    const text = decodeText(readFileSync(file));
+    const text = decodeText(readFileSync(longPath(file)));
     return [{ label: null, text: extension === ".html" || extension === ".htm" ? stripHtml(text) : text }];
   }
   if (!OFFICE.has(extension)) return undefined;
-  const zip = readZip(readFileSync(file));
+  const zip = readZip(readFileSync(longPath(file)));
   if (extension === ".docx") return [{ label: null, text: wordText(zip) }];
   if (extension === ".xlsx") return excelText(zip);
   return powerPointText(zip);
@@ -314,9 +343,9 @@ export function insideFolder(folder: string, file: string): string | undefined {
     return !!relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   };
   if (!contained(folder, absolute)) return undefined;
-  if (existsSync(absolute)) {
+  if (existsSync(longPath(absolute))) {
     try {
-      if (!contained(realpathSync(folder), realpathSync(absolute))) return undefined;
+      if (!contained(plainPath(realpathSync(longPath(folder))), plainPath(realpathSync(longPath(absolute))))) return undefined;
     } catch { /* checked by the caller when reading */ }
   }
   return absolute;
