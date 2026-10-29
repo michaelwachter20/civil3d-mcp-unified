@@ -6,13 +6,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, locatePath, projectEntity, projectFileDetails,
-  projectForDrawing, projectNotesOnce, projectOverview, projectTimeline, removeProjectNote, resetProjectNotesAnnouncements, searchProject,
+  addProjectNote, linkProjectFolder, listProjectNotes, listProjects, locatePath, projectChanges, projectChecks, projectEntity, projectFileDetails,
+  projectForDrawing, projectLatest, projectNotesOnce, projectOverview, projectTimeline, removeProjectNote, resetProjectNotesAnnouncements, searchProject,
   setActiveDrawingResolverForTesting, unlinkProjectFolder, updateProjectNote,
 } from "../src/tools/projectNotes.js";
 import { ftsQuery, invalidateJobIndex, jobIndex, pathKey, slug } from "../src/tools/projectDb.js";
 import { hasApprovalRisk } from "../src/tools/approvalPolicy.js";
 import { SCRIPTING_DOMAIN_DEFINITION } from "../src/tools/domains/scriptingDomain.js";
+import { SERVER_INSTRUCTIONS } from "../src/serverInstructions.js";
 
 const { DatabaseSync: Database } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 const FIXTURES = join(import.meta.dirname, "fixtures");
@@ -164,6 +165,17 @@ describe("project notes on the suite's project database", () => {
     expect(overview.people).toEqual([{ name: "John Smith", aliases: ["J. Smith"], files: 2 }, { name: "Robin Lee", files: 2 }]);
   });
 
+  it("says on every read answer that the database is for reference only, with the date it describes", async () => {
+    const overview = await projectOverview(ELM);
+    expect(overview.referenceOnly).toMatch(/^Reference only: .* as of 2026-10-20, .*ask which file is current\.$/);
+    for (const answer of [await searchProject("MH-3", ELM), await projectEntity("RFI 12", ELM), await projectTimeline(ELM),
+      await projectChecks(ELM), await projectChanges(ELM, { since: "2026" }), await projectLatest("C-104", ELM),
+      await locatePath("P:\\Jobs\\1234 Elm St\\CAD\\Topo.dwg", ELM), await listProjectNotes(ELM)]) {
+      expect((answer as { referenceOnly?: string }).referenceOnly).toBe(overview.referenceOnly);
+    }
+    expect(SERVER_INSTRUCTIONS).toMatch(/REFERENCE ONLY[\s\S]*Never use its coordinates[\s\S]*ask which file is current/);
+  });
+
   it("searches the compressed text (codes kept together) and the facts", async () => {
     expect(ftsQuery("MH-3 culvert")).toBe('"MH 3" "culvert"');
     expect(ftsQuery("12+50 C-104")).toBe('"12 50" "C 104"');
@@ -235,6 +247,7 @@ describe("project notes on the suite's project database", () => {
     const briefing = await projectNotesOnce();
     expect(briefing).toMatchObject({
       project: ELM, notes: 1, missingFiles: 1, highChecks: ["Image AERIAL of C-104.dwg is missing"],
+      referenceOnly: expect.stringMatching(/^Reference only: /),
     });
     expect(briefing!.keyFacts).toEqual([
       "[fact-1] The culvert at MH-3 is upsized to 36-inch RCP.",

@@ -52,9 +52,6 @@ internal static class ScriptLibrary
     "string", "number", "integer", "boolean", "point", "string[]", "json",
   };
 
-  // The suite's shared folder (project-analyzer's docs/suite-knowledge.md, "Where"); the MCP server finds it the same way.
-  private const string SharedFolderName = "Project Knowledge";
-  private static readonly string[] EarlierSharedFolderNames = { "Civil3DMcp-KnowledgeBase", "Civil3DMcp" };
   private const string KnowHowFolderName = "civil3d";
 
   /// <summary>
@@ -78,48 +75,11 @@ internal static class ScriptLibrary
         return System.IO.Path.Combine(knowHow.Trim(), "scripts");
       }
 
-      var shared = SharedRoot();
+      var shared = SharedFolder.Root();
       var own = System.IO.Path.Combine(shared, KnowHowFolderName, "scripts");
       var earlier = System.IO.Path.Combine(shared, "scripts");
       return !System.IO.Directory.Exists(own) && System.IO.Directory.Exists(earlier) ? earlier : own;
     }
-  }
-
-  /// <summary>
-  /// PROJECT_KNOWLEDGE_DIR, else CIVIL3D_KNOWLEDGE_DIR (its earlier name), else Documents\Project Knowledge if it exists,
-  /// else an earlier default that exists (Documents\Civil3DMcp-KnowledgeBase, then Documents\Civil3DMcp) as it is, else
-  /// Documents\Project Knowledge. No tool renames the folder: an older tool on the same PC would lose it.
-  /// Documents is %USERPROFILE%\Documents, as the MCP server and the other suite tools take it, not the shell's
-  /// Documents folder: when that is redirected (to OneDrive) they would otherwise use two different folders.
-  /// </summary>
-  private static string SharedRoot()
-  {
-    foreach (var variable in new[] { "PROJECT_KNOWLEDGE_DIR", "CIVIL3D_KNOWLEDGE_DIR" })
-    {
-      var configured = Environment.GetEnvironmentVariable(variable);
-      if (!string.IsNullOrWhiteSpace(configured))
-      {
-        return configured.Trim();
-      }
-    }
-
-    var profile = Environment.GetEnvironmentVariable("USERPROFILE");
-    if (string.IsNullOrWhiteSpace(profile))
-    {
-      profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    }
-
-    var documents = System.IO.Path.Combine(profile.Trim(), "Documents");
-    foreach (var name in EarlierSharedFolderNames.Prepend(SharedFolderName))
-    {
-      var candidate = System.IO.Path.Combine(documents, name);
-      if (System.IO.Directory.Exists(candidate))
-      {
-        return candidate;
-      }
-    }
-
-    return System.IO.Path.Combine(documents, SharedFolderName);
   }
 
   public static string NormalizeName(string rawName)

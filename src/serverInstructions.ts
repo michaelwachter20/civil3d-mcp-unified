@@ -29,6 +29,11 @@ export const SERVER_INSTRUCTIONS = [
     "the task, follow it and name the document; when it conflicts with a fact, a practice or the drawings, tell the user rather than choose. " +
     "(3) Engineering practice true on every job and in every program (minimum slopes, structure naming, the survey datum) goes in " +
     "civil3d_practices, shared with the other suite tools.",
+  "REFERENCE ONLY: the job database (civil3d_project_notes) is a snapshot of the job's files, for finding and understanding things: " +
+    "what a file says, where it is, who did what and when. Never use its coordinates, elevations, points, stations, dimensions, " +
+    "quantities or text as data to edit a drawing or import into one. Take them from the current source file the user names (a drawing, " +
+    "survey file or document in the job folder); if they haven't named one, ask which file is current before changing anything. " +
+    "Never import from the suite's shared knowledge folder.",
   "Keep lessons, skills, scripts and practices GENERAL so they help on any project: no job names, drawing or file names, folders, point " +
     "numbers, coordinates, dates, point group or layer names, or site features. Those belong in civil3d_project_notes.",
 ].join("\n");

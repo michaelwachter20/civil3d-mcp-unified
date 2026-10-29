@@ -47,6 +47,16 @@ try
     "CIVIL3D.PATH_NOT_ALLOWED",
     () => FileBoundary.ResolveImportPath(Path.Combine(outsideRoot, "outside.dem"), ".dem"));
 
+  // The suite's shared folder (job databases, backups, User Knowledge) is reference only: never a source for an import
+  var sharedRoot = Path.Combine(allowedRoot, "Project Knowledge");
+  Directory.CreateDirectory(Path.Combine(sharedRoot, "projects"));
+  var sharedImport = Path.Combine(sharedRoot, "projects", "copied-points.dem");
+  File.WriteAllText(sharedImport, "dem-data");
+  Environment.SetEnvironmentVariable("PROJECT_KNOWLEDGE_DIR", sharedRoot);
+  ExpectCode("CIVIL3D.PATH_NOT_ALLOWED", () => FileBoundary.ResolveImportPath(sharedImport, ".dem"));
+  Assert(FileBoundary.ResolveImportPath(importPath, ".dem") == Path.GetFullPath(importPath), "An import next to the shared folder was rejected.");
+  Environment.SetEnvironmentVariable("PROJECT_KNOWLEDGE_DIR", null);
+
   var scriptsRoot = Path.Combine(testRoot, "scripts");
   var scriptPath = FileBoundary.WriteFileWithinDirectoryAtomic(scriptsRoot, "relayer.csx", "v1", overwrite: false);
   Assert(scriptPath == Path.Combine(Path.GetFullPath(scriptsRoot), "relayer.csx"), "Script write resolved to an unexpected path.");

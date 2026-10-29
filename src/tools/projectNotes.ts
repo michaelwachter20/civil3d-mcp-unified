@@ -26,6 +26,21 @@ export { projectsDirectory } from "./projectDb.js";
  * Read actions open the database read-only; only link, unlink and the note actions write (projectDb.ts).
  */
 
+/**
+ * The suite's rule for the job database (contract: "Reference only"), on every read answer with the date it describes:
+ * its stored text, coordinates and quantities are a snapshot of the job folder, for finding things and never for edits.
+ */
+export const REFERENCE_ONLY =
+  "Reference only: the job database is a snapshot of the job's files as of {date}, and they may have changed since. Use it to find " +
+  "and understand things (what a file says, where it is, who did what, when). Never use its coordinates, elevations, points, stations, " +
+  "dimensions, quantities or text as data to edit or import into a drawing: take them from the current source file the user names, and " +
+  "if they haven't named one, ask which file is current.";
+
+/** REFERENCE_ONLY with the date of the last Project Analyzer run (meta last_run_finished), if there was one. */
+export function referenceOnly(db: DatabaseSync): string {
+  return REFERENCE_ONLY.replace("{date}", metaValue(db, "last_run_finished")?.slice(0, 10) || "the last time a tool wrote to it");
+}
+
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 const parseJson = <T>(text: string | null | undefined, fallback: T): T => {
   try { return text ? (JSON.parse(text) as T) : fallback; } catch { return fallback; }
@@ -151,7 +166,7 @@ async function describe(job: Job) {
   return withProjectDb(job.file, ({ db }) => {
     const others = db.prepare(`SELECT tool, COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND tool <> ? GROUP BY tool`).all(TOOL) as Array<{ tool: string; n: number }>;
     return {
-      project: job.name,
+      project: job.name, referenceOnly: referenceOnly(db),
       path: job.file,
       folders: job.roots.map((root) => ({ path: root.path, tool: root.tool })),
       notes: facts(db, `${CURRENT} AND f.tool = ? ORDER BY f.added, f.id`, TOOL),
@@ -465,7 +480,7 @@ export async function projectOverview(name?: string) {
     const legacy = legacyFiles(job.file).files.length;
     const lastRun = metaValue(db, "last_run_finished");
     return {
-      project: job.name,
+      project: job.name, referenceOnly: referenceOnly(db),
       path: job.file,
       ...copyInfo(db),
       ...(lastRun ? { analyzed: lastRun, sourceUnchanged: metaValue(db, "source_unchanged") ?? null } : { analyzed: null }),
@@ -569,7 +584,7 @@ export async function searchProject(query: string, name?: string, limit = 20) {
     const matching = facts(db, `${CURRENT} AND ${like} ORDER BY f.key DESC, f.added DESC LIMIT 50`, ...tokens.map((token) => `%${token}%`));
     const anyKnowledge = direct.hits.length > 0 || hits.some((hit) => hit.userKnowledge);
     return {
-      project: job.name, query, facts: matching, hits: [...hits, ...direct.hits],
+      project: job.name, referenceOnly: referenceOnly(db), query, facts: matching, hits: [...hits, ...direct.hits],
       ...(direct.notSearched.length ? {
         userKnowledgeNotSearched: direct.notSearched.slice(0, 30),
         userKnowledgeNotSearchedHint: "Project Analyzer hasn't read these user-knowledge documents as they are now, and Civil 3D MCP couldn't " +
@@ -622,7 +637,7 @@ export async function projectFileDetails(file: string, name?: string) {
       db, "SELECT file_id, kind, raw, status FROM refs WHERE target_id = ? OR target_path = ? COLLATE NOCASE", row.id, row.path);
     const paths = filePaths(db, refsTo.map((ref) => ref.file_id));
     return {
-      project: job.name,
+      project: job.name, referenceOnly: referenceOnly(db),
       file: Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)),
       props: Object.fromEntries(all<{ key: string; value: string }>(db, "SELECT key, value FROM props WHERE file_id = ? ORDER BY key", row.id).map((prop) => [prop.key, prop.value])),
       ...(summary ? { summary: { ...summary, points: parseJson(summary.points, []), people: parseJson(summary.people, []) } } : {}),
@@ -659,7 +674,7 @@ export async function projectEntity(entity: string, name?: string) {
         .filter((row) => names(row).some((value) => value.includes(wanted) || wanted.includes(value))).slice(0, 10).map((row) => row.name);
       const matchingFacts = facts(db, `${CURRENT} AND lower(f.topics || ' ' || f.fact) LIKE ? ORDER BY f.added LIMIT 50`, `%${wanted}%`);
       return {
-        project: job.name, entity: null, query: entity, ...(similar.length ? { similar } : {}), facts: matchingFacts,
+        project: job.name, referenceOnly: referenceOnly(db), entity: null, query: entity, ...(similar.length ? { similar } : {}), facts: matchingFacts,
         hint: similar.length ? "Not found by that exact name; try one of the similar names." : "Not a known name; try action=search.",
       };
     }
@@ -686,7 +701,7 @@ export async function projectEntity(entity: string, name?: string) {
     const paths = filePaths(db, [...shownFiles.map((row) => row.file_id), ...events.map((event) => event.file_id), ...stories.flatMap((story) => story.steps.map((step) => step.file_id))]);
     const like = allNames.map(() => "lower(f.topics) LIKE ?").join(" OR ");
     return {
-      project: job.name,
+      project: job.name, referenceOnly: referenceOnly(db),
       entity: {
         id: found.id, type: found.type, name: found.name, aliases: parseJson<string[]>(found.aliases, []),
         files: found.files, mentions: found.mentions, first: found.first_date, last: found.last_date,
@@ -728,7 +743,7 @@ export async function projectTimeline(name?: string, from?: string, to?: string,
     const timeline = [...events, ...dated].sort((left, right) => left.date.localeCompare(right.date));
     const count = total + dated.length;
     return {
-      project: job.name, from: from ?? null, to: to ?? null, count,
+      project: job.name, referenceOnly: referenceOnly(db), from: from ?? null, to: to ?? null, count,
       timeline: timeline.slice(0, shown), ...(count > limit ? { truncated: true } : {}),
     };
   });
@@ -754,7 +769,7 @@ export async function locatePath(written: string, name?: string) {
       const ref = refs.find((candidate) => candidate.target_path) ?? refs[0];
       const target = inCopy(ref.target_path);
       return {
-        project: job.name, written, method: "refs", status: ref.status,
+        project: job.name, referenceOnly: referenceOnly(db), written, method: "refs", status: ref.status,
         ...(ref.target_path ? { relative: ref.target_path, path: target, exists: !!target && existsSync(target) } : {}),
         ...(ref.expected_path ? { expected: ref.expected_path } : {}),
         ...(ref.candidates ? { candidates: parseJson<string[]>(ref.candidates, []) } : {}),
@@ -772,12 +787,12 @@ export async function locatePath(written: string, name?: string) {
       const relative = path.win32.join(root.in_copy ?? "", rest);
       const target = inCopy(relative);
       return {
-        project: job.name, written, method: "reference_roots", relative, path: target, exists: !!target && existsSync(target),
+        project: job.name, referenceOnly: referenceOnly(db), written, method: "reference_roots", relative, path: target, exists: !!target && existsSync(target),
         hint: "Worked out from where the job was copied from; check it exists before relying on it.",
       };
     }
     return {
-      project: job.name, written, method: null, path: null, ...copyInfo(db),
+      project: job.name, referenceOnly: referenceOnly(db), written, method: null, path: null, ...copyInfo(db),
       hint: "Not found in the references Project Analyzer read, and no known original location matches. Ask the user where it is rather than guess; " +
         "once found, record it as a note (e.g. 'TOPO xref of CAD\\Site.dwg is CAD\\Topo.dwg in the copy').",
     };
@@ -817,7 +832,7 @@ export async function projectChecks(name?: string, options: ChecksOptions = {}) 
     const paths = filePaths(db, fileIds.flatMap((ids) => ids.slice(0, CHECK_FILES_SHOWN)));
     const total = Object.values(bySeverity).reduce((sum, n) => sum + n, 0);
     return {
-      project: job.name,
+      project: job.name, referenceOnly: referenceOnly(db),
       ...(options.severity ? { severity: options.severity } : {}), ...(options.kind ? { kind: options.kind } : {}),
       count, bySeverity, byKind,
       checks: rows.map((row, at) => ({
@@ -867,7 +882,7 @@ export async function projectChanges(name?: string, options: ChangesOptions = {}
       db, `SELECT file_id, path, change, seen, mtime, old_path, summary FROM file_changes WHERE ${changeWhere} ORDER BY seen DESC, id DESC LIMIT ?`, ...params, limit);
     const paths = filePaths(db, events.map((event) => event.file_id));
     return {
-      project: job.name, since: since ?? null, ...(target ? { file: target.path } : {}),
+      project: job.name, referenceOnly: referenceOnly(db), since: since ?? null, ...(target ? { file: target.path } : {}),
       count: { changes: eventCount, fileChanges: fileCount },
       changes: events.map((event) => ({
         date: event.date, title: event.title, file: pathIn(paths, event.file_id),
@@ -920,7 +935,7 @@ export async function projectLatest(name: string, project?: string, near?: strin
   return withProjectDb(job.file, ({ db }) => {
     const hasTable = all<{ name: string }>(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'intel_series'").length > 0;
     if (!hasTable) {
-      return { project: job.name, name, series: [], hint: "This job's database has no version list yet: it is built by Project Analyzer (analyze.py intel, also at the end of every run). Ask the user, or look in the job folder." };
+      return { project: job.name, referenceOnly: referenceOnly(db), name, series: [], hint: "This job's database has no version list yet: it is built by Project Analyzer (analyze.py intel, also at the end of every run). Ask the user, or look in the job folder." };
     }
     const key = seriesKey(wanted.split("\\").pop() ?? wanted);
     // Case-insensitive as `= ? COLLATE NOCASE` / LIKE, so intel_series_key_nocase answers the key lookups.
@@ -970,7 +985,7 @@ export async function projectLatest(name: string, project?: string, near?: strin
       };
     });
     return {
-      project: job.name, name, ...(near ? { near } : {}), series,
+      project: job.name, referenceOnly: referenceOnly(db), name, ...(near ? { near } : {}), series,
       hint: series.length === 0
         ? "No file by that name in the job's database. Ask the user, or check list_open in civil3d_drawing."
         : "Drawings already open come first (civil3d_drawing list_open). The latest is the one modified last. When one name is in several " +
@@ -993,6 +1008,7 @@ export interface ProjectBriefing {
   highChecks: string[];
   missingFiles: number;
   userKnowledge: { documents: number; names?: string[] };
+  referenceOnly: string;
   hint: string;
 }
 
@@ -1003,7 +1019,7 @@ export async function projectNotesOnce(): Promise<ProjectBriefing | undefined> {
     const briefing = await withProjectDb(job.file, ({ db }): ProjectBriefing => {
       const knowledge = listFolder(ensureUserKnowledgeDirectory(job.file)).files;
       return {
-        project: job.name,
+        project: job.name, referenceOnly: referenceOnly(db),
         keyFacts: facts(db, `${CURRENT} AND f.key = 1 AND ${NOT_SUPERSEDED} ORDER BY f.added, f.id LIMIT 15`).map((fact) => `[${fact.id}] ${fact.fact}`),
         notes: Number((db.prepare(`SELECT COUNT(*) AS n FROM facts f WHERE ${CURRENT} AND f.tool = ?`).get(TOOL) as { n: number }).n),
         highChecks: all<{ title: string }>(db, "SELECT title FROM intel_checks WHERE severity = 'high' ORDER BY id LIMIT 10").map((row) => row.title),

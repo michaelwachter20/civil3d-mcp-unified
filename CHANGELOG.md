@@ -2,6 +2,14 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **The job's database is for reference only** (project-analyzer's `docs/suite-knowledge.md`, "Reference only"): it
+  is a snapshot of the job's files for finding and understanding things, never a source of coordinates, elevations,
+  points, quantities or text for editing or importing. Those come from the current file the user names, and with
+  none named the AI asks which file is current. The rule is in the server instructions, the `civil3d_project_notes`
+  description and the `working_safely_in_civil3d` skill; every read answer carries it as `referenceOnly`, with the
+  date of the last Project Analyzer run. The plugin refuses to import or open files inside the suite's shared
+  folder (job databases, backups, User Knowledge): `FileBoundary.ResolveImportPath`, using the shared-folder lookup
+  now in `SharedFolder.cs`.
 - **The job's database is opened the way the suite contract now says** (project-analyzer's
   `docs/suite-knowledge.md`, "Opening"; `project-db.sql` and the test fixture updated from project-analyzer):
   - **Read actions open it read-only.** Only `link`, `unlink` and the note actions open it read-write; the job list

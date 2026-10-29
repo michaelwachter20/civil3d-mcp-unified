@@ -584,7 +584,11 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "active drawing's folder) creates the job or adds a folder; unlink (project, folder); add (note: one line, one statement; optional " +
         "topics, source drawing|user, supersedes = the id of another tool's fact it corrects); update (id, note, optional topics); remove (id) " +
         "retires a note (kept, hidden). All take an optional project (default: the active drawing's job). Ask the user before adding or " +
-        "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12.",
+        "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12. REFERENCE ONLY: the database is a snapshot of the job's " +
+        "files as of the last Project Analyzer run, for finding and understanding things; never use its coordinates, elevations, points, " +
+        "stations, quantities or text as data for editing or importing: take those from the current source file the user names, or ask " +
+        "which file is current (every read answer repeats this as referenceOnly). A latest or locate answer points at a file: open " +
+        "and read that file, and confirm with the user that it is the current one.",
       inputShape: {
         action: z.enum([
           "overview", "search", "file", "entity", "timeline", "locate", "latest", "checks", "changes", "list", "link", "unlink", "add", "update", "remove",

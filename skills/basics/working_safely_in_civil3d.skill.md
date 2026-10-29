@@ -22,6 +22,12 @@ parameters: []
   with `action=search` (words or codes like `MH-3`, `12+50`, `C-104`), `file`, `entity` or `timeline`.
 - Job folders are usually copies, so paths written in drawings (xrefs, images) point at the original location.
   Translate them with `civil3d_project_notes action=locate`; if it can't tell, ask the user rather than guess.
+- **The job database is for reference only.** It is a snapshot of the job's files as of the last Project Analyzer
+  run: use it to find and understand things (what a file says, where it is, who did what and when). Never use its
+  coordinates, elevations, points, stations, dimensions, quantities or text as data to edit or import into a drawing.
+  Take them from the current source file the user names; if they haven't named one, ask which file is current before
+  changing anything. Every answer from it says so (`referenceOnly`), and imports from the suite's shared knowledge
+  folder are refused.
 - The overview also lists the job's **user knowledge**: the user's own documents for this job (proposal guidelines,
   building-type requirements, standards, code books). Read the ones that apply with `action=read`, follow them and
   name the document; when one conflicts with a fact, a practice or the drawings, tell the user rather than choose.

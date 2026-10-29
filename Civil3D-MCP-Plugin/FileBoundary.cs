@@ -25,6 +25,14 @@ internal static class FileBoundary
   public static string ResolveImportPath(string rawPath, params string[] allowedExtensions)
   {
     var path = ResolvePath(rawPath, ImportRoots.Value, "import", allowedExtensions);
+    if (IsInSharedKnowledgeFolder(path))
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.PATH_NOT_ALLOWED",
+        $"'{path}' is in the suite's shared knowledge folder (job databases, backups, User Knowledge), which is for reference only " +
+        "and never a source for a drawing. Ask the user for the current source file in the job folder.");
+    }
+
     if (!File.Exists(path))
     {
       throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Import file was not found: {path}");
@@ -296,6 +304,22 @@ internal static class FileBoundary
       }
 
       yield return root;
+    }
+  }
+
+  /// <summary>
+  /// True when the path is inside the suite's shared folder (SharedFolder.Root): the job databases are a snapshot for
+  /// reference, so nothing is imported or opened from there (contract: "Reference only").
+  /// </summary>
+  private static bool IsInSharedKnowledgeFolder(string path)
+  {
+    try
+    {
+      return IsWithinRoot(path, Path.GetFullPath(SharedFolder.Root()));
+    }
+    catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException)
+    {
+      return false;
     }
   }
 
