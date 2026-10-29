@@ -2,6 +2,10 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **`civil3d_project_notes action=entity` stays a readable size:** at most 10 story lines of 30 steps each (as TBC
+  MCP), with `stepsTotal` when a story has more. On a real job one RFI's answer was 143,000 characters; it is now
+  26,000.
+
 - **`civil3d_drawing action=open`** opens a drawing the way the user means it:
   - **A drawing already open** that matches the name comes first: with or without `.dwg`, or the same name without
     "rev N", dates or "current". It becomes the active tab.
