@@ -643,6 +643,56 @@ export function invalidateJobIndex() {
   index = undefined;
 }
 
+/**
+ * The job's other folders (contract: "More than one folder per job"): meta job_folders, [{name, path}]. Their files'
+ * paths start with `<job folder: NAME>\\`; onDisk gives any stored path's place on this computer.
+ */
+export const FOLDER_PREFIX = "<job folder: ";
+
+export function jobFolders(db: DatabaseSync): Array<{ name: string; path: string }> {
+  try {
+    const folders = JSON.parse(metaValue(db, "job_folders") ?? "[]") as unknown;
+    return Array.isArray(folders)
+      ? folders.filter((folder): folder is { name: string; path: string } =>
+        typeof folder?.name === "string" && !!folder.name && typeof folder?.path === "string" && !!folder.path)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Where a top-level file (its files.path) is on this computer: an extra job folder's path + the rest for
+ * `<job folder: NAME>\\rest`, else source_root + the path; undefined for user knowledge, Outlook emails, or a folder the
+ * database doesn't know.
+ */
+export function onDisk(db: DatabaseSync, relative: string): string | undefined {
+  const stored = relative.replace(/\//g, "\\");
+  if (stored.startsWith(FOLDER_PREFIX)) {
+    const end = stored.indexOf(">\\", FOLDER_PREFIX.length);
+    if (end < 0) return undefined;
+    const name = stored.slice(FOLDER_PREFIX.length, end).toLowerCase();
+    const folder = jobFolders(db).find((candidate) => candidate.name.toLowerCase() === name);
+    return folder ? path.win32.join(folder.path, stored.slice(end + 2)) : undefined;
+  }
+  const sourceRoot = metaValue(db, "source_root");
+  if (stored.startsWith("<") || !sourceRoot) return undefined;
+  return stored ? path.win32.join(sourceRoot, stored) : sourceRoot;
+}
+
+/** A path on this computer as the job's database stores it (relative to the job folder or `<job folder: NAME>\\...`). */
+export function storedPath(db: DatabaseSync, absolute: string): string | undefined {
+  const key = pathKey(absolute);
+  const sourceRoot = metaValue(db, "source_root");
+  const folders = [...(sourceRoot ? [{ prefix: "", path: sourceRoot }] : []),
+    ...jobFolders(db).map((folder) => ({ prefix: `${FOLDER_PREFIX}${folder.name}>\\`, path: folder.path }))];
+  for (const folder of folders) {
+    const root = pathKey(folder.path);
+    if (key.startsWith(`${root}\\`)) return folder.prefix + path.win32.normalize(absolute).slice(path.win32.normalize(folder.path).replace(/\\+$/, "").length + 1);
+  }
+  return undefined;
+}
+
 function readJob(file: string): Job {
   return withProjectDbSync(file, ({ db }) => {
     const name = metaValue(db, "project_name") ?? path.basename(file, ".db");
@@ -652,6 +702,7 @@ function readJob(file: string): Job {
     for (const row of db.prepare("SELECT path, tool FROM folders").all() as Array<{ path: string; tool: string }>) {
       if (row.path?.trim()) roots.push({ path: row.path, tool: row.tool, key: pathKey(row.path) });
     }
+    for (const folder of jobFolders(db)) roots.push({ path: folder.path, tool: "project-analyzer", key: pathKey(folder.path) });
     return { file, slug: path.basename(file, ".db"), name, sourceRoot, roots };
   });
 }
@@ -771,7 +822,8 @@ export function jobIdentities(directory = projectsDirectory()): Identity[] {
           db.exec(`PRAGMA busy_timeout = ${timing.busyTimeoutMs}`);
           const folders = (db.prepare("SELECT path FROM folders").all() as Array<{ path: string }>).map((row) => row.path);
           const sourceRoot = metaValue(db, "source_root");
-          identity = { name: metaValue(db, "project_name") ?? "", slug: entry.replace(/\.db$/i, ""), folders: sourceRoot ? [sourceRoot, ...folders] : folders };
+          const extra = jobFolders(db).map((folder) => folder.path);
+          identity = { name: metaValue(db, "project_name") ?? "", slug: entry.replace(/\.db$/i, ""), folders: [...(sourceRoot ? [sourceRoot] : []), ...folders, ...extra] };
         } finally {
           db.close();
         }

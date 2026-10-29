@@ -2,6 +2,11 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **More than one folder per job** (project-analyzer's `docs/suite-knowledge.md`, "More than one folder per job"):
+  a job's other folders (`meta.job_folders`, files under `<job folder: NAME>\`) count for finding a drawing's job;
+  `locate`, `latest` and `file` (new `onDisk`) give each file's place in its own folder, and `file` also takes a path
+  on this computer in any of them (`projectDb.onDisk`, `storedPath`). The tool description explains the
+  `<job folder: …>\`, `<outlook>\` and `<user knowledge>\` paths.
 - **The job's database is for reference only** (project-analyzer's `docs/suite-knowledge.md`, "Reference only"): it
   is a snapshot of the job's files for finding and understanding things, never a source of coordinates, elevations,
   points, quantities or text for editing or importing. Those come from the current file the user names, and with

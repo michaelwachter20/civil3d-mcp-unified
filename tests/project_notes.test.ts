@@ -60,6 +60,26 @@ describe("project notes on the suite's project database", () => {
     expect(listProjects().map((project) => project.name)).toEqual(["Elm Phase 2", ELM]);
   });
 
+  it("knows the job's other folders: a drawing there names the job, and every path is in its own folder", async () => {
+    // Contract "More than one folder per job": meta job_folders, files under "<job folder: NAME>\".
+    const db = open();
+    try {
+      db.prepare("INSERT INTO meta(key, value) VALUES ('job_folders', ?)").run(JSON.stringify([{ name: "Survey", path: "S:\\Survey\\1234" }]));
+      db.prepare("INSERT INTO files(id, root_id, parent_id, depth, path, name, ext, kind, status) VALUES (?, ?, NULL, 0, ?, 'CP.dwg', '.dwg', 'cad', 'done')")
+        .run("5555555555555555", "5555555555555555", "<job folder: Survey>\\CP.dwg");
+      db.prepare("INSERT INTO refs(file_id, root_id, kind, raw, normalized, status, target_path) VALUES (?, ?, 'xref', ?, ?, 'found', ?)")
+        .run("5555555555555555", "5555555555555555", "S:\\Survey\\1234\\CP.dwg", "S:\\Survey\\1234\\CP.dwg", "<job folder: Survey>\\CP.dwg");
+    } finally {
+      db.close();
+    }
+    invalidateJobIndex();
+    expect(projectForDrawing("s:\\survey\\1234\\Field\\CP-7.dwg")?.name).toBe(ELM);
+    expect(await locatePath("S:\\Survey\\1234\\CP.dwg", ELM)).toMatchObject({ status: "found", path: "S:\\Survey\\1234\\CP.dwg" });
+    expect(await projectFileDetails("S:\\Survey\\1234\\CP.dwg", ELM)).toMatchObject({ file: { path: "<job folder: Survey>\\CP.dwg" }, onDisk: "S:\\Survey\\1234\\CP.dwg" });
+    expect(await projectFileDetails("C:\\Jobs\\Elm Street\\Drawings\\C-104.dwg", ELM)).toMatchObject({ file: { path: "Drawings\\C-104.dwg" }, onDisk: "C:\\Jobs\\Elm Street\\Drawings\\C-104.dwg" });
+    expect((await projectOverview(ELM)).folders).toContainEqual({ path: "S:\\Survey\\1234", tool: "project-analyzer" });
+  });
+
   it("creates a new job database by the contract when linking", async () => {
     const folder = join(root, "jobs", "site-a");
     const linked = await linkProjectFolder("Site A", folder);

@@ -6,7 +6,8 @@ import { knowledgeError } from "./knowledgeBase.js";
 import { listPractices } from "./practices.js";
 import {
   baseName, databaseFileFor, directoryOf, fullText, immediate, invalidateJobIndex, isBusy, isCorrupt, isMissingTableOrColumn, jobByName, jobForPath,
-  jobIndex, metaValue, nextId, normalizePath, nowIso, pathKey, relativeTo, searchText, searchTokens, TOOL, withoutProfile, withProjectDb, type Job,
+  jobIndex, metaValue, nextId, normalizePath, nowIso, onDisk, pathKey, relativeTo, searchText, searchTokens, storedPath, TOOL, withoutProfile,
+  withProjectDb, type Job,
 } from "./projectDb.js";
 import {
   analyzerDocuments, ensureUserKnowledgeDirectory, extractText, insideFolder, jobDirectoryOf, joinParts, legacyFiles, listFolder, longPath, MAX_DIRECT_BYTES,
@@ -603,7 +604,8 @@ interface FileRow {
 
 function findFile(db: DatabaseSync, file: string): FileRow {
   const columns = "id, path, name, kind, size, status, duplicate_of, summary, doc_date, author, error, chars, parent_id";
-  const wanted = file.replace(/\//g, "\\");
+  // A path on this computer (in the job folder or one of its other folders) is looked up as the database stores it.
+  const wanted = (path.win32.isAbsolute(file) ? storedPath(db, file) : undefined) ?? file.replace(/\//g, "\\");
   const byId = db.prepare(`SELECT ${columns} FROM files WHERE id = ?`).get(file) as unknown as FileRow | undefined;
   if (byId) return byId;
   // `= ? COLLATE NOCASE` so files_path_nocase answers it.
@@ -636,9 +638,11 @@ export async function projectFileDetails(file: string, name?: string) {
     const refsTo = all<{ file_id: string; kind: string; raw: string; status: string }>(
       db, "SELECT file_id, kind, raw, status FROM refs WHERE target_id = ? OR target_path = ? COLLATE NOCASE", row.id, row.path);
     const paths = filePaths(db, refsTo.map((ref) => ref.file_id));
+    const place = row.path.includes("::") ? undefined : onDisk(db, row.path);
     return {
       project: job.name, referenceOnly: referenceOnly(db),
       file: Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)),
+      ...(place ? { onDisk: place } : {}),
       props: Object.fromEntries(all<{ key: string; value: string }>(db, "SELECT key, value FROM props WHERE file_id = ? ORDER BY key", row.id).map((prop) => [prop.key, prop.value])),
       ...(summary ? { summary: { ...summary, points: parseJson(summary.points, []), people: parseJson(summary.people, []) } } : {}),
       refsFrom: all<Record<string, unknown>>(db, "SELECT kind, raw, location, status, target_path, expected_path FROM refs WHERE file_id = ?", row.id),
@@ -758,8 +762,7 @@ export async function locatePath(written: string, name?: string) {
   const wanted = written.trim().replace(/\//g, "\\");
   if (!wanted) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give the path as written in the file.");
   return withProjectDb(job.file, ({ db }) => {
-    const sourceRoot = metaValue(db, "source_root");
-    const inCopy = (relative: string | null | undefined) => (relative && sourceRoot ? path.win32.join(sourceRoot, relative) : undefined);
+    const inCopy = (relative: string | null | undefined) => (relative ? onDisk(db, relative) : undefined);
     type RefRow = { file_id: string; kind: string; status: string; target_path: string | null; expected_path: string | null; candidates: string | null; location: string | null };
     const columns = "file_id, kind, status, target_path, expected_path, candidates, location";
     // By refs.normalized (refs_normalized_nocase answers it), else as written (raw has no index: only when needed).
@@ -965,10 +968,8 @@ export async function projectLatest(name: string, project?: string, near?: strin
       })).filter((members) => members.length > 0);
     }
     found.sort((left, right) => Number(left[0].kind !== "cad") - Number(right[0].kind !== "cad") || left[0].key.localeCompare(right[0].key));
-    const sourceRoot = metaValue(db, "source_root");
-    const onDisk = (relative: string) => (sourceRoot ? path.win32.join(sourceRoot, relative) : undefined);
     const describeMember = (member: SeriesRow) => {
-      const full = onDisk(member.path);
+      const full = onDisk(db, member.path);
       return {
         path: member.path, fullPath: full, exists: !!full && existsSync(full), modified: member.modified?.slice(0, 10) ?? null,
         ...(member.title_date ? { titleBlockDate: member.title_date } : {}), ...(member.revision ? { revision: member.revision } : {}),

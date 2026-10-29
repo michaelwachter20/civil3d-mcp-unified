@@ -587,7 +587,9 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         "changing. Write references as 2026-10-03, 12+50, MH-3, C-104, RFI 12. REFERENCE ONLY: the database is a snapshot of the job's " +
         "files as of the last Project Analyzer run, for finding and understanding things; never use its coordinates, elevations, points, " +
         "stations, quantities or text as data for editing or importing: take those from the current source file the user names, or ask " +
-        "which file is current (every read answer repeats this as referenceOnly). A latest or locate answer points at a file: open " +
+        "which file is current (every read answer repeats this as referenceOnly). Paths: a job can have more than one folder; a path " +
+        "starting with <job folder: NAME>\\ is in that other folder of the job (file gives onDisk, locate the path on this computer), one " +
+        "starting with <outlook>\\ is an email read from Outlook (no file on disk), <user knowledge>\\ the user's own documents. A latest or locate answer points at a file: open " +
         "and read that file, and confirm with the user that it is the current one.",
       inputShape: {
         action: z.enum([
