@@ -7,6 +7,12 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Shared helpers for the command classes: names and handles, typed late-bound property reads and method calls
+/// (delegated to Civil3DCompatibility, the only file allowed to use reflection: tests/reflection_boundary.test.ts),
+/// object-id collections, drawing units, and lookups by name (alignment, profile, surface, corridor) that throw
+/// CIVIL3D.OBJECT_NOT_FOUND. Late-bound reads return null or default when a member doesn't exist on this release.
+/// </summary>
 public static class CivilObjectUtils
 {
   public static string GetHandle(AcDbObject dbObject)
@@ -34,6 +40,7 @@ public static class CivilObjectUtils
     return Civil3DCompatibility.GetPropertyValue(value, propertyName)?.ToString();
   }
 
+  /// <summary>A property read late-bound; default(T) when the object is null or has no such property.</summary>
   public static T? GetPropertyValue<T>(object? value, string propertyName)
   {
     if (value == null)
@@ -44,6 +51,7 @@ public static class CivilObjectUtils
     return Civil3DCompatibility.GetPropertyValue<T>(value, propertyName);
   }
 
+  /// <summary>A method call late-bound; null when the object is null or has no matching method.</summary>
   public static object? InvokeMethod(object? value, string methodName, params object?[] arguments)
   {
     if (value == null)
@@ -54,6 +62,7 @@ public static class CivilObjectUtils
     return Civil3DCompatibility.InvokeMethod(value, methodName, arguments);
   }
 
+  /// <summary>The ObjectIds in an ObjectIdCollection or any enumerable (other items are skipped).</summary>
   public static IEnumerable<ObjectId> ToObjectIds(object? collection)
   {
     if (collection is ObjectIdCollection objectIds)
@@ -82,6 +91,7 @@ public static class CivilObjectUtils
     return (T)(transaction.GetObject(objectId, openMode) ?? throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Object {objectId} not found."));
   }
 
+  /// <summary>The drawing's linear units as a word ("feet", "meters", or "other"; survey feet count as feet), as reported in every answer's units.</summary>
   public static string LinearUnits(Database database)
   {
     if (database.Insunits == UnitsValue.Meters) return "meters";
@@ -102,6 +112,7 @@ public static class CivilObjectUtils
     };
   }
 
+  /// <summary>The alignment named <paramref name="name"/> (case-insensitive), opened for read.</summary>
   public static Alignment FindAlignmentByName(CivilDocument civilDoc, Transaction transaction, string name)
   {
     foreach (ObjectId objectId in civilDoc.GetAlignmentIds())

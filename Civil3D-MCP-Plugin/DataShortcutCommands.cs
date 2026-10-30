@@ -11,8 +11,18 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_project (data shortcuts; src/tools/domains/projectDomain.ts) and the data shortcut
+/// workflows. Much of Civil 3D's data shortcut handling has no managed API, so several methods don't finish the job
+/// themselves: create opens Civil 3D's Create Data Shortcuts dialog for the user to confirm, sync launches the
+/// SynchronizeReferences command, and reference, create-reference and promote answer "manual_step_required" with
+/// what the user must do in Toolspace. Each answer says so (<c>status</c>, <c>dialogRequired</c>, <c>notes</c>);
+/// pass that on to the user instead of reporting the shortcut as done.
+/// </summary>
 public static class DataShortcutCommands
 {
+  /// <summary>Surfaces, alignments and other shortcut-able objects split into incoming references (data shortcuts
+  /// already in this drawing) and exportable objects (this drawing's own, which could be published).</summary>
   public static Task<object?> ListDataShortcutsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -154,6 +164,11 @@ public static class DataShortcutCommands
     });
   }
 
+  /// <summary>
+  /// Lists the references that look out of date and, unless <c>dryRun</c>, launches SynchronizeReferences. The command
+  /// is queued with SendStringToExecute, so it runs after this request returns (status "initiated"), and it covers
+  /// every reference in the drawing: <c>shortcutNames</c> and <c>projectFolder</c> only filter what is reported.
+  /// </summary>
   public static async Task<object?> SyncDataShortcutsAsync(JsonObject? parameters)
   {
     var projectFolder = PluginRuntime.GetOptionalString(parameters, "projectFolder");
@@ -213,6 +228,7 @@ public static class DataShortcutCommands
     });
   }
 
+  /// <summary>Not automatable here: answers "manual_step_required" with how to create the reference in Civil 3D.</summary>
   public static Task<object?> CreateDataShortcutReferenceAsync(JsonObject? parameters)
   {
     var sourceFilePath = PluginRuntime.GetRequiredString(parameters, "sourceFilePath");
@@ -234,6 +250,8 @@ public static class DataShortcutCommands
     });
   }
 
+  /// <summary>Not automatable here: corridors can't be promoted at all, and other types answer "manual_step_required"
+  /// (promote from Toolspace).</summary>
   public static Task<object?> PromoteDataShortcutAsync(JsonObject? parameters)
   {
     var shortcutName = PluginRuntime.GetRequiredString(parameters, "shortcutName");

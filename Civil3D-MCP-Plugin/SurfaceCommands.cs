@@ -8,8 +8,23 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind the civil3d_surface tool (src/tools/domains/surfaceDomain.ts): listing and inspecting
+/// surfaces, sampling elevations, adding TIN data (points, breaklines, boundaries), contours, volumes, the stored
+/// analysis ranges, and DEM import. Each method is registered by name in CommandDispatcher.cs.
+///
+/// Reads go through CivilExecution.ReadAsync and writes through WriteAsync, so they share the host queue and a write is
+/// one undo step. Surfaces are found by name (case-insensitive) with CivilObjectUtils.FindSurfaceByName; a missing one
+/// is CIVIL3D.OBJECT_NOT_FOUND.
+///
+/// The volume methods create a temporary TIN volume surface inside a read transaction. Reads never commit, so the
+/// volume surface is discarded with the transaction and the drawing is left unchanged (scripts/live-host-smoke.mjs
+/// checks that the surface list is the same before and after).
+/// </summary>
 public static class SurfaceCommands
 {
+  /// <summary>Lists every surface in the drawing: name, handle, type (TIN, Grid, TINVolume), and whether it is a data
+  /// reference (with its source path).</summary>
   public static Task<object?> ListSurfacesAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -34,6 +49,11 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// One surface's detail for <c>name</c>: style, layer, elevation and area statistics, triangle count (TIN only),
+  /// bounding box and drawing units. <c>dependentAlignments</c> and <c>dependentCorridors</c> are always empty lists;
+  /// they keep the response shape the TypeScript schema expects.
+  /// </summary>
   public static Task<object?> GetSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -76,6 +96,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Elevation of surface <c>name</c> at (<c>x</c>, <c>y</c>). A point outside the surface is
+  /// CIVIL3D.API_ERROR, not a null elevation.</summary>
   public static Task<object?> GetSurfaceElevationAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -95,6 +117,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Elevations of surface <c>name</c> at each of <c>points</c> ([{x, y}]). Unlike
+  /// SampleSurfaceElevationsAsync, one point off the surface fails the whole call.</summary>
   public static Task<object?> GetSurfaceElevationsAlongAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -129,6 +153,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Elevation range, mean, 2D/3D area, point and triangle counts of surface <c>name</c>.
+  /// <c>analysisType</c> is only echoed back.</summary>
   public static Task<object?> GetSurfaceStatisticsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -154,6 +180,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Creates an empty TIN surface <c>name</c> with an optional <c>style</c> (default style when missing),
+  /// <c>layer</c> and <c>description</c>. Data is added afterwards with the add* methods.</summary>
   public static Task<object?> CreateSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -183,6 +211,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Erases surface <c>name</c>. Approval-gated on the TypeScript side; objects that depend on it are not
+  /// checked here.</summary>
   public static Task<object?> DeleteSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -198,6 +228,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Adds <c>points</c> ([{x, y, z}], z required) as TIN vertices to surface <c>name</c> and rebuilds it.
+  /// Only TIN surfaces accept vertices.</summary>
   public static Task<object?> AddSurfacePointsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -225,6 +257,11 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Adds one standard breakline through <c>points</c> (at least two, with z) to TIN surface <c>name</c> and rebuilds
+  /// it. Only <c>breaklineType = "standard"</c> is supported; other types are refused before anything changes, so the
+  /// caller isn't left with a half-applied edit.
+  /// </summary>
   public static Task<object?> AddSurfaceBreaklineAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -264,6 +301,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Adds a boundary polygon (<c>points</c>, at least three, x/y only) of type <c>boundaryType</c>
+  /// (outer by default; show, hide, data clip) to surface <c>name</c> and rebuilds it.</summary>
   public static Task<object?> AddSurfaceBoundaryAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -290,6 +329,11 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Extracts contours of surface <c>name</c> as drawing objects at <c>minorInterval</c>, and again at
+  /// <c>majorInterval</c> when it differs, returning their handles. It is a write (new objects in model space) although
+  /// the surface itself is only read. Elevations on both intervals (every major contour, usually) are extracted twice.
+  /// </summary>
   public static Task<object?> ExtractSurfaceContoursAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -314,6 +358,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>Cut, fill and net volume between <c>baseSurface</c> and <c>comparisonSurface</c>, from a temporary
+  /// TIN volume surface (see the class remarks). Cut and fill areas aren't available from the API and come back null.</summary>
   public static Task<object?> ComputeSurfaceVolumeAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -343,6 +389,10 @@ public static class SurfaceCommands
 
   // ─── New analysis methods ───────────────────────────────────────────────
 
+  /// <summary>
+  /// Same volumes as ComputeSurfaceVolumeAsync, with the surface names and <c>method</c> in the answer. The method
+  /// (tin_volume, average_end_area, prismoidal) is only echoed: the value always comes from a TIN volume surface.
+  /// </summary>
   public static Task<object?> CalculateSurfaceVolumeAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -375,6 +425,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>The TIN volumes between two surfaces as a plain-text report plus the numbers; <c>format = "detailed"</c>
+  /// adds the net balance and the cut/fill ratio.</summary>
   public static Task<object?> GetSurfaceVolumeReportAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -439,6 +491,12 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Cut and fill between two surfaces inside a <c>boundary</c> polygon (at least three points), estimated by sampling
+  /// both surfaces on a grid of about 50 x 50 cells over the boundary's extents. The API has no volume-by-polygon
+  /// call, so this is an approximation; cells where either surface has no elevation are skipped. Unlike the TIN
+  /// volume methods it also returns cut and fill areas.
+  /// </summary>
   public static Task<object?> CalculateSurfaceVolumeByRegionAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -523,6 +581,11 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// The slope ranges stored in surface <c>name</c>'s Analysis tab, in percent, with their colors. It doesn't run a
+  /// new analysis: <c>numRanges</c> and <c>ranges</c> are only echoed, and a surface without stored ranges is an error
+  /// that tells the user to generate them in Surface Properties.
+  /// </summary>
   public static Task<object?> AnalyzeSurfaceSlopeAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -566,6 +629,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>The elevation ranges stored in surface <c>name</c>'s Analysis tab plus its overall minimum and maximum;
+  /// like the slope method, it reads what Civil 3D stored and doesn't compute new ranges.</summary>
   public static Task<object?> AnalyzeSurfaceElevationAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -612,6 +677,8 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>The direction (aspect) ranges stored in surface <c>name</c>'s Analysis tab, converted from radians to
+  /// degrees. Reads stored ranges only.</summary>
   public static Task<object?> AnalyzeSurfaceDirectionsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -652,6 +719,11 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Tries to add a watershed analysis to surface <c>name</c>. The managed API has no documented call for it, so this
+  /// tries a few member names late-bound through CivilObjectUtils and reports <c>watershedsAdded = false</c> when none
+  /// exists, rather than failing. <c>mergeAdjacentWatersheds</c> is only echoed.
+  /// </summary>
   public static Task<object?> AddSurfaceWatershedsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -702,6 +774,10 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Sets the minor and major contour intervals on surface <c>name</c>'s style. The change is to the style, so every
+  /// surface that uses the same style changes too.
+  /// </summary>
   public static Task<object?> SetSurfaceContourIntervalAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -728,6 +804,7 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>The statistics of GetSurfaceStatisticsAsync with horizontal, vertical and area units.</summary>
   public static Task<object?> GetSurfaceStatisticsDetailedAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -759,6 +836,13 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Samples surface <c>name</c> by <c>method</c>: <c>grid</c> (every <c>gridSpacing</c> over the surface extents,
+  /// optionally only inside <c>boundary</c>), <c>points</c> (the given points), or <c>transect</c> (<c>numSamples</c>,
+  /// default 50, evenly spaced from <c>startPoint</c> to <c>endPoint</c>, with the distance as <c>station</c>).
+  /// Points off the surface are left out instead of failing the call, so a sample may have fewer points than asked.
+  /// A small grid spacing over a large surface can return a very large answer.
+  /// </summary>
   public static Task<object?> SampleSurfaceElevationsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -905,6 +989,12 @@ public static class SurfaceCommands
     });
   }
 
+  /// <summary>
+  /// Creates TIN surface <c>name</c> from a DEM file (.dem, .tif, .tiff, .asc, .adf). The path goes through
+  /// FileBoundary.ResolveImportPath, so it must be inside the import roots and not in the suite's shared folder. A
+  /// <c>coordinateSystem</c> is refused up front because AddDEMFile can't assign one; if the import fails, the new
+  /// surface is erased so no empty surface is left behind.
+  /// </summary>
   public static Task<object?> CreateSurfaceFromDemAsync(JsonObject? parameters)
   {
     var filePath = FileBoundary.ResolveImportPath(
@@ -985,6 +1075,8 @@ public static class SurfaceCommands
     };
   }
 
+  /// <summary>FindElevationAtXY with the API's exception turned into CIVIL3D.API_ERROR naming the surface and
+  /// point; callers that sample many points catch it and skip the point.</summary>
   private static double InvokeSurfaceElevation(CivilSurface surface, double x, double y)
   {
     try
@@ -1118,6 +1210,8 @@ public static class SurfaceCommands
     return extracted;
   }
 
+  /// <summary>Volumes between two surfaces via a TIN volume surface created in the caller's transaction; in a read
+  /// the transaction is never committed, so the volume surface doesn't stay in the drawing.</summary>
   private static VolumeSurfaceProperties GetVolumeProperties(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
     var volumeSurface = CreateTinVolumeSurface(civilDoc, transaction, baseSurface, comparisonSurface);

@@ -4,6 +4,12 @@ using Autodesk.Civil.DatabaseServices;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods for COGO points behind civil3d_point (src/tools/domains/pointDomain.ts): list (optionally by
+/// group, with limit/offset), get by number, create, import from text, delete by number, and list point groups.
+/// Point groups' create/update/delete/export/transform are in PointGroupCommands. COGO points are often survey
+/// data, which the server instructions tell the AI not to change unless the user asks.
+/// </summary>
 public static class PointCommands
 {
   public static Task<object?> ListCogoPointsAsync(JsonObject? parameters)
@@ -47,6 +53,8 @@ public static class PointCommands
     });
   }
 
+  /// <summary>Creates a point for each of <c>points</c> ({x, y, z, description}); numbers come from the drawing's next
+  /// point number unless <c>startNumber</c> is given, then they run startNumber, startNumber + 1, ...</summary>
   public static Task<object?> CreateCogoPointsAsync(JsonObject? parameters)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
@@ -93,6 +101,12 @@ public static class PointCommands
     });
   }
 
+  /// <summary>
+  /// Creates points from <c>data</c>, text with one point per line in <c>format</c> pnezd, penz, xyzd or xyz
+  /// (separated by commas, semicolons, tabs or spaces). Point numbers in the data are not used: new points take the
+  /// drawing's next numbers. <c>targetSurface</c> is refused (not implemented). See ParsePointImport for how the
+  /// columns map to X, Y and Z.
+  /// </summary>
   public static Task<object?> ImportCogoPointsAsync(JsonObject? parameters)
   {
     var format = PluginRuntime.GetRequiredString(parameters, "format");
@@ -124,6 +138,8 @@ public static class PointCommands
     });
   }
 
+  /// <summary>Erases the points with the given <c>pointNumbers</c>; one missing number fails the whole call, so
+  /// nothing is erased (the write isn't committed).</summary>
   public static Task<object?> DeleteCogoPointsAsync(JsonObject? parameters)
   {
     var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
@@ -216,6 +232,12 @@ public static class PointCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Point group '{groupName}' was not found.");
   }
 
+  /// <summary>
+  /// Reads one point per line. Column mapping as written: pnezd takes X from column 2 and Y from column 3, which in a
+  /// PNEZD file are the northing and the easting, so X and Y come out swapped relative to AutoCAD (X = easting); penz
+  /// takes X, Y, Z from columns 2, 4, 3. xyz and xyzd are read in order. Numbers are parsed with the current culture.
+  /// Check one known point before relying on an import.
+  /// </summary>
   private static IEnumerable<(double X, double Y, double Z, string Description)> ParsePointImport(string data, string format)
   {
     foreach (var rawLine in data.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))

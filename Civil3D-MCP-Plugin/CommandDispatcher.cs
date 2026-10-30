@@ -2,8 +2,20 @@ using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// The plugin's method table: maps each JSON-RPC method name sent by the TypeScript server to its handler. This
+/// switch is the whole registration on the C# side; nothing is discovered by reflection. Every name a domain action
+/// lists in <c>pluginMethods</c> (src/tools/domains/*.ts) must appear here, which
+/// tests/manifest_dispatcher_parity.test.ts checks by reading this file, so keep one <c>"name" =&gt; Handler(...)</c>
+/// entry per line. Several names can share a handler (addSurfaceWatershed / addSurfaceWatersheds).
+/// </summary>
 public static class CommandDispatcher
 {
+  /// <summary>
+  /// Calls the handler for <paramref name="method"/> with the request's params. The handler's result becomes the
+  /// JSON-RPC result. An unknown method is CIVIL3D.METHOD_NOT_FOUND. The cancellation token isn't passed to handlers;
+  /// they read it from PluginRuntime's request context when they need it.
+  /// </summary>
   public static Task<object?> DispatchAsync(string method, JsonObject? parameters, CancellationToken cancellationToken)
   {
   return method switch

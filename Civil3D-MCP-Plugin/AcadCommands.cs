@@ -5,6 +5,10 @@ using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plain AutoCAD geometry for civil3d_geometry: 2D and 3D polylines, lines, text and MText, added to model space as
+/// writes (one undo step each, the view follows). Anything beyond these is done with civil3d_execute.
+/// </summary>
 public static class AcadCommands
 {
   public static Task<object?> CreatePolylineAsync(JsonObject? parameters)

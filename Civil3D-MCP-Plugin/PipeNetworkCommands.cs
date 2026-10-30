@@ -9,8 +9,18 @@ using AcDbObject = Autodesk.AutoCAD.DatabaseServices.DBObject;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods for gravity pipe networks behind civil3d_pipe (src/tools/domains/pipeDomain.ts): list and
+/// inspect networks, pipes and structures, create a network, add structures and pipes, resize a pipe, and list the
+/// parts catalog. Pressure networks are in PressureNetworkCommands, hydraulics in PipeHydraulicsCommands.
+///
+/// Parts are chosen by their exact size name in the network's parts list (FindPartForNetwork), so list the catalog
+/// first. Pipe data carries centerline elevations, not inverts: the managed Pipe API doesn't expose endpoint inverts.
+/// The network collection is read late-bound from several member names so the class works across releases.
+/// </summary>
 public static class PipeNetworkCommands
 {
+  /// <summary>Every gravity network with its pipe and structure counts and reference surface.</summary>
   public static Task<object?> ListPipeNetworksAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -26,6 +36,8 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>Network <c>name</c> in full: parts list, style, reference surface and alignment, and every pipe and
+  /// structure (the shape pipeDomain.ts's size_network and automate_profile_view read).</summary>
   public static Task<object?> GetPipeNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -36,6 +48,8 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>One pipe (<c>pipeName</c> in <c>networkName</c>): structures at each end, 3D length, inner diameter,
+  /// slope, material and centerline elevations.</summary>
   public static Task<object?> GetPipeAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -48,6 +62,8 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>One structure (<c>structureName</c> in <c>networkName</c>): type, rim and sump elevations, location and
+  /// connected pipes.</summary>
   public static Task<object?> GetStructureAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -60,6 +76,11 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>
+  /// Validates that network <c>networkName</c> and the target (<c>targetType</c> surface or pipe_network,
+  /// <c>targetName</c>) exist, then always answers with no interferences: no clash detection is implemented. Don't
+  /// read the empty list as "no conflicts"; use Civil 3D's interference check for that.
+  /// </summary>
   public static Task<object?> CheckPipeNetworkInterferenceAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -90,6 +111,11 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>
+  /// Creates gravity network <c>name</c> with parts list <c>partsList</c> (required), and optional <c>layer</c>,
+  /// <c>style</c> (ignored when not found), <c>referenceSurface</c> and <c>referenceAlignment</c>. Civil 3D may adjust
+  /// the name if it is taken; the answer gives the name actually used.
+  /// </summary>
   public static Task<object?> CreatePipeNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -143,6 +169,8 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>Adds a structure of size <c>partName</c> at (<c>x</c>, <c>y</c>) with <c>rimElevation</c> (default 0)
+  /// and <c>sumpDepth</c> below the rim (default 0), without applying the network's design rules.</summary>
   public static Task<object?> AddStructureToNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -168,6 +196,12 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>
+  /// Adds a straight pipe of size <c>partName</c> from <c>startPoint</c> to <c>endPoint</c>, or from/to the named
+  /// <c>startStructure</c> / <c>endStructure</c> (connected to them); an end with neither is refused rather than
+  /// placed at the origin. Design rules aren't applied. With <c>diameter</c>, a part whose inner diameter differs is
+  /// refused, and because the write's transaction then isn't committed, no pipe is left behind.
+  /// </summary>
   public static Task<object?> AddPipeToNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -200,6 +234,11 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>
+  /// Changes pipe <c>pipeName</c> to part size <c>newPartName</c> (from the parts list) and/or to inner diameter
+  /// <c>newDiameter</c> (drawing units, the exact size, not the closest). When both are given, the part swap happens
+  /// first and the diameter is applied after it.
+  /// </summary>
   public static Task<object?> ResizePipeInNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -239,6 +278,7 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>Every parts list (or just <c>partsList</c>) with its part size names, the names partName takes.</summary>
   public static Task<object?> ListPipePartsCatalogAsync(JsonObject? parameters)
   {
     var partsListName = PluginRuntime.GetOptionalString(parameters, "partsList");
@@ -262,6 +302,7 @@ public static class PipeNetworkCommands
     });
   }
 
+  /// <summary>The number of gravity networks, for getDrawingInfo's object counts.</summary>
   public static int CountPipeNetworks(object civilDoc)
   {
     return ((CivilDocument)civilDoc).GetPipeNetworkIds().Count;
@@ -717,6 +758,11 @@ public static class PipeNetworkCommands
 
   private readonly record struct NetworkPartIds(ObjectId FamilyId, ObjectId SizeId);
 
+  /// <summary>
+  /// The family and size ids for <paramref name="partName"/> in the network's parts list: an exact (case-insensitive)
+  /// size name, or the family name when the family has only one size. A network without a parts list, or a name not
+  /// found, is CIVIL3D.OBJECT_NOT_FOUND.
+  /// </summary>
   private static NetworkPartIds FindPartForNetwork(Network network, Transaction transaction, string partName, DomainType domain)
   {
     if (network.PartsListId.IsNull)

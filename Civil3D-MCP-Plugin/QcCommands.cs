@@ -13,12 +13,31 @@ namespace Civil3DMcpPlugin;
 /// QC check commands — read-only analysis tools that inspect Civil 3D objects
 /// and return structured findings. Uses reflection for API compatibility.
 /// </summary>
+/// <remarks>
+/// Behind the civil3d_qc tool (src/tools/domains/qcDomain.ts), the drawing-standards actions of civil3d_standards
+/// (standardsDomain.ts) and the QC workflows. Each check returns a list of findings, each with a <c>severity</c>
+/// (error, warning, info), a machine-readable <c>type</c> and a message, so the AI can summarize or act on them.
+/// Optional limits without a default (maxGrade, minCover, ...) are only checked when the caller gives them.
+///
+/// Not everything here is read-only: QcReportGenerateAsync writes a text file (through FileBoundary, so only inside
+/// the export roots and never over an existing file without <c>overwrite</c>), and QcFixDrawingStandardsAsync renames
+/// and recolors layers (a write, one undo step, with a <c>dryRun</c> preview).
+///
+/// Properties are read late-bound (CivilObjectUtils.GetPropertyValue), and a property a release doesn't have reads
+/// as 0 or null, which can silence a check or, where 0 is a failing value, raise one.
+/// </remarks>
 public static class QcCommands
 {
   // -------------------------------------------------------------------------
   // qcCheckAlignment
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Checks alignment <c>name</c> entity by entity: zero-length tangents, curves and spirals, invalid radii and spiral
+  /// parameters, and, with <c>designSpeed</c>, curves below a rough minimum radius of V squared / 15 (a simplified
+  /// stand-in for the AASHTO formula, not a design check). <c>checkTangents</c>, <c>checkCurves</c> and
+  /// <c>checkSpirals</c> (all on by default) select the checks.
+  /// </summary>
   public static Task<object?> QcCheckAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -188,6 +207,11 @@ public static class QcCommands
   // qcCheckProfile
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Checks profile <c>profileName</c> of alignment <c>alignmentName</c> PVI by PVI: grades in and out above
+  /// <c>maxGrade</c>, and vertical curves whose K value is below <c>minKValue</c>. Grades are compared as the API gives
+  /// them (a fraction, e.g. 0.06 for 6 %), so pass <c>maxGrade</c> the same way.
+  /// </summary>
   public static Task<object?> QcCheckProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -294,6 +318,8 @@ public static class QcCommands
   // qcCheckCorridor
   // -------------------------------------------------------------------------
 
+  /// <summary>Checks corridor <c>name</c>: whether it reports itself invalid (needs a rebuild), and each baseline
+  /// region for zero or inverted station ranges and a missing assembly.</summary>
   public static Task<object?> QcCheckCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -401,6 +427,11 @@ public static class QcCommands
   // qcCheckPipeNetwork
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Checks every pipe of gravity network <c>name</c> against the limits given: <c>minSlope</c> / <c>maxSlope</c>,
+  /// <c>minCover</c>, <c>minVelocity</c> / <c>maxVelocity</c>. Cover and velocity are the values stored on the pipe;
+  /// a pipe without a stored velocity reads as 0 and is not reported as too slow.
+  /// </summary>
   public static Task<object?> QcCheckPipeNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -524,6 +555,13 @@ public static class QcCommands
   // qcCheckSurface
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Sanity checks on surface <c>name</c> from its general properties: an elevation range over ten times
+  /// <c>spikeThreshold</c> (default 10, so 100 units), no points, points but no triangles, a flat surface (range below
+  /// <c>flatTriangleThreshold</c>), and every elevation near zero (a likely datum or units problem). The triangle count
+  /// is read from the general properties, while SurfaceCommands reads it from the TIN properties; if
+  /// "surface_no_triangles" appears on a surface that looks fine, compare with civil3d_surface get.
+  /// </summary>
   public static Task<object?> QcCheckSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -633,6 +671,8 @@ public static class QcCommands
   // qcCheckLabels
   // -------------------------------------------------------------------------
 
+  /// <summary>Looks for alignments without a label set and alignments, surfaces and corridors without a style.
+  /// <c>objectType</c> limits the check to one kind of object.</summary>
   public static Task<object?> QcCheckLabelsAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetOptionalString(parameters, "objectType");
@@ -744,6 +784,13 @@ public static class QcCommands
   // qcReportGenerate
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Runs the selected checks over every object in the drawing (alignments, corridors, pipe networks, surfaces and
+  /// labels by default; profiles and drawing standards on request) and writes a plain-text report to
+  /// <c>outputPath</c> (.txt, through FileBoundary.WriteAllTextAtomic: inside the export roots, no overwrite unless
+  /// <c>overwrite</c>). The checks here are simpler than the single-object ones above. It runs as a read: the drawing
+  /// isn't changed, only the file is written.
+  /// </summary>
   public static Task<object?> QcReportGenerateAsync(JsonObject? parameters)
   {
     var outputPath = PluginRuntime.GetRequiredString(parameters, "outputPath");
@@ -944,6 +991,11 @@ public static class QcCommands
   // qcCheckDrawingStandards
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Checks every layer except 0 and Defpoints: missing <c>layerPrefix</c>, names over 64 characters or with spaces,
+  /// frozen layers, and, on request, ByLayer lineweights (<c>checkLineweights</c>) and ByLayer/ByBlock colors
+  /// (<c>checkColors</c>). Most findings are "info": they point at things a standard may forbid.
+  /// </summary>
   public static Task<object?> QcCheckDrawingStandardsAsync(JsonObject? parameters)
   {
     var layerPrefix = PluginRuntime.GetOptionalString(parameters, "layerPrefix");
@@ -1082,6 +1134,13 @@ public static class QcCommands
     });
   }
 
+  /// <summary>
+  /// Fixes layers to a standard (every layer except 0 and Defpoints): spaces to underscores (<c>fixSpaces</c>, on by
+  /// default), <c>layerPrefix</c> added where missing, names cut to <c>maxNameLength</c> (default 64), and, when given,
+  /// <c>colorIndex</c> and <c>lineweight</c> set on every one of those layers, not only the ones that break a rule.
+  /// A rename to a name that already exists is skipped and reported. With <c>dryRun</c> it only lists what would
+  /// change. Approval-gated on the TypeScript side.
+  /// </summary>
   public static Task<object?> QcFixDrawingStandardsAsync(JsonObject? parameters)
   {
     var layerPrefix = PluginRuntime.GetOptionalString(parameters, "layerPrefix");
@@ -1249,6 +1308,7 @@ public static class QcCommands
     }
   }
 
+  /// <summary>Renames a layer unless another layer already has the target name (returns false then, nothing changed).</summary>
   private static bool TryRenameLayer(Database database, Transaction transaction, LayerTableRecord layer, string targetName, out string finalName)
   {
     finalName = targetName;
@@ -1269,6 +1329,7 @@ public static class QcCommands
     return true;
   }
 
+  /// <summary>The first of several property names that has a value, for properties named differently across releases.</summary>
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)

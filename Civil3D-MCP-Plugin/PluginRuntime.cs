@@ -5,6 +5,8 @@ using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>What C3DMCPSTATUS, the ribbon and civil3d_health report: whether the listener runs, and the host
+/// queue's depth, capacity and current operation.</summary>
 public sealed record PluginStatus(
   bool IsRunning,
   bool OperationInProgress,
@@ -14,6 +16,12 @@ public sealed record PluginStatus(
   long? CurrentOperationStartedAtUnixMs,
   string? CurrentRequestId);
 
+/// <summary>
+/// The exception handlers throw for an expected failure. <see cref="Code"/> is a CIVIL3D.* domain code (for example
+/// CIVIL3D.OBJECT_NOT_FOUND, CIVIL3D.INVALID_INPUT, CIVIL3D.HOST_BUSY); it is sent back as a JSON-RPC error with the
+/// matching number (JsonRpcProtocol.NumericErrorCode) and the code in error.data.code, and logged at info level, not
+/// as a fault. Write the message for the AI: say what was wrong and what to do.
+/// </summary>
 public sealed class JsonRpcDispatchException : Exception
 {
   public JsonRpcDispatchException(string code, string message) : base(message)
@@ -24,6 +32,12 @@ public sealed class JsonRpcDispatchException : Exception
   public string Code { get; }
 }
 
+/// <summary>
+/// The plugin's request runtime: starts and stops the loopback JSON-RPC listener (RpcTcpServer on <see cref="Port"/>),
+/// turns each raw request into a CommandDispatcher call and its JSON-RPC answer, keeps per-request context
+/// (method, request id, cancellation, expected drawing) in AsyncLocals that flow into CivilExecution, counts the host
+/// queue for health, and offers the argument helpers every handler uses (GetRequiredString, GetOptional*, ...).
+/// </summary>
 public static class PluginRuntime
 {
   public const int Port = 8080;
@@ -41,6 +55,8 @@ public static class PluginRuntime
   private static string? _currentRequestId;
   private static long? _currentOperationStartedAtUnixMs;
 
+  /// <summary>Starts the listener (C3DMCPSTART, the ribbon toggle, or CIVIL3D_MCP_AUTOSTART). Throws when the port is
+  /// in use, e.g. by another Civil 3D window; nothing is kept then, so a later start can retry.</summary>
   public static void StartServer()
   {
     lock (Sync)
@@ -57,6 +73,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>Stops the listener and resets the queue counters (C3DMCPSTOP, plugin unload).</summary>
   public static void StopServer()
   {
     lock (Sync)
@@ -71,6 +88,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>A consistent snapshot of the listener and queue state.</summary>
   public static PluginStatus GetStatus()
   {
     lock (Sync)
@@ -86,6 +104,13 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>
+  /// Handles one JSON-RPC request text and returns the response text; never throws. Checks the envelope (object,
+  /// jsonrpc "2.0", string method, object params), sets the request context, dispatches, and maps failures:
+  /// JsonRpcDispatchException to its own code, cancellation (the client disconnected) to CIVIL3D.CANCELLED, anything
+  /// else to CIVIL3D.INTERNAL_ERROR with the exception's type and message and the log file path (the stack trace is
+  /// only in the log).
+  /// </summary>
   public static async Task<string> HandleRawRequestAsync(string rawRequest, CancellationToken cancellationToken)
   {
     JsonNode? parsed;
@@ -193,6 +218,11 @@ public static class PluginRuntime
 
   internal static string? GetExpectedDrawingIdentity() => CurrentExpectedDrawingIdentity.Value;
 
+  /// <summary>
+  /// Runs work under a given request context, for background work that outlives its request (jobs, corridor
+  /// rebuilds): the operation name and id for health, its own cancellation token, and the drawing it was started for,
+  /// which GetVerifiedActiveDocuments then insists on.
+  /// </summary>
   internal static async Task<T> RunWithRequestContextAsync<T>(
     string operation,
     string requestId,
@@ -221,6 +251,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>Counts a request into the host queue, refusing with CIVIL3D.HOST_BUSY beyond 64 waiting.</summary>
   internal static void QueueHostOperation()
   {
     lock (Sync)
@@ -236,6 +267,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>Moves a request from waiting to running and records it as the current operation.</summary>
   internal static void StartHostOperation()
   {
     lock (Sync)
@@ -270,6 +302,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>A parameter's raw value, or null when absent (a JSON null also reads as absent).</summary>
   public static object? GetParameter(JsonObject? parameters, string name)
   {
     if (parameters == null)
@@ -280,6 +313,8 @@ public static class PluginRuntime
     return parameters.TryGetPropertyValue(name, out var value) ? value : null;
   }
 
+  /// <summary>A required non-empty string; missing, blank or another JSON type is CIVIL3D.INVALID_INPUT naming the
+  /// parameter. The other Get* helpers work the same way; the optional ones return null when absent.</summary>
   public static string GetRequiredString(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;

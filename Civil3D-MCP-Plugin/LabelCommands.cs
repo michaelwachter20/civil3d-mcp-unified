@@ -5,8 +5,22 @@ using Autodesk.AutoCAD.Geometry;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind the labeling actions of civil3d_standards (listLabelStyles, listLabels, addLabel): label
+/// styles per object type, the labels on an object, and new labels on alignments, profiles, surfaces, pipes and
+/// structures.
+///
+/// The label API differs between Civil 3D releases (class names moved between namespaces, Create overloads take
+/// different arguments), so the label classes and style collections are reached late-bound through
+/// Civil3DCompatibility and CivilObjectUtils: each Create* helper lists candidate type names and tries every static
+/// Create overload whose parameters the matching Build*Arguments method can fill. That keeps the plugin loading on
+/// a release where one name is missing, at the cost of failing at run time ("Unable to create a ... label with the
+/// available Civil 3D API overloads") instead of at compile time.
+/// </summary>
 public static class LabelCommands
 {
+  /// <summary>The label styles for <c>objectType</c> (alignment and profile give their label set styles; surface,
+  /// pipe, pipe_network, structure their label styles). An unknown type gives an empty list, not an error.</summary>
   public static Task<object?> ListLabelStylesAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -33,6 +47,8 @@ public static class LabelCommands
     });
   }
 
+  /// <summary>The labels attached to object <c>objectName</c> of <c>objectType</c>, with their type, style and text
+  /// (the override when one is set).</summary>
   public static Task<object?> ListLabelsAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -63,6 +79,14 @@ public static class LabelCommands
     });
   }
 
+  /// <summary>
+  /// Adds a label to object <c>objectName</c> of <c>objectType</c>. Supported combinations: alignment or profile with
+  /// <c>labelType = "label_set"</c> (assigns the label set named by <c>labelStyle</c>, replacing the current one),
+  /// alignment or profile <c>station</c> (needs <c>station</c>), surface <c>spot_elevation</c> / <c>spot</c> (needs
+  /// <c>point</c> {x, y}), and pipe or structure labels (<c>labelType = "plan"</c> picks plan labels). Anything else is
+  /// CIVIL3D.INVALID_INPUT listing what is supported. When <c>labelStyle</c> is missing or doesn't match, the first
+  /// style of the collection is used rather than failing.
+  /// </summary>
   public static Task<object?> AddLabelAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -201,6 +225,8 @@ public static class LabelCommands
     });
   }
 
+  /// <summary>Finds the object to label by type and name (case-insensitive). A profile is searched across every
+  /// alignment, so the first profile with that name wins when two alignments have one.</summary>
   private static DBObject ResolveTargetObject(object civilDoc, Transaction transaction, string objectType, string objectName, OpenMode openMode)
   {
     if (string.Equals(objectType, "alignment", StringComparison.OrdinalIgnoreCase))
@@ -281,6 +307,8 @@ public static class LabelCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"{(pipe ? "Pipe" : "Structure")} '{objectName}' was not found.");
   }
 
+  /// <summary>Pipe network ids, from whichever of several member names this release has; ids can repeat if more
+  /// than one member exists.</summary>
   private static IEnumerable<ObjectId> GetPipeNetworkIds(object civilDoc)
   {
     var candidates = new[]
@@ -304,6 +332,7 @@ public static class LabelCommands
     }
   }
 
+  /// <summary>The style collection for an object type, found late-bound with a fallback name for each.</summary>
   private static IEnumerable<ObjectId> GetLabelStyleCollection(object civilDoc, string objectType)
   {
     var styles = GetNamedMemberValue(civilDoc, "Styles") ?? throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", "Civil 3D styles collection is not available.");
@@ -328,6 +357,7 @@ public static class LabelCommands
     return CivilObjectUtils.ToObjectIds(collection).Where(objectId => objectId != ObjectId.Null).ToList();
   }
 
+  /// <summary>The style named <c>labelStyle</c>, or the collection's first style (ObjectId.Null when there is none).</summary>
   private static ObjectId FindLabelStyleId(object civilDoc, Transaction transaction, string objectType, string? labelStyle)
   {
     var fallback = ObjectId.Null;
@@ -444,6 +474,10 @@ public static class LabelCommands
     );
   }
 
+  /// <summary>
+  /// Creates a label by trying each candidate type's static Create overloads until one accepts arguments from
+  /// <paramref name="argumentBuilder"/> (which returns null for an overload it can't fill) and yields an object id.
+  /// </summary>
   private static ObjectId TryCreateLabel(
     IEnumerable<string> candidateTypeNames,
     string labelDescription,
@@ -475,6 +509,12 @@ public static class LabelCommands
     throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Unable to create a {labelDescription} label with the available Civil 3D API overloads.");
   }
 
+  /// <summary>
+  /// Fills a Create overload's parameters by type, in order: ObjectIds get the target then the style, points get the
+  /// label location, doubles get the coordinates; bool, int and string get neutral values. Returns null when a
+  /// parameter has any other type, so TryCreateLabel moves to the next overload. The other Build*Arguments methods
+  /// follow the same pattern.
+  /// </summary>
   private static object?[]? BuildSurfaceSpotLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId surfaceId, ObjectId styleId, Point2d point)
   {
     var args = new object?[parameters.Length];
@@ -707,6 +747,7 @@ public static class LabelCommands
     return args;
   }
 
+  /// <summary>The new label's id: the return value, its ObjectId property, or an out argument's ObjectId.</summary>
   private static ObjectId ExtractCreatedObjectId(object? result, object?[] args)
   {
     if (result is ObjectId objectId && objectId != ObjectId.Null)
@@ -817,6 +858,8 @@ public static class LabelCommands
     }
   }
 
+  /// <summary>Sets the first writable property of the given names (e.g. LabelSetId) to <paramref name="objectId"/>;
+  /// a null id means the requested style or label set wasn't found.</summary>
   private static void ApplyObjectIdProperty(object target, ObjectId objectId, params string[] propertyNames)
   {
     if (objectId == ObjectId.Null)

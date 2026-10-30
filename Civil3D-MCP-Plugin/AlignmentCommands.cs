@@ -5,6 +5,11 @@ using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_alignment's read, create and delete actions (src/tools/domains/alignmentDomain.ts):
+/// list, get with entities and dependents, station to point and back, sampling stations, create from points, delete.
+/// Geometry edits (tangents, spirals, station equations, offsets, widenings) are in AlignmentEditCommands.
+/// </summary>
 public static class AlignmentCommands
 {
   public static Task<object?> ListAlignmentsAsync()
@@ -164,6 +169,11 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>
+  /// Creates alignment <c>name</c> through <c>points</c> (at least two): a temporary polyline is drawn and converted
+  /// with curves added between tangents, and the polyline is erased. Optional <c>style</c>, <c>layer</c>,
+  /// <c>labelSet</c> and <c>site</c> fall back to the drawing's defaults (LookupUtils).
+  /// </summary>
   public static Task<object?> CreateAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -216,6 +226,7 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>Erases alignment <c>name</c>; approval-gated on the TypeScript side.</summary>
   public static Task<object?> DeleteAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");

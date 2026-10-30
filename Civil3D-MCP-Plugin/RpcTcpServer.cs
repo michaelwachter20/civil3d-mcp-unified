@@ -5,6 +5,13 @@ using System.Text.Json;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// The plugin's TCP listener for the TypeScript server. It binds to 127.0.0.1 only, with an exclusive port, so
+/// nothing off this PC can connect and only one Civil 3D window can have the AI connection on. The protocol is one
+/// JSON-RPC request per connection: the client writes one JSON object (at most 1 MiB, within 30 s, strict UTF-8),
+/// the server answers and closes. While the request runs, the connection is watched, and if the client goes away
+/// the request's cancellation token is cancelled, so queued work never starts (work already running finishes).
+/// </summary>
 public sealed class RpcTcpServer
 {
   private const int MaxRequestBytes = 1024 * 1024;
@@ -22,6 +29,7 @@ public sealed class RpcTcpServer
     _handler = handler;
   }
 
+  /// <summary>Binds and starts accepting; throws when the port is taken (another Civil 3D window has it).</summary>
   public void Start()
   {
     // Exclusive: no other process (or second Civil 3D window) can bind or share this port while we hold it.
@@ -30,6 +38,7 @@ public sealed class RpcTcpServer
     _acceptLoop = Task.Run(AcceptLoopAsync, _cts.Token);
   }
 
+  /// <summary>Stops accepting and cancels in-flight reads; waits up to a second for the accept loop.</summary>
   public void Stop()
   {
     try
@@ -64,6 +73,8 @@ public sealed class RpcTcpServer
     }
   }
 
+  /// <summary>Reads one request, runs the handler while watching for disconnect, and writes the answer unless the
+  /// client has left. Errors are logged; a malformed request gets a JSON-RPC error, never an exception.</summary>
   private async Task ProcessClientAsync(TcpClient client, CancellationToken cancellationToken)
   {
     try
@@ -141,6 +152,11 @@ public sealed class RpcTcpServer
   // Throws DecoderFallbackException on invalid UTF-8 instead of substituting U+FFFD.
   private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
+  /// <summary>
+  /// Reads until the bytes received so far parse as one JSON document (there is no length prefix or delimiter; the
+  /// client doesn't close its side until it has the answer). Over the size limit is InvalidDataException; no complete
+  /// request within the read timeout is TimeoutException.
+  /// </summary>
   private static async Task<string> ReadSingleJsonObjectAsync(NetworkStream stream, CancellationToken cancellationToken)
   {
     var buffer = new byte[8192];
@@ -189,6 +205,8 @@ public sealed class RpcTcpServer
       checked((int)requestBuffer.Length));
   }
 
+  /// <summary>Watches the connection during a request; on end of stream or a socket error it cancels the request and
+  /// returns true (the response is then not written).</summary>
   private static async Task<bool> MonitorClientDisconnectAsync(
     NetworkStream stream,
     CancellationTokenSource requestCancellation,

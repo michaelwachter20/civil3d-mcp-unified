@@ -6,8 +6,20 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_hydrology's surface-based actions (src/tools/domains/hydrologyDomain.ts): flow-path
+/// tracing, low point, Rational Method runoff, watershed and catchment-area estimates, and three workflows that chain
+/// them with detention sizing (DetentionCommands) or pipe hydraulics (PipeHydraulicsCommands). Catchment objects,
+/// time of concentration and SSA live in their own classes.
+///
+/// Everything here is computed by sampling the surface (FindElevationAtXY) rather than with Civil 3D's own
+/// watershed or catchment tools, so results are approximations whose quality depends on the step and grid spacing.
+/// Nothing in this class changes the drawing. The grid methods trace a flow path from every grid point, so a small
+/// spacing over a large area can run for a long time inside the host queue.
+/// </summary>
 public static class HydrologyCommands
 {
+  /// <summary>A static list of the hydrology operations and notes on their limits; doesn't touch the drawing.</summary>
   public static Task<object?> ListHydrologyCapabilitiesAsync()
   {
     return Task.FromResult<object?>(new Dictionary<string, object?>
@@ -169,6 +181,13 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>
+  /// Follows water downhill on surface <c>surfaceName</c> from (<c>x</c>, <c>y</c>): each step moves
+  /// <c>stepDistance</c> (default 5) toward the lowest of eight compass directions that is lower than the current
+  /// point, for at most <c>maxSteps</c> (default 100). <c>status</c> says why it stopped: stopped_flat (no lower
+  /// neighbour at the start), stopped_local_minimum (a pit) or max_steps_reached; "complete" is only the initial
+  /// value and isn't returned for any maxSteps above zero.
+  /// </summary>
   public static Task<object?> TraceFlowPathAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -241,6 +260,8 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>The lowest elevation found by sampling surface <c>surfaceName</c> on a grid of <c>sampleSpacing</c>
+  /// (default 25) over its extents. A grid sample, so the true low point can lie between samples.</summary>
   public static Task<object?> FindLowPointAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -305,6 +326,12 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>
+  /// Peak runoff by the Rational Method, Q = C i A, from <c>drainageArea</c> (acres or hectares),
+  /// <c>runoffCoefficient</c> (0 to 1) and <c>rainfallIntensity</c> (in/hr or mm/hr). Returns both cfs (C i A with
+  /// acres and in/hr, the usual 1.008 factor taken as 1) and m3/s (C i A / 360 with hectares and mm/hr). Pure
+  /// arithmetic: it doesn't use the drawing or the host queue.
+  /// </summary>
   public static Task<object?> EstimateRunoffAsync(JsonObject? parameters)
   {
     var drainageArea = PluginRuntime.GetRequiredDouble(parameters, "drainageArea");
@@ -392,6 +419,8 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary>The lowest of the eight points one step away (every 45 degrees) that is lower than here, or null at a
+  /// flat spot or pit; points off the surface are ignored.</summary>
   private static FlowPoint? FindSteepestDescentPoint(CivilSurface surface, double x, double y, double currentElevation, double stepDistance)
   {
     FlowPoint? bestPoint = null;
@@ -427,6 +456,8 @@ public static class HydrologyCommands
     return bestPoint;
   }
 
+  /// <summary>Surface elevation at a point through CivilObjectUtils' late-bound call, trying FindElevationAtXY then
+  /// GetElevationAtXY so a renamed API member doesn't break every hydrology method.</summary>
   private static double GetSurfaceElevation(CivilSurface surface, double x, double y)
   {
     foreach (var methodName in new[] { "FindElevationAtXY", "GetElevationAtXY" })
@@ -443,6 +474,13 @@ public static class HydrologyCommands
 
   private sealed record FlowPoint(double X, double Y, double Elevation);
 
+  /// <summary>
+  /// Approximate watershed of an outlet (<c>outletX</c>, <c>outletY</c>) on surface <c>surfaceName</c>: every point of a
+  /// <c>gridSpacing</c> grid (default 10) in a square of half-width <c>searchRadius</c> (default 100) around the outlet
+  /// is traced downhill, and points whose path ends near the outlet contribute. The boundary is the convex hull of
+  /// those points, so <c>approximateArea</c> overstates a watershed with a concave outline, and nothing beyond the
+  /// search square is found.
+  /// </summary>
   public static Task<object?> DelineateWatershedAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -542,6 +580,12 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>
+  /// Catchment area of an outlet as the number of contributing grid cells times the cell area: the same tracing as
+  /// DelineateWatershedAsync on a <c>sampleSpacing</c> grid (default 15) within <c>maxDistance</c> (default 200) of the
+  /// outlet, plus the contributing points' elevation range. Counting cells gives a better area than the watershed's
+  /// convex hull; the area is in drawing units squared.
+  /// </summary>
   public static Task<object?> CalculateCatchmentAreaAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -626,6 +670,12 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>
+  /// Watershed to runoff in one call: the outlet is (<c>outletX</c>, <c>outletY</c>) or, when both are omitted, the
+  /// surface's sampled low point; then the watershed, the catchment area, the area converted from square drawing units
+  /// to acres or hectares (feet or meters drawings only), and the Rational runoff. The runoff uses the catchment
+  /// area, not the watershed's hull area. Each step is its own read on the host queue, not one transaction.
+  /// </summary>
   public static async Task<object?> WatershedRunoffWorkflowAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -735,6 +785,11 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary>
+  /// Rational runoff (cfs) as the inflow to DetentionCommands' basin sizing against <c>allowableOutflow</c>, plus a
+  /// stage-storage-discharge table when <c>basinSurfaceName</c>, <c>bottomElevation</c> and <c>topElevation</c> are all
+  /// given (giving only some of them is an error, so a half-specified table isn't silently skipped).
+  /// </summary>
   public static async Task<object?> RunoffDetentionWorkflowAsync(JsonObject? parameters)
   {
     var drainageArea = PluginRuntime.GetRequiredDouble(parameters, "drainageArea");
@@ -824,6 +879,11 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary>
+  /// Rational runoff times <c>designFlowMultiplier</c> as the design flow (cfs) for gravity network
+  /// <c>networkName</c>, then PipeHydraulicsCommands' HGL calculation and hydraulic check (cover, velocity, slope
+  /// limits with US-customary defaults: 2 ft cover, 2 to 10 ft/s, 0.5 % slope, n = 0.013).
+  /// </summary>
   public static async Task<object?> RunoffPipeWorkflowAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -896,6 +956,8 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary>Traces steepest descent from a start point and says whether it comes within two steps of the outlet
+  /// before stopping (pit, flat, off the surface, or maxSteps).</summary>
   private static (bool ReachesOutlet, int Steps) TraceFlowToOutlet(CivilSurface surface, double startX, double startY, double outletX, double outletY, double stepDistance, int maxSteps)
   {
     var currentX = startX;
@@ -1038,6 +1100,9 @@ public static class HydrologyCommands
     throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Expected '{context}' to contain a non-empty string value.");
   }
 
+  /// <summary>Converts an area in square drawing units to acres and hectares for the runoff step; the target is the
+  /// requested units or, by default, acres for feet drawings and hectares for meters drawings. Other drawing units are
+  /// refused rather than guessed.</summary>
   private static Dictionary<string, object?> ConvertCatchmentAreaForRunoff(double catchmentArea, string horizontalUnits, string? requestedAreaUnits)
   {
     var normalizedUnits = horizontalUnits.Trim().ToLowerInvariant();

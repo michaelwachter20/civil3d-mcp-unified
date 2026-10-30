@@ -3,8 +3,20 @@ using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// The native workflows behind civil3d_workflow (src/tools/domains/workflowDomain.ts): each method runs several
+/// existing handlers in turn (QC, surfaces, data shortcuts, drawings, grading, plan production) and answers with
+/// the same shape as the TypeScript-composed workflows: workflow, status, summary, steps, outputs, warnings.
+///
+/// The steps are separate calls, each going through the host queue on its own: a workflow is not one transaction
+/// and its writes are separate undo steps, and a failure stops it with the earlier steps already done. Optional
+/// steps whose inputs are missing are skipped and reported in <c>warnings</c> (status "completed_with_warnings").
+/// Approval is checked once on the TypeScript side for the workflow as a whole.
+/// </summary>
 public static class WorkflowCommands
 {
+  /// <summary>QC check of corridor <c>corridorName</c>, then, when <c>outputPath</c> is given, a QC report file
+  /// with the sections chosen by the include* flags (all off by default here).</summary>
   public static async Task<object?> CorridorQcReportWorkflowAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -63,6 +75,8 @@ public static class WorkflowCommands
       warnings);
   }
 
+  /// <summary>Both surfaces' details, their TIN volume and the text volume report (<c>format</c> summary or
+  /// detailed), with elevation and area differences. Reads only.</summary>
   public static async Task<object?> SurfaceComparisonReportWorkflowAsync(JsonObject? parameters)
   {
     var baseSurface = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -113,6 +127,8 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>Publishes object <c>objectName</c> of <c>objectType</c> as a data shortcut (named <c>shortcutName</c>,
+  /// default the object's name), then synchronizes shortcuts; <c>dryRun</c> is passed to both steps.</summary>
   public static async Task<object?> DataShortcutPublishSyncWorkflowAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -157,6 +173,8 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>References shortcut <c>shortcutName</c> of <c>shortcutType</c> from <c>projectFolder</c> into this
+  /// drawing, then synchronizes; <c>dryRun</c> is passed to both steps.</summary>
   public static async Task<object?> DataShortcutReferenceSyncWorkflowAsync(JsonObject? parameters)
   {
     var projectFolder = PluginRuntime.GetRequiredString(parameters, "projectFolder");
@@ -198,6 +216,11 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>
+  /// Health check; a new drawing from <c>templatePath</c> when given (it becomes the active drawing, so every later
+  /// step works on it); drawing info, settings, object types and data shortcuts; then a save to <c>saveAs</c> when
+  /// given. Without a template or save path those steps are skipped with a warning.
+  /// </summary>
   public static async Task<object?> ProjectStartupWorkflowAsync(JsonObject? parameters)
   {
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
@@ -265,6 +288,8 @@ public static class WorkflowCommands
       warnings);
   }
 
+  /// <summary>References each data shortcut in <c>references</c> ({projectFolder, shortcutName, shortcutType,
+  /// layer}), synchronizes, lists the shortcuts, and saves to <c>saveAs</c> when given.</summary>
   public static async Task<object?> ProjectReferenceSetupWorkflowAsync(JsonObject? parameters)
   {
     if (PluginRuntime.GetParameter(parameters, "references") is not JsonArray referencesArray || referencesArray.Count == 0)
@@ -342,6 +367,9 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>A read-only audit in one answer: health, drawing info and settings, object types, the selection (up to
+  /// <c>limit</c>) and the layer standards check (<c>layerPrefix</c>, <c>checkLineweights</c>,
+  /// <c>checkColors</c>).</summary>
   public static async Task<object?> DrawingReadinessAuditWorkflowAsync(JsonObject? parameters)
   {
     var layerPrefix = PluginRuntime.GetOptionalString(parameters, "layerPrefix");
@@ -386,6 +414,11 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>
+  /// Inspects feature line <c>featureLineName</c>, creates grading group <c>groupName</c> when <c>createGroup</c>,
+  /// creates a grading from the feature line (<c>criteriaName</c>, <c>side</c>), and builds a surface from the group
+  /// when <c>surfaceName</c> is given.
+  /// </summary>
   public static async Task<object?> FeatureLineToGradingWorkflowAsync(JsonObject? parameters)
   {
     var featureLineName = PluginRuntime.GetRequiredString(parameters, "featureLineName");
@@ -468,6 +501,8 @@ public static class WorkflowCommands
       warnings);
   }
 
+  /// <summary>Exports sheet set <c>sheetSetName</c> when given, otherwise publishes the named <c>layoutNames</c> to a
+  /// PDF at <c>outputPath</c> (paths checked by FileBoundary in PlanProductionCommands).</summary>
   public static async Task<object?> PlanProductionPublishWorkflowAsync(JsonObject? parameters)
   {
     var outputPath = PluginRuntime.GetRequiredString(parameters, "outputPath");
@@ -523,6 +558,11 @@ public static class WorkflowCommands
       new Dictionary<string, object?> { ["publish"] = publishResult });
   }
 
+  /// <summary>
+  /// Layer standards audit, fix (QcFixDrawingStandardsAsync, which applies a given color or lineweight to every layer
+  /// except 0 and Defpoints), and a second audit to show what is left. With <c>dryRun</c> the fix step only lists its
+  /// changes.
+  /// </summary>
   public static async Task<object?> QcFixAndVerifyWorkflowAsync(JsonObject? parameters)
   {
     var layerPrefix = PluginRuntime.GetOptionalString(parameters, "layerPrefix");
@@ -579,6 +619,7 @@ public static class WorkflowCommands
       });
   }
 
+  /// <summary>Awaits a handler and insists on a dictionary answer, so a step's shape change fails loudly here.</summary>
   private static async Task<Dictionary<string, object?>> RequireDictionary(Task<object?> task, string context)
   {
     var value = await task;
@@ -590,6 +631,7 @@ public static class WorkflowCommands
     throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Expected '{context}' to return an object result.");
   }
 
+  /// <summary>The workflow answer; status is "completed_with_warnings" when there are warnings.</summary>
   private static Dictionary<string, object?> WorkflowResult(
     string workflow,
     string summary,
