@@ -113,11 +113,11 @@ function getTopicTerms(topic?: string): string[] {
 }
 
 /**
- * How well a rule matches: 12 per requested tag it has, 6 per topic word in its text, 5 per query word of six or
- * more letters (3 for shorter ones), 8 when its title contains the topic, plus its own `score` (at most 20).
- * Matching is substring matching, so "lab" finds "label".
+ * How well a rule matches the request, before its own weight: 12 per requested tag it has, 6 per topic word in its
+ * text, 5 per query word of six or more letters (3 for shorter ones), 8 when its title contains the topic. 0 means
+ * it doesn't match at all. Matching is substring matching, so "lab" finds "label".
  */
-function scoreRule(rule: FrameworkPromptRule, args: StandardsLookupArgs): number {
+function relevance(rule: FrameworkPromptRule, args: StandardsLookupArgs): number {
   const queryTerms = splitTerms(args.query ?? "");
   const topicTerms = getTopicTerms(args.topic);
   const requestedTags = (args.tags ?? []).map(normalizeText);
@@ -147,7 +147,7 @@ function scoreRule(rule: FrameworkPromptRule, args: StandardsLookupArgs): number
     matchScore += 8;
   }
 
-  return matchScore + Math.min(rule.score, 20);
+  return matchScore;
 }
 
 /** The first five distinct rule texts among the matches, in match order. */
@@ -174,25 +174,21 @@ function buildRecommendedPractices(matches: StandardsLookupMatch[]): string[] {
 
 /**
  * Searches the framework rules and returns the best `maxResults` (default 5, 1-20). With no query, topic or tags it
- * returns the highest-weighted rules.
- *
- * NOTE: the filter below keeps rules with `matchScore > 0`, but scoreRule always adds the rule's own score (every
- * rule in the data file has one of 6 or more), so nothing is ever filtered out: a query that matches nothing still
- * returns the top-weighted rules as if they matched. Comparing the score without the rule weight would fix it.
+ * returns the highest-weighted rules. With any of them, only rules that match are returned (a query matching
+ * nothing returns none, rather than the top-weighted rules as if they matched); they are ranked by how well they
+ * match plus their own `score` (at most 20).
  */
 export async function lookupFrameworkStandards(args: StandardsLookupArgs): Promise<StandardsLookupResult> {
   const rules = await loadPromptRules();
   const maxResults = Math.max(1, Math.min(args.maxResults ?? 5, 20));
 
+  const hasFilter = Boolean(args.query?.trim()) || Boolean(args.topic?.trim()) || (args.tags?.length ?? 0) > 0;
   const scoredMatches = rules
-    .map((rule) => ({
-      rule,
-      matchScore: scoreRule(rule, args),
-    }))
-    .filter(({ matchScore }) => {
-      const hasFilter = Boolean(args.query?.trim()) || Boolean(args.topic?.trim()) || (args.tags?.length ?? 0) > 0;
-      return hasFilter ? matchScore > 0 : true;
+    .map((rule) => {
+      const matched = relevance(rule, args);
+      return { rule, matched, matchScore: matched + Math.min(rule.score, 20) };
     })
+    .filter(({ matched }) => !hasFilter || matched > 0)
     .sort((left, right) => right.matchScore - left.matchScore)
     .slice(0, maxResults)
     .map(({ rule, matchScore }) => ({

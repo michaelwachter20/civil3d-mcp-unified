@@ -268,6 +268,25 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
+  // Stations every interval (StationMath): the end kept despite rounding, names with a dot on any PC.
+  var tenths = StationMath.IntervalStations(0, 1, 0.1);
+  Assert(tenths.Count == 11 && tenths[^1] == 1, $"0 to 1 every 0.1 is 11 stations ending at 1: {tenths.Count}");
+  var run = StationMath.IntervalStations(1000, 1262.5, 25);
+  Assert(run.Count == 11 && run[^1] == 1250, "1000 to 1262.5 every 25 stops at 1250.");
+  Assert(StationMath.IntervalStations(0, 100, 0).Count == 0 && StationMath.IntervalStations(100, 0, 10).Count == 0,
+    "No stations for a zero interval or an end before the start.");
+  var cultureBefore = System.Globalization.CultureInfo.CurrentCulture;
+  try
+  {
+    System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+    Assert(StationMath.SampleLineName(1262.5) == "SL-1262.5" && StationMath.SampleLineName(1250) == "SL-1250",
+      $"Sample line names use a dot: {StationMath.SampleLineName(1262.5)}");
+  }
+  finally
+  {
+    System.Globalization.CultureInfo.CurrentCulture = cultureBefore;
+  }
+
   // What counts as the AI making points (PointCreationRules): those ask the user in Civil 3D first.
   Assert(PointCreationRules.ScriptAddsPoints("var id = CivilDoc.CogoPoints.Add(new Point3d(e, n, z), true);")
          && PointCreationRules.ScriptAddsPoints("var pts = CivilDoc.CogoPoints;\nforeach (var p in list) pts.Add(p, true);"),
@@ -279,7 +298,7 @@ try
          && !PointCreationRules.IsCreateCommand("IMPORTPOINTS"),
     "CREATEPOINTS asks; IMPORTPOINTS (Civil 3D's own importer) doesn't.");
 
-  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text, pipe arithmetic and point creation checks passed.");
+  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text, pipe arithmetic, station and point creation checks passed.");
 }
 finally
 {

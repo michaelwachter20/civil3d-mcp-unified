@@ -407,13 +407,10 @@ function detectVersion(html: string): string | undefined {
 
 /**
  * The Civil 3D feature a topic is mostly about: the area whose terms occur most often in its title, headings and
- * body ("General" when none do; ties go to the area listed first).
- *
- * NOTE: occurrences() counts plain substrings, so short terms also match inside other words ("tin" in "existing",
- * "setting", "continue"; "station" in "workstation"; "sheet" in "spreadsheet"), which pulls many unrelated topics
- * toward Surfaces. Word-boundary matching would be more accurate.
+ * body ("General" when none do; ties go to the area listed first). Terms count as whole words (see occurrences), so
+ * "tin" in "existing" doesn't pull a topic toward Surfaces. Exported for the tests.
  */
-function inferFeatureArea(text: string): string {
+export function inferFeatureArea(text: string): string {
   const lower = text.toLowerCase();
   const areas: Array<[string, string[]]> = [
     ["Grading", ["grading", "grading object", "grading criteria"]],
@@ -499,8 +496,13 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+/**
+ * How often `term` occurs in `text` as whole words, plurals included ("surface" counts "surfaces" but not
+ * "subsurface"; "tin" doesn't count "existing" or "setting"; "station" doesn't count "workstation").
+ */
 function occurrences(text: string, term: string): number {
-  return text.split(term).length - 1;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.match(new RegExp(`\\b${escaped}(?:s|es)?\\b`, "g"))?.length ?? 0;
 }
 
 /** Collapses every run of whitespace (newlines included) to one space and trims. */

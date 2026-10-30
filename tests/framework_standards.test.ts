@@ -24,4 +24,11 @@ describe("Framework standards lookup", () => {
     expect(result.matchedCount).toBeGreaterThan(0);
     expect(result.matches.some((match) => match.tags.includes("labels") || match.rule.toLowerCase().includes("label"))).toBe(true);
   });
+
+  it("returns nothing for a query no rule matches, rather than the top-weighted rules", async () => {
+    const result = await lookupFrameworkStandards({ query: "zzqx wvyk", maxResults: 5 });
+
+    expect(result.matchedCount).toBe(0);
+    expect(result.matches).toEqual([]);
+  });
 });

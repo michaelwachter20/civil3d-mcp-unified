@@ -357,10 +357,14 @@ public static class LabelCommands
     return CivilObjectUtils.ToObjectIds(collection).Where(objectId => objectId != ObjectId.Null).ToList();
   }
 
-  /// <summary>The style named <c>labelStyle</c>, or the collection's first style (ObjectId.Null when there is none).</summary>
+  /// <summary>
+  /// The style named <c>labelStyle</c>; with no name, the collection's first style (ObjectId.Null when there is none).
+  /// A name that isn't there is refused with the names that are, as in LookupUtils.
+  /// </summary>
   private static ObjectId FindLabelStyleId(object civilDoc, Transaction transaction, string objectType, string? labelStyle)
   {
-    var fallback = ObjectId.Null;
+    var named = !string.IsNullOrWhiteSpace(labelStyle);
+    var names = new List<string>();
 
     foreach (var objectId in GetLabelStyleCollection(civilDoc, objectType))
     {
@@ -369,24 +373,24 @@ public static class LabelCommands
         continue;
       }
 
-      if (fallback == ObjectId.Null)
-      {
-        fallback = objectId;
-      }
-
-      if (string.IsNullOrWhiteSpace(labelStyle))
-      {
-        continue;
-      }
-
-      var style = transaction.GetObject(objectId, OpenMode.ForRead);
-      if (string.Equals(CivilObjectUtils.GetName(style), labelStyle, StringComparison.OrdinalIgnoreCase))
+      if (!named)
       {
         return objectId;
       }
+
+      var name = CivilObjectUtils.GetName(transaction.GetObject(objectId, OpenMode.ForRead));
+      if (string.Equals(name, labelStyle, StringComparison.OrdinalIgnoreCase))
+      {
+        return objectId;
+      }
+
+      if (!string.IsNullOrEmpty(name))
+      {
+        names.Add(name);
+      }
     }
 
-    return fallback;
+    return named ? throw LookupUtils.NotFound("Label style", labelStyle!, names) : ObjectId.Null;
   }
 
   private static ObjectId CreateSurfaceSpotLabel(DBObject surface, ObjectId styleId, Point2d point)

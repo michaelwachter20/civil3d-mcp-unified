@@ -121,7 +121,7 @@ Returns drawing-level ambient settings.
   coordinateSystem: string | null,
   coordinateZone: string | null,
   datum: string | null,
-  scaleFactor: number,
+  dimensionScale: number,
   elevationReference: string | null,
   defaultLayer: string,
   defaultStyles: {

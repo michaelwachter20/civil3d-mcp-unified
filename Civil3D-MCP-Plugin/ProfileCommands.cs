@@ -142,7 +142,7 @@ public static class ProfileCommands
 
       var samples = new List<Dictionary<string, object?>>();
 
-      for (var station = from; station <= to; station += interval)
+      foreach (var station in StationMath.IntervalStations(from, to, interval))
       {
         samples.Add(new Dictionary<string, object?>
         {

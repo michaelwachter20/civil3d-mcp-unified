@@ -1,4 +1,5 @@
 import * as net from "net";
+import { StringDecoder } from "string_decoder";
 import { createLogger } from "./logger.js";
 import { createRpcRequestId } from "./requestContext.js";
 
@@ -53,6 +54,11 @@ export class ApplicationClientConnection {
   isConnected: boolean = false;
   responseCallbacks: Map<string, PendingRequest> = new Map();
   buffer: string = "";
+  /** Bytes received so far; the limit is checked on this, not by re-measuring the text after every chunk. */
+  receivedBytes: number = 0;
+  // Holds back the first bytes of a character split across two chunks until the rest arrives, so "±" or "Höhe"
+  // in a large answer isn't turned into replacement characters.
+  private decoder = new StringDecoder("utf8");
 
   constructor(host: string, port: number) {
     this.host = host;
@@ -67,18 +73,18 @@ export class ApplicationClientConnection {
       log.info("Connected", { host: this.host, port: this.port });
     });
 
-    // NOTE: each chunk is decoded on its own (`data.toString()`), so a multi-byte UTF-8 character split across two
-    // chunks comes out as replacement characters; a large answer with non-ASCII text (a layer named "Höhe", say) can
-    // be garbled. Collecting Buffers, or socket.setEncoding("utf8"), would decode across chunk boundaries.
-    this.socket.on("data", (data) => {
-      this.buffer += data.toString();
-      if (Buffer.byteLength(this.buffer, "utf8") > MAX_RESPONSE_BYTES) {
+    this.socket.on("data", (data: Buffer) => {
+      this.receivedBytes += data.length;
+      if (this.receivedBytes > MAX_RESPONSE_BYTES) {
         const error = new Error(`Civil 3D response exceeds ${MAX_RESPONSE_BYTES} bytes.`);
         this.rejectPendingRequests(error);
         this.buffer = "";
+        this.receivedBytes = 0;
+        this.decoder = new StringDecoder("utf8");
         this.socket.destroy(error);
         return;
       }
+      this.buffer += this.decoder.write(data);
       this.processBuffer();
     });
 
@@ -112,6 +118,7 @@ export class ApplicationClientConnection {
       JSON.parse(this.buffer);
       this.handleResponse(this.buffer);
       this.buffer = "";
+      this.receivedBytes = 0;
     } catch {
       // Incomplete JSON — wait for more data
     }

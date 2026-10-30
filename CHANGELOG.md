@@ -11,6 +11,17 @@
   `working_safely_in_civil3d` say so; the daily field import skill (which applies duplicate offsets itself) asks
   once per run.
 
+- **A misspelled style, layer or site name is refused** with the names the drawing has, instead of quietly using
+  the first style or the current layer (create and edit commands, `label_add`'s `labelStyle`). With no name the
+  default is used as before.
+
+- **Smaller fixes:** text with characters such as "±" or "°" is no longer garbled when a large answer arrives in
+  pieces; sample lines and profile samples every interval keep the end station (it could be lost to rounding),
+  and sample line names use a dot for decimals on any PC (`StationMath`); a standards lookup that matches no rule
+  returns none instead of the top-weighted rules; help topics are filed by whole words ("tin" no longer matches
+  "existing"); a saved script ending at its `// ---` line loads; the drawing settings' DIMSCALE value is reported
+  as `dimensionScale` (it was `scaleFactor`, which reads like the grid scale factor).
+
 - **Guards on actions that could do harm by mistake.** `civil3d_point` `transform` with no `pointNumbers` or
   `groupName` used to move every point in the drawing; that now takes `allPoints: true`. The parcel report only reads;
   writing it to a CSV is the new `civil3d_parcel` `export_report`, which needs approval like any export, and so does

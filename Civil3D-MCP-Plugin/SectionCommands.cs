@@ -73,11 +73,8 @@ public static class SectionCommands
   /// both positive). Stations come from <c>stations</c> (an array, duplicates dropped, sorted) or else every
   /// <c>interval</c> from the alignment's start; with neither it refuses with CIVIL3D.INVALID_INPUT. <c>surfaces</c>
   /// (optional names) limits which section sources are sampled; without it every source is sampled. Sample lines are
-  /// named "SL-" plus the station (e.g. "SL-1250"). Writes to the drawing in one undo step.
+  /// named "SL-" plus the station (e.g. "SL-1250", StationMath.SampleLineName). Writes to the drawing in one undo step.
   /// </summary>
-  // NOTE: the interval loop adds the interval to a running double, so rounding can drop the alignment's ending
-  // station even when the length is an exact multiple of the interval; and the "SL-{station:0.##}" name uses the
-  // current culture, so a comma-decimal locale gives names like "SL-12,5".
   public static Task<object?> CreateSampleLinesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -109,10 +106,7 @@ public static class SectionCommands
       }
       else if (interval.HasValue && interval.Value > 0)
       {
-        for (var station = alignment.StartingStation; station <= alignment.EndingStation; station += interval.Value)
-        {
-          stations.Add(station);
-        }
+        stations.AddRange(StationMath.IntervalStations(alignment.StartingStation, alignment.EndingStation, interval.Value));
       }
       else
       {
@@ -133,7 +127,7 @@ public static class SectionCommands
           new(x1, y1),
           new(x2, y2),
         };
-        SampleLine.Create($"SL-{station:0.##}", groupId, points);
+        SampleLine.Create(StationMath.SampleLineName(station), groupId, points);
         createdStations.Add(station);
       }
 

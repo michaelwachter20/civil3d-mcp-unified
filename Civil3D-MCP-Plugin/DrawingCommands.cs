@@ -101,8 +101,9 @@ public static class DrawingCommands
   /// Drawing settings: coordinate system code, its category and datum, the current layer and the first style of
   /// each kind (surface, alignment, profile, pipe network; corridor is always null). Read only.
   /// </summary>
-  // NOTE: "scaleFactor" is the DIMSCALE system variable (dimension scale), not the coordinate system's grid scale
-  // factor, and "coordinateZone" is the coordinate system's category; "elevationReference" is always null.
+  // "dimensionScale" is the DIMSCALE system variable. It was called "scaleFactor", which reads like the coordinate
+  // system's grid scale factor, so the name says what it is. NOTE: "coordinateZone" is the coordinate system's
+  // category, and "elevationReference" is always null.
   public static Task<object?> GetDrawingSettingsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -115,7 +116,7 @@ public static class DrawingCommands
         ["coordinateSystem"] = coords.code,
         ["coordinateZone"] = coords.zone,
         ["datum"] = coords.datum,
-        ["scaleFactor"] = Convert.ToDouble(App.GetSystemVariable("DIMSCALE") ?? 1d),
+        ["dimensionScale"] = Convert.ToDouble(App.GetSystemVariable("DIMSCALE") ?? 1d),
         ["elevationReference"] = coords.verticalDatum,
         ["defaultLayer"] = currentLayer.Name,
         ["defaultStyles"] = new Dictionary<string, object?>

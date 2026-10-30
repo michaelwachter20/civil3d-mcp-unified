@@ -10,16 +10,19 @@ namespace Civil3DMcpPlugin;
 /// alignment, surface, section, parcel, label set, band set and group plot styles). Used throughout the *Commands
 /// classes; it never creates anything.
 /// <para>
-/// The lookups are forgiving on purpose, so a create call still succeeds without naming a style: no name, or a name
-/// that isn't there, gives a default (the current layer, the first style in the collection, or <c>ObjectId.Null</c>
-/// for sites, band sets and plot styles, which callers read as "leave it"). Names compare case-insensitively.
+/// A create call still succeeds without naming a style: no name gives a default (the current layer, the first style
+/// in the collection, or <c>ObjectId.Null</c> for sites, band sets and plot styles, which callers read as "leave
+/// it"). A name that isn't in the drawing is refused with the names that are (<c>CIVIL3D.OBJECT_NOT_FOUND</c>), so a
+/// misspelled "Elm Stret Design" isn't quietly replaced by the first style. Names compare case-insensitively. The
+/// lookups run inside the command's transaction, so a refusal leaves the drawing as it was.
 /// </para>
 /// </summary>
-// NOTE: because an unknown style or layer name falls back silently, a misspelled name (e.g. "Elm Stret Design")
-// gives the first style or the current layer, and the answer doesn't say the requested one wasn't found.
 public static class LookupUtils
 {
-  /// <summary>The layer named <paramref name="layerName"/>, or the current layer (CLAYER) when none is named or it doesn't exist.</summary>
+  /// <summary>How many of the existing names a "not found" message lists.</summary>
+  private const int NamesListed = 25;
+
+  /// <summary>The layer named <paramref name="layerName"/>, or the current layer (CLAYER) when none is named.</summary>
   public static ObjectId GetLayerId(Database database, Transaction transaction, string? layerName)
   {
     if (string.IsNullOrWhiteSpace(layerName))
@@ -33,10 +36,16 @@ public static class LookupUtils
       return layerTable[layerName];
     }
 
-    return database.Clayer;
+    var names = new List<string>();
+    foreach (ObjectId layerId in layerTable)
+    {
+      names.Add(CivilObjectUtils.GetRequiredObject<LayerTableRecord>(transaction, layerId, OpenMode.ForRead).Name);
+    }
+
+    throw NotFound("Layer", layerName, names);
   }
 
-  /// <summary>The site named <paramref name="siteName"/>, or <c>ObjectId.Null</c> (no site, i.e. siteless) when none is named or it doesn't exist.</summary>
+  /// <summary>The site named <paramref name="siteName"/>, or <c>ObjectId.Null</c> (no site, i.e. siteless) when none is named.</summary>
   public static ObjectId GetSiteId(CivilDocument civilDoc, Transaction transaction, string? siteName)
   {
     if (string.IsNullOrWhiteSpace(siteName))
@@ -44,6 +53,7 @@ public static class LookupUtils
       return ObjectId.Null;
     }
 
+    var names = new List<string>();
     foreach (ObjectId objectId in civilDoc.GetSiteIds())
     {
       var site = CivilObjectUtils.GetRequiredObject<Site>(transaction, objectId, OpenMode.ForRead);
@@ -51,13 +61,28 @@ public static class LookupUtils
       {
         return objectId;
       }
+
+      names.Add(site.Name);
     }
 
-    return ObjectId.Null;
+    throw NotFound("Site", siteName, names);
   }
 
-  // The style lookups below return the named style, else the collection's first style (see GetStyleId), unless
-  // their own comment says otherwise.
+  /// <summary>
+  /// The refusal for a name that isn't in the drawing, listing the first <see cref="NamesListed"/> that are
+  /// (e.g. "Style 'Elm Stret Design' is not in this drawing. Available: Elm Street Design, Standard").
+  /// </summary>
+  internal static JsonRpcDispatchException NotFound(string what, string name, IReadOnlyCollection<string> available)
+  {
+    var listed = available.Count == 0
+      ? "There are none."
+      : "Available: " + string.Join(", ", available.Take(NamesListed))
+        + (available.Count > NamesListed ? $", and {available.Count - NamesListed} more." : ".");
+    return new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"{what} '{name}' is not in this drawing. {listed}");
+  }
+
+  // The style lookups below return the named style (a name that isn't there is refused), else with no name the
+  // collection's first style (see GetStyleId), unless their own comment says otherwise.
 
   public static ObjectId GetAlignmentStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
@@ -157,12 +182,14 @@ public static class LookupUtils
   }
 
   /// <summary>
-  /// The style in <paramref name="collection"/> whose name matches <paramref name="styleName"/> (case-insensitive),
-  /// else the first style, else <c>ObjectId.Null</c> for an empty collection.
+  /// The style in <paramref name="collection"/> whose name matches <paramref name="styleName"/> (case-insensitive).
+  /// With no name: the first style, or <c>ObjectId.Null</c> for an empty collection. A name that isn't there is
+  /// refused (<see cref="NotFound"/>).
   /// </summary>
   private static ObjectId GetStyleId(object collection, Transaction transaction, string? styleName)
   {
-    var fallback = ObjectId.Null;
+    var named = !string.IsNullOrWhiteSpace(styleName);
+    var names = new List<string>();
 
     foreach (var objectId in EnumerateObjectIds(collection))
     {
@@ -171,24 +198,24 @@ public static class LookupUtils
         continue;
       }
 
-      if (fallback == ObjectId.Null)
-      {
-        fallback = objectId;
-      }
-
-      if (string.IsNullOrWhiteSpace(styleName))
-      {
-        continue;
-      }
-
-      var style = transaction.GetObject(objectId, OpenMode.ForRead);
-      if (string.Equals(CivilObjectUtils.GetName(style), styleName, StringComparison.OrdinalIgnoreCase))
+      if (!named)
       {
         return objectId;
       }
+
+      var name = CivilObjectUtils.GetName(transaction.GetObject(objectId, OpenMode.ForRead));
+      if (string.Equals(name, styleName, StringComparison.OrdinalIgnoreCase))
+      {
+        return objectId;
+      }
+
+      if (!string.IsNullOrEmpty(name))
+      {
+        names.Add(name);
+      }
     }
 
-    return fallback;
+    return named ? throw NotFound("Style", styleName!, names) : ObjectId.Null;
   }
 
   /// <summary>The ObjectIds in any Civil 3D style collection (they share no common type, so this takes whatever enumerates ids).</summary>

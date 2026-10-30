@@ -483,13 +483,17 @@ internal static class ScriptLibrary
   /// parsed) when it isn't one: it must start with the marker and have a <c>// ---</c> line. The name falls back to
   /// the file name, the mode to "write", the version to 1.
   /// </summary>
-  // NOTE: the header end is found as "\n// ---\n", so a file whose code is empty and has no newline after "// ---"
-  // isn't recognized; and the header's "name:" wins over the file name, so a hand-renamed file reports its old name.
+  // NOTE: the header's "name:" wins over the file name, so a file renamed by hand reports its old name.
   private static SavedScript? TryLoad(string path)
   {
     try
     {
       var text = File.ReadAllText(path).Replace("\r\n", "\n");
+      // A file edited by hand may end at "// ---" with no code and no final newline; it is still a script.
+      if (!text.EndsWith('\n'))
+      {
+        text += "\n";
+      }
       if (!text.StartsWith(Marker, StringComparison.Ordinal))
       {
         return null;

@@ -92,8 +92,8 @@ const LabelListArgsSchema = z.object({
 /**
  * `label_add`: which `labelType` works with which object, and whether it needs `station` or `point`, is decided by
  * LabelCommands.AddLabelAsync (alignment/profile station labels or a label set, surface spot elevations, pipe and
- * structure plan labels); anything else comes back as CIVIL3D.INVALID_INPUT listing what is supported. A missing or
- * unknown `labelStyle` falls back to the first style rather than failing.
+ * structure plan labels); anything else comes back as CIVIL3D.INVALID_INPUT listing what is supported. With no
+ * `labelStyle` the first style is used; a name the drawing doesn't have is refused with the names it does.
  */
 const LabelAddArgsSchema = z.object({
   action: z.literal("label_add"),

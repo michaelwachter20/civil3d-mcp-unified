@@ -7,13 +7,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, expect, it } from "vitest";
 import { discoverOfflineHelpInstallations } from "../src/help/helpDiscovery.js";
 import { Civil3DHelpManager } from "../src/help/helpIndex.js";
-import { extractWrappedTopicHtml, parseHelpTopic } from "../src/help/helpParser.js";
+import { extractWrappedTopicHtml, inferFeatureArea, parseHelpTopic } from "../src/help/helpParser.js";
 import { AutodeskVideoCatalog } from "../src/help/videoCatalog.js";
 import { registerHelpResources, registerHelpTool } from "../src/tools/helpTool.js";
 
 const TOPIC_ID = "GUID-11111111-2222-3333-4444-555555555555";
 
 describe("Civil 3D offline help", () => {
+  it("files a topic under the area its terms name as whole words", () => {
+    // "existing", "setting" and "continue" contain "tin"; "workstation" contains "station".
+    expect(inferFeatureArea("Changing an existing setting on your workstation, then continue")).toBe("General");
+    expect(inferFeatureArea("Edit the existing alignment settings: stations and offsets")).toBe("Alignments");
+    expect(inferFeatureArea("Surfaces from TIN data")).toBe("Surfaces");
+  });
+
   it("discovers Autodesk Offline Help installations and prefers the requested version", () => {
     const fixture = createHelpFixture();
     try {
