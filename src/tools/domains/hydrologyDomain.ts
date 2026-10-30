@@ -2,11 +2,23 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The hydrology domain: `civil3d_hydrology` and its aliases `civil3d_catchment`, `civil3d_time_of_concentration`,
+ * `civil3d_stm` and the three `civil3d_hydrology_*_workflow` tools. Every action is one plugin call, so there is no
+ * logic here beyond the argument schemas; the work is in the plugin:
+ *   - HydrologyCommands.cs: flow path, low point, Rational runoff, watershed and catchment area by sampling the
+ *     surface, and the runoff workflows (which call DetentionCommands and PipeHydraulicsCommands);
+ *   - CatchmentCommands.cs: Civil 3D catchment objects and groups;
+ *   - TimeOfConcentrationCommands.cs: Tc and SCS hydrographs, pure formulas that need no drawing;
+ *   - StmCommands.cs: Storm and Sanitary Analysis export/import, which open Civil 3D's own dialogs.
+ * The surface-sampling results are approximations; their response schemas below are checked on every answer.
+ */
 const AreaUnitsSchema = z.enum(["acres", "hectares"]);
 const IntensityUnitsSchema = z.enum(["in_per_hr", "mm_per_hr"]);
 const DetentionMethodSchema = z.enum(["modified_rational", "triangular_hydrograph"]);
 const OutletTypeSchema = z.enum(["orifice", "weir", "riser"]);
 
+/** For actions whose answer isn't checked field by field: any object passes. */
 const GenericHydrologyResponseSchema = z.object({}).passthrough();
 
 const HydrologyCapabilitiesResponseSchema = z.object({
@@ -128,6 +140,10 @@ const HydrologyCatchmentAreaResponseSchema = z.object({
   }),
 });
 
+/**
+ * Every argument any `civil3d_hydrology` action takes, all optional except `action`: the single input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalHydrologyInputShape = {
   action: z.enum([
     "list_capabilities",
@@ -431,6 +447,10 @@ const RunoffPipeWorkflowArgsSchema = z.object({
   minSlope: z.number().nonnegative().optional(),
 });
 
+/**
+ * The hydrology domain's actions and exposures, listed in toolManifest.ts. exposures[0] is the canonical
+ * `civil3d_hydrology` tool; the others are aliases (exposed with CIVIL3D_ENABLE_TOOL_ALIASES=true).
+ */
 export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "hydrology",
   actions: {
@@ -533,6 +553,7 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Catchment objects (CatchmentCommands.cs).
     list_catchment_groups: {
       action: "list_catchment_groups",
       inputSchema: ListCatchmentGroupsArgsSchema,
@@ -639,6 +660,7 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("getCatchmentBoundary", { catchmentName: args.catchmentName }),
       ),
     },
+    // Time of concentration and hydrographs: formulas only (requiresActiveDrawing is false), no drawing data.
     list_tc_methods: {
       action: "list_tc_methods",
       inputSchema: ListTcMethodsArgsSchema,
@@ -705,6 +727,8 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("listSsaCapabilities", {}),
       ),
     },
+    // STM export/import send no arguments on purpose: they open Civil 3D's interactive dialogs, and the user picks the
+    // file there, so no path from the AI reaches the file system. Both are approval-gated (export / import).
     export_stm: {
       action: "export_stm",
       inputSchema: ExportStmArgsSchema,
@@ -741,6 +765,7 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("openStormSanitaryAnalysis", {}),
       ),
     },
+    // The three workflows are native: one plugin call each, which runs every step inside the plugin.
     watershed_runoff_workflow: {
       action: "watershed_runoff_workflow",
       inputSchema: WatershedRunoffWorkflowArgsSchema,
@@ -825,6 +850,7 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // exposures[0] is the canonical tool; each alias fixes its action (or a subset) and passes the arguments through.
   exposures: [
     {
       toolName: "civil3d_hydrology",

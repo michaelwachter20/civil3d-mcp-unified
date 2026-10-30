@@ -149,6 +149,13 @@ const canonicalSectionInputShape = {
 
 // ─── Domain definition ────────────────────────────────────────────────────────
 
+/**
+ * The section domain: `civil3d_section` (sample line groups, sample lines, section data, section views and view
+ * groups, view styles, section data export) and its aliases. Every action is one call to SectionCommands.cs.
+ * Sample-line sources are better changed with the script helpers SectionSources / SetSectionSources (README);
+ * a direct GetSectionSources call on a group opened for read crashes Civil 3D. Listed in toolManifest.ts;
+ * exposures[0] is the canonical tool.
+ */
 export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "section",
   actions: {

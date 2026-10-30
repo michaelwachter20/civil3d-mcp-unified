@@ -2,6 +2,14 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The profile domain: `civil3d_profile` (vertical profiles of an alignment, their PVIs, curves and grades, and
+ * profile views) and its aliases (`civil3d_profile_report`, `civil3d_profile_add_pvi`, ...). The plugin side is
+ * ProfileCommands.cs (read, create, delete, sample) and ProfileEditCommands.cs (PVIs, curves, grades, K values,
+ * profile views and bands). A profile is always named together with its alignment (alignmentName + profileName).
+ *
+ * Every action forwards to one plugin method except `report`, which samples the profile and summarizes it here.
+ */
 // ─── Shared schemas ───────────────────────────────────────────────────────────
 
 const GenericProfileResponseSchema = z.object({}).passthrough();
@@ -75,6 +83,7 @@ const ProfileSampleElevationsResponseSchema = z.object({
   units: z.string(),
 });
 
+/** The `report` action's answer: the profile, its samples, and a summary computed in Node. */
 const ProfileReportResponseSchema = z.object({
   profile: ProfileDetailResponseSchema,
   samples: ProfileSampleElevationsResponseSchema,
@@ -216,6 +225,10 @@ const ProfileViewBandSetArgsSchema = z.object({
 
 // ─── Canonical input shape (union of all action fields) ───────────────────────
 
+/**
+ * Every argument any `civil3d_profile` action takes, all optional except `action`: the single input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects above say what each action needs and validate the call.
+ */
 const canonicalProfileInputShape = {
   action: z.enum([
     "list",
@@ -261,6 +274,7 @@ const canonicalProfileInputShape = {
 
 // ─── Report helper ────────────────────────────────────────────────────────────
 
+/** How many stations sampleProfileElevations would return (both ends included), checked before asking for them. */
 function estimateSampleCount(startStation: number, endStation: number, interval: number) {
   const length = Math.max(0, endStation - startStation);
   return Math.floor(length / interval) + 2;
@@ -268,6 +282,10 @@ function estimateSampleCount(startStation: number, endStation: number, interval:
 
 // ─── Domain definition ────────────────────────────────────────────────────────
 
+/**
+ * The profile domain's actions and exposures, listed in toolManifest.ts. exposures[0] is the canonical
+ * `civil3d_profile` tool; the others are aliases (exposed with CIVIL3D_ENABLE_TOOL_ALIASES=true).
+ */
 export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "profile",
   actions: {
@@ -386,6 +404,10 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // getProfile, then elevations every `interval` (default: a twentieth of the range, at least 25) between the given
+    // or the profile's own start and end stations. Refuses before sampling when that would exceed maximumSamples
+    // (default 150), so a long profile can't produce a huge answer. averageGrade is the plain mean of the sampled
+    // grades; ascending/descending lengths add up the entities by the sign of their grade.
     report: {
       action: "report",
       inputSchema: ProfileReportArgsSchema,
@@ -463,6 +485,8 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         });
       }),
     },
+    // Editing (ProfileEditCommands.cs): writes, each one undo step, approval-gated where the action is a delete or
+    // non-retryable change.
     add_pvi: {
       action: "add_pvi",
       inputSchema: ProfileAddPviArgsSchema,
@@ -582,6 +606,7 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // exposures[0] is the canonical tool; each alias fixes its action and passes the matching arguments through.
   exposures: [
     {
       toolName: "civil3d_profile",

@@ -4,8 +4,24 @@ import type {
   ToolDomain,
 } from "../tools/toolMetadata.js";
 
+/**
+ * The routes civil3d_orchestrate can pick from (see IntentRouter.ts). A route names one tool and action, the words
+ * that point to it, the fields it can't run without, and how to build the tool's arguments from the parameters the
+ * router extracted.
+ *
+ * Two kinds, both in TOOL_CATALOG:
+ *   - explicit routes (EXPLICIT_TOOL_CATALOG): written by hand for the common requests, with good keywords and the
+ *     real required fields; the router gives them a bonus;
+ *   - derived routes: one per tool and operation in the runtime catalog (tool_catalog.ts, built from the domain
+ *     manifest), generated below, so every new action is routable without touching this file. Their keywords come
+ *     from the tool's name, display name, domain, operation and capabilities, and their required fields from the
+ *     guesses in inferDerivedRequiredFields.
+ * An explicit route replaces the derived one for the same tool and action.
+ */
+
 export type OrchestratorIntent = string;
 
+/** One route; `intent` is unique ("tool:<toolName>:<action>" for derived routes). */
 export interface ToolCatalogEntry {
   intent: OrchestratorIntent;
   title: string;
@@ -19,6 +35,7 @@ export interface ToolCatalogEntry {
   source?: "explicit" | "derived";
 }
 
+/** The listed fields of `params` that are set (undefined ones are left out, so tool defaults apply). */
 function pickDefined(params: Record<string, unknown>, fields: string[]): Record<string, unknown> {
   return Object.fromEntries(
     fields
@@ -27,6 +44,7 @@ function pickDefined(params: Record<string, unknown>, fields: string[]): Record<
   );
 }
 
+/** Arguments for a canonical multi-action tool: `action`, the defaults, then the listed fields that are set. */
 function buildActionArgs(
   action: string,
   fields: string[] = [],
@@ -39,6 +57,7 @@ function buildActionArgs(
   });
 }
 
+/** Arguments for a single-action alias tool (no `action` field): the defaults, then the listed fields that are set. */
 function buildPassthroughArgs(
   fields: string[] = [],
   defaults: Record<string, unknown> = {},
@@ -49,6 +68,10 @@ function buildPassthroughArgs(
   });
 }
 
+/**
+ * Hand-written routes. Keep the keywords phrases a user would type, and requiredFields the fields the action really
+ * can't do without: the planner asks for those, and the orchestrator won't execute while one is missing.
+ */
 const EXPLICIT_TOOL_CATALOG: ToolCatalogEntry[] = [
   {
     intent: "drawing_info",
@@ -470,6 +493,10 @@ const EXPLICIT_TOOL_CATALOG: ToolCatalogEntry[] = [
   },
 ];
 
+/**
+ * The RouteParams fields a derived route passes to its tool. A field the action needs that isn't listed here (for
+ * example minorInterval or boundary) can only reach the tool through civil3d_orchestrate's toolParameters.
+ */
 const ROUTE_PARAM_FIELDS = [
   "name",
   "alignmentName",
@@ -515,6 +542,7 @@ const ROUTE_PARAM_FIELDS = [
   "payItems",
 ];
 
+/** "civil3d_surface_volume_report" -> "surface volume report", for titles and keywords. */
 function humanizeToken(token: string): string {
   return token
     .replace(/^civil3d_/i, "")
@@ -531,6 +559,7 @@ function titleCase(text: string): string {
     .join(" ");
 }
 
+/** Other verbs a user might use for an operation ("make" for create, "remove" for delete), for derived keywords. */
 function buildActionSynonyms(action: string): string[] {
   switch (action) {
     case "list":
@@ -556,6 +585,12 @@ function buildActionSynonyms(action: string): string[] {
   }
 }
 
+/**
+ * Best-guess required fields for a derived route: a per-tool table first (aliases whose arguments differ from the
+ * canonical tool), then nothing for list/info/status-like operations, then a per-operation table, else none. A guess
+ * that is too strict only makes the planner ask; one that is too loose lets the call reach the tool, whose own schema
+ * then rejects it.
+ */
 function inferDerivedRequiredFields(
   tool: ToolMetadataCatalogEntry,
   operation?: string,
@@ -656,6 +691,7 @@ function inferDerivedRequiredFields(
   return [];
 }
 
+/** "Civil 3D Surface" + "volume_report" -> "Civil 3D Surface Volume Report" (unless the name already says it). */
 function buildDerivedTitle(tool: ToolMetadataCatalogEntry, operation?: string): string {
   if (!operation) {
     return tool.displayName;
@@ -668,6 +704,7 @@ function buildDerivedTitle(tool: ToolMetadataCatalogEntry, operation?: string): 
     : `${tool.displayName} ${readableAction}`;
 }
 
+/** Keywords for a derived route: tool names, domain, operation, its synonyms, and capability phrases. */
 function buildDerivedKeywords(tool: ToolMetadataCatalogEntry, operation?: string): string[] {
   const keywordSet = new Set<string>();
   const humanToolName = humanizeToken(tool.toolName);
@@ -706,6 +743,7 @@ function buildDerivedKeywords(tool: ToolMetadataCatalogEntry, operation?: string
   return [...keywordSet].filter((keyword) => keyword.trim().length > 0);
 }
 
+/** Arguments for a derived route: the operation as `action` (if the tool has operations) plus the set route fields. */
 function buildDerivedToolArgs(operation?: string) {
   return (params: Record<string, unknown>) => {
     const picked = pickDefined(params, ROUTE_PARAM_FIELDS);
@@ -713,6 +751,10 @@ function buildDerivedToolArgs(operation?: string) {
   };
 }
 
+/**
+ * One route per implemented catalog tool and operation (a tool without operations gets one "execute" route),
+ * skipping civil3d_orchestrate itself and any tool+action an explicit route already covers.
+ */
 function buildDerivedRouteEntries(): ToolCatalogEntry[] {
   const explicitKeys = new Set(
     EXPLICIT_TOOL_CATALOG.map((entry) => `${entry.toolName}::${entry.action}`),
@@ -754,11 +796,16 @@ function buildDerivedRouteEntries(): ToolCatalogEntry[] {
   return derivedEntries;
 }
 
+/** All routes: explicit first (tagged "explicit"), then derived. Built once when the module loads. */
 export const TOOL_CATALOG: ToolCatalogEntry[] = [
   ...EXPLICIT_TOOL_CATALOG.map((entry) => ({ ...entry, source: "explicit" as const })),
   ...buildDerivedRouteEntries(),
 ];
 
+/**
+ * The route for an exact tool (and action, when given); used when civil3d_orchestrate is called with `toolName`.
+ * Without an action it returns the tool's first route.
+ */
 export function findToolCatalogEntry(toolName: string, action?: string): ToolCatalogEntry | undefined {
   if (action) {
     return TOOL_CATALOG.find(

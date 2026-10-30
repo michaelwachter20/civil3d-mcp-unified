@@ -214,6 +214,14 @@ const canonicalCorridorInputShape = {
 
 // ─── Domain definition ────────────────────────────────────────────────────────
 
+/**
+ * The corridor domain: `civil3d_corridor` (list, inspect, rebuild, corridor surfaces and feature lines, volumes,
+ * target mappings, regions) and its aliases. The plugin side is CorridorCommands.cs and CorridorEditingCommands.cs.
+ * `rebuild` returns a job ({jobId, state, message}) and finishes in the background: follow it with civil3d_job.
+ * `summary` runs in Node: the corridor, its surfaces and, when a corridor surface (or the only one) and a
+ * reference surface are known, the volumes between them. Listed in toolManifest.ts; exposures[0] is the canonical
+ * tool.
+ */
 export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "corridor",
   actions: {

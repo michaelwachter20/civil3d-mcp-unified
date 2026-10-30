@@ -2,6 +2,16 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The pipe domain: `civil3d_pipe` for gravity and pressure networks, and its aliases (`civil3d_pipe_network*`,
+ * `civil3d_pipe_catalog`, `civil3d_pressure_*`, ...). The plugin side is PipeNetworkCommands.cs,
+ * PressureNetworkCommands.cs and PipeHydraulicsCommands.cs; domainRuntime.ts turns these definitions into validated,
+ * approval-checked MCP tools.
+ *
+ * Most actions forward to one plugin method. Two run in Node and call several: `size_network` (picks a catalog part
+ * for each pipe with Manning's equation, optionally resizing) and `automate_profile_view` (makes sure a surface
+ * profile exists, then creates a profile view). workflowDomain.ts reuses `size_network` and `hydraulic_analysis`.
+ */
 const Point3DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -21,6 +31,10 @@ const PipeFlowSchema = z.object({
 
 const GenericPipeResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument any `civil3d_pipe` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalPipeInputShape = {
   action: z.enum([
     "list",
@@ -274,6 +288,7 @@ const PipeAddPressureAppurtenanceArgsSchema = z.object({
   onPipeName: z.string().optional(),
 });
 
+/** The parts of getPipeNetwork's answer the sizing and profile-view actions use. */
 type PipeNetworkDetail = {
   name: string;
   partsList?: string;
@@ -286,6 +301,10 @@ type PartsCatalogResponse = {
   partsLists: Array<{ name: string | null; parts: string[] }>;
 };
 
+/**
+ * A part's diameter, read as the first number in its catalog name ("15 inch Concrete Pipe" -> 15). The catalog only
+ * lists names, so this is the only size available; names without a number can't be chosen.
+ */
 function parsePartDiameter(partName: string): number | null {
   const match = partName.match(/(\d+(?:\.\d+)?)/);
   if (!match) return null;
@@ -293,6 +312,11 @@ function parsePartDiameter(partName: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Full-flow capacity of a circular pipe, Manning's equation Q = (1/n) A R^(2/3) S^(1/2) with R = D/4. This is the SI
+ * form (no 1.486 factor) and no unit conversion is done, so flow, diameter and the numbers in the part names must be
+ * in matching units. The slope is the pipe's slope in percent; a flat pipe counts as a tiny slope, not zero.
+ */
 function computeFullFlowCapacity(diameter: number, slopePct: number, manningsN: number): number {
   const slope = Math.max(Math.abs(slopePct) / 100, 1e-6);
   const area = Math.PI * diameter * diameter / 4;
@@ -300,11 +324,13 @@ function computeFullFlowCapacity(diameter: number, slopePct: number, manningsN: 
   return (1 / manningsN) * area * Math.pow(hydraulicRadius, 2 / 3) * Math.sqrt(slope);
 }
 
+/** Full-flow velocity Q / A for a circular pipe of the given diameter. */
 function computeVelocity(flow: number, diameter: number): number {
   const area = Math.PI * diameter * diameter / 4;
   return area > 0 ? flow / area : 0;
 }
 
+/** The smallest diameter whose full-flow capacity carries `flow`, by bisection (doubling the upper bound first). */
 function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number): number {
   let low = 0.01;
   let high = 100;
@@ -318,6 +344,11 @@ function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number
   return high;
 }
 
+/**
+ * Picks the catalog part for one pipe: the smallest part at least `requiredDiameter` whose velocity is inside
+ * [velocityMin, velocityMax]; else the smallest large enough; else the largest part. Null only when no part name
+ * has a number in it.
+ */
 function chooseBestPart(partNames: string[], requiredDiameter: number, flow: number, velocityMin: number, velocityMax: number) {
   const candidates = partNames
     .map((name) => ({ name, diameter: parsePartDiameter(name) }))
@@ -333,6 +364,10 @@ function chooseBestPart(partNames: string[], requiredDiameter: number, flow: num
   return preferred ?? candidates.find((candidate) => candidate.diameter >= requiredDiameter) ?? candidates[candidates.length - 1] ?? null;
 }
 
+/**
+ * The pipe domain's actions and exposures, listed in toolManifest.ts. exposures[0] is the canonical `civil3d_pipe`
+ * tool; the rest are aliases (exposed with CIVIL3D_ENABLE_TOOL_ALIASES=true, always callable over HTTP).
+ */
 export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "pipe",
   actions: {
@@ -498,6 +533,14 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         structureName: args.structureName,
       })),
     },
+    // For each pipe in the network: its design flow (perPipeDesignFlows by name, else defaultDesignFlow; pipes with
+    // neither are skipped), the diameter Manning's equation needs at the pipe's slope, and the best catalog part. With
+    // applyChanges each pipe is resized; otherwise it only recommends. (The "part changed" test compares the part's
+    // name with the pipe's own name, so in practice every pipe with a design flow is resized.) Declared
+    // non-retryable because applying is a drawing change, so it goes through approval either way.
+    // Applying sends both the part name and the number parsed from it as newDiameter; the plugin swaps the part, then
+    // resizes to that number as an inner diameter in drawing units. With part names in inches and a drawing in feet that
+    // second step would be wrong, so run without applyChanges first and compare the recommendations.
     size_network: {
       action: "size_network",
       inputSchema: PipeSizeNetworkArgsSchema,
@@ -564,6 +607,8 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         return { networkName: args.networkName, partsList: partsListName, applyChanges: args.applyChanges, appliedCount, recommendations };
       }),
     },
+    // Uses the network's reference alignment and surface unless given. Creates the existing-ground profile (default
+    // name EG_<alignment>) only when it is missing and createSurfaceProfileIfMissing is set, then a profile view.
     automate_profile_view: {
       action: "automate_profile_view",
       inputSchema: PipeAutomateProfileViewArgsSchema,
@@ -600,6 +645,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         return { networkName: args.networkName, alignmentName, surfaceName: surfaceName ?? null, profileName, profileView };
       }),
     },
+    // Pressure networks (PressureNetworkCommands.cs): one plugin call per action.
     list_pressure_networks: {
       action: "list_pressure_networks",
       inputSchema: PipeListPressureNetworksArgsSchema,
@@ -798,6 +844,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       })),
     },
   },
+  // exposures[0] is the canonical tool; each alias fixes its action (or a subset) and passes arguments through.
   exposures: [
     {
       toolName: "civil3d_pipe",

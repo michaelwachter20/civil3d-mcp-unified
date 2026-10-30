@@ -125,6 +125,11 @@ const ParcelReportArgsSchema = z.object({
   units: z.enum(["sqft", "acres", "sqm", "ha"]).optional(),
 });
 
+/**
+ * The parcel domain: `civil3d_parcel` (sites and parcels: list, get, create, edit, lot-line adjustment, reports)
+ * and its aliases. Every action is one call to ParcelEditingCommands.cs. Listed in toolManifest.ts; exposures[0]
+ * is the canonical tool.
+ */
 export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "parcel",
   actions: {

@@ -5,6 +5,19 @@ import { PIPE_DOMAIN_DEFINITION } from "./pipeDomain.js";
 import { SURFACE_DOMAIN_DEFINITION } from "./surfaceDomain.js";
 import { SURVEY_DOMAIN_DEFINITION } from "./surveyDomain.js";
 
+/**
+ * The workflow domain: `civil3d_workflow` and one alias per workflow (`civil3d_workflow_corridor_qc_report`, ...).
+ * A workflow is a multi-step job answered as one result with its steps, outputs and warnings (WorkflowResponseSchema).
+ *
+ * Two kinds:
+ *   - Native workflows run in the plugin as one call (`*Workflow` methods in WorkflowCommands.cs): corridor QC,
+ *     surface comparison report, data shortcut publish/reference sync, project startup and reference setup, drawing
+ *     readiness audit, feature line to grading, plan production publish, QC fix and verify.
+ *   - Composed workflows run here and call other domains' actions in turn: grading_surface_volume (surface),
+ *     pipe_network_design (pipe) and survey_import_adjust_figures (survey). They call those actions' `execute`
+ *     directly, so the inner steps skip domainRuntime: approval and argument validation happen once, for the
+ *     workflow action, which therefore declares the capabilities of everything it may do.
+ */
 const SurfaceVolumeMethodSchema = z.enum(["tin_volume", "average_end_area", "prismoidal"]);
 const WorkflowDataShortcutObjectTypeSchema = z.enum([
   "surface",
@@ -31,6 +44,7 @@ const PipeFlowSchema = z.object({
   designFlow: z.number().positive(),
 });
 
+/** One step of a workflow result: what ran (`action` as "<domain>.<action>"), whether it ran, and its answer. */
 const WorkflowStepSchema = z.object({
   name: z.string(),
   action: z.string(),
@@ -38,6 +52,7 @@ const WorkflowStepSchema = z.object({
   result: z.unknown().optional(),
 });
 
+/** Every workflow's answer; the status is "completed_with_warnings" when `warnings` isn't empty (e.g. a skipped step). */
 const WorkflowResponseSchema = z.object({
   workflow: z.string(),
   status: z.enum(["completed", "completed_with_warnings"]),
@@ -47,6 +62,7 @@ const WorkflowResponseSchema = z.object({
   warnings: z.array(z.string()),
 });
 
+/** Builds a WorkflowResponseSchema answer; the status follows from whether there are warnings. */
 function buildWorkflowResult(
   workflow: string,
   summary: string,
@@ -64,6 +80,10 @@ function buildWorkflowResult(
   };
 }
 
+/**
+ * Every argument any `civil3d_workflow` action takes, all optional except `action`: the single input schema MCP
+ * clients see. The per-workflow `*ArgsSchema` objects below say what each one needs and validate the call.
+ */
 const canonicalWorkflowInputShape = {
   action: z.enum([
     "corridor_qc_report",
@@ -309,9 +329,15 @@ const SurveyImportAdjustFiguresArgsSchema = z.object({
   }
 });
 
+/**
+ * The workflow domain's actions and exposures, listed in toolManifest.ts. exposures[0] is the canonical
+ * `civil3d_workflow` tool; the per-workflow aliases are exposed with CIVIL3D_ENABLE_TOOL_ALIASES=true and are what
+ * civil3d_orchestrate's explicit workflow routes call.
+ */
 export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "workflow",
   actions: {
+    // Native: one plugin call. Declared non-retryable because it can write a report file (outputPath).
     corridor_qc_report: {
       action: "corridor_qc_report",
       inputSchema: CorridorQcReportArgsSchema,
@@ -333,6 +359,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Composed: the surface domain's volume_calculate (a read), wrapped as a one-step workflow.
     grading_surface_volume: {
       action: "grading_surface_volume",
       inputSchema: GradingSurfaceVolumeArgsSchema,
@@ -488,6 +515,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Composed: sizes the network (pipe.size_network, which resizes only with applyChanges), then runs the hydraulic
+    // analysis unless runHydraulicAnalysis is false; a skipped analysis is reported as a warning.
     pipe_network_design: {
       action: "pipe_network_design",
       inputSchema: PipeNetworkDesignArgsSchema,
@@ -603,6 +632,9 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Composed: imports a survey LandXML file, then (with networkName) lists observations and adjusts the network, then
+    // (with figureName and pointNumbers) creates a figure, and finally lists the figures. Skipped steps become warnings.
+    // Note: no exposure lists this action in its supportedActions, so no tool reaches it at the moment.
     survey_import_adjust_figures: {
       action: "survey_import_adjust_figures",
       inputSchema: SurveyImportAdjustFiguresArgsSchema,
@@ -730,6 +762,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       },
     },
   },
+  // exposures[0] is the canonical tool. Each alias fixes its action and copies the arguments it knows; arguments not
+  // named in an alias's resolveAction are dropped.
   exposures: [
     {
       toolName: "civil3d_workflow",

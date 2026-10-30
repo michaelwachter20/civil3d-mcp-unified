@@ -1,5 +1,16 @@
 import { TOOL_CATALOG, ToolCatalogEntry } from "./ToolCatalog.js";
 
+/**
+ * The routing step of civil3d_orchestrate: picks the route in ToolCatalog.ts that best fits a plain-language request
+ * and pulls parameter values out of the text. It is plain string matching (no model, no drawing access), written for
+ * requests such as `create surface named EG_Test` or `volume between surfaces "EG" and "FG"`.
+ *
+ * An exact tool name in the request wins outright with confidence 1. Otherwise every route is scored on its
+ * keywords, title and domain words, explicit routes get a bonus, and confidence is the best score over 8, capped at 1.
+ * The best route is always returned, even when nothing matched well, so callers should look at `confidence`.
+ */
+
+/** Values the router can extract from a request; the same names the routes' buildToolArgs read. */
 export interface RouteParams {
   name?: string;
   alignmentName?: string;
@@ -51,6 +62,7 @@ export interface RouteParams {
   }>;
 }
 
+/** The chosen route, how sure the router is (0 to 1), the required fields still missing, and why it chose it. */
 export interface RouteResult {
   match: ToolCatalogEntry;
   confidence: number;
@@ -59,12 +71,14 @@ export interface RouteResult {
   reasoning: string;
 }
 
+/** Lower case, punctuation (except _ and -) to spaces, single spaces: the form both requests and keywords are compared in. */
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9_\s-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 type Point3D = { x: number; y: number; z?: number };
 
+/** The keyword plus simple plurals ("surface" -> "surfaces", "body" -> "bodies", last word of a phrase), so plurals match. */
 function buildKeywordVariants(keyword: string): string[] {
   const variants = new Set<string>([keyword]);
 
@@ -91,11 +105,13 @@ function buildKeywordVariants(keyword: string): string[] {
   return [...variants];
 }
 
+/** The first single- or double-quoted text, used as a fallback object name. */
 function extractQuotedValue(request: string): string | undefined {
   const quoteMatch = request.match(/["']([^"']+)["']/);
   return quoteMatch?.[1]?.trim();
 }
 
+/** The value after `<label>:` or `<label>=`, up to the next `word:` label, comma, semicolon or end. */
 function extractNamedValue(request: string, fieldLabel: string): string | undefined {
   const expression = new RegExp(
     `${fieldLabel}\\s*[:=]\\s*(.+?)(?=\\s+[a-z][a-z0-9_]*(?:\\s+[a-z][a-z0-9_]*)?\\s*[:=]|[,;]|$)`,
@@ -105,12 +121,14 @@ function extractNamedValue(request: string, fieldLabel: string): string | undefi
   return match?.[1]?.trim();
 }
 
+/** The number after a label (the colon or equals sign is optional: "spacing 10" works). */
 function extractNamedNumber(request: string, fieldLabel: string): number | undefined {
   const expression = new RegExp(`${fieldLabel}\\s*[:=]?\\s*(-?\\d+(?:\\.\\d+)?)`, "i");
   const match = request.match(expression);
   return match ? Number(match[1]) : undefined;
 }
 
+/** A path after a label, as `label: value` or a quoted value, without its quotes. */
 function extractPathValue(request: string, fieldLabel: string): string | undefined {
   const named = extractNamedValue(request, fieldLabel);
   if (named) {
@@ -121,6 +139,7 @@ function extractPathValue(request: string, fieldLabel: string): string | undefin
   return quoted;
 }
 
+/** A point written as `label: (x, y[, z])`, parentheses optional. */
 function extractPoint3D(request: string, fieldLabel: string): Point3D | undefined {
   const namedMatch = new RegExp(
     `${fieldLabel}\\s*[:=]\\s*\\(?\\s*(-?\\d+(?:\\.\\d+)?)\\s*,\\s*(-?\\d+(?:\\.\\d+)?)(?:\\s*,\\s*(-?\\d+(?:\\.\\d+)?))?\\s*\\)?`,
@@ -138,6 +157,10 @@ function extractPoint3D(request: string, fieldLabel: string): Point3D | undefine
   };
 }
 
+/**
+ * An object's name from phrasing such as "surface named EG", "rebuild corridor Main Road" or "for alignment CL-1";
+ * the name stops at the next keyword (alignment, profile, spacing, file, layer, ...), so "on alignment" isn't swallowed.
+ */
 function extractObjectName(request: string, objectType: string): string | undefined {
   const stopPattern = String.raw`(?=\s+(?:(?:on|for|using|with|from)\s+)?(?:alignment|profile|surface|corridor|design\s*speed|grid\s*spacing|spacing|file(?:path)?|output(?:path)?|inflow|outflow|bottom(?:\s+elevation)?|top(?:\s+elevation)?|style|layer|labelset)\b|$)`;
   const directMatch = new RegExp(`${objectType}\\s+(?:named|called)\\s*["']?([^"',;]+?)["']?${stopPattern}`, "i").exec(request)?.[1]?.trim();
@@ -160,6 +183,7 @@ function extractSimpleNamedObject(request: string, objectType: string): string |
     ?? extractObjectName(request, objectType);
 }
 
+/** Base and comparison surfaces from "between surfaces A and B", or from `base:` / `comparison:` (or `design:`) labels. */
 function extractSurfacePair(request: string) {
   const betweenMatch = /between\s+surfaces?\s+["']?([^"',;]+)["']?\s+and\s+["']?([^"',;]+)["']?/i.exec(request);
   if (betweenMatch) {
@@ -175,6 +199,7 @@ function extractSurfacePair(request: string) {
   };
 }
 
+/** Whether a field counts as given: non-blank string, finite number, non-empty array, or any other non-null value. */
 function hasRequiredValue(value: unknown): boolean {
   if (typeof value === "string") {
     return value.trim().length > 0;
@@ -191,6 +216,10 @@ function hasRequiredValue(value: unknown): boolean {
   return value != null;
 }
 
+/**
+ * Every value the request names. Labelled values (`alignment: X`) are preferred over phrasing ("alignment X"), and a
+ * quoted value is used for the alignment or surface name only when the request mentions that object type.
+ */
 function extractParams(request: string): RouteParams {
   const quotedValue = extractQuotedValue(request);
   const alignmentName = extractNamedValue(request, "alignment(?:name)?");
@@ -293,6 +322,11 @@ function extractParams(request: string): RouteParams {
   };
 }
 
+/**
+ * A route's score for a request: the tool name (12+), the title (6), each keyword or plural found (4 for a phrase,
+ * 2 for one word), small bonuses when the request names the route's domain, and 10 for an explicit route. The
+ * routes chosen for typical requests are checked by tests/orchestration.test.ts; run it after changing them.
+ */
 function scoreRequest(normalizedRequest: string, entry: ToolCatalogEntry): number {
   let score = 0;
   const normalizedToolName = normalize(entry.toolName);
@@ -376,6 +410,11 @@ function scoreRequest(normalizedRequest: string, entry: ToolCatalogEntry): numbe
   return score;
 }
 
+/**
+ * Routes a request: the longest tool name found in the text wins outright; otherwise the highest-scoring route.
+ * Returns the route with the parameters extracted from the text and the required fields they don't cover yet
+ * (the orchestrator later fills more from the user's selection).
+ */
 export function routeIntent(request: string): RouteResult {
   const normalizedRequest = normalize(request);
   const extractedParams = extractParams(request);

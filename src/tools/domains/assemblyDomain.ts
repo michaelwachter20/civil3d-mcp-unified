@@ -85,6 +85,11 @@ const AssemblyEditArgsSchema = z.object({
   delete: z.boolean().optional(),
 });
 
+/**
+ * The assembly domain: `civil3d_assembly` (list and inspect assemblies, create assemblies and subassemblies, edit)
+ * and its aliases. Every action is one call to AssemblyCreationCommands.cs. Listed in toolManifest.ts;
+ * exposures[0] is the canonical tool.
+ */
 export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "assembly",
   actions: {

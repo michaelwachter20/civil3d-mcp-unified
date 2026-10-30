@@ -161,6 +161,13 @@ const PointTransformArgsSchema = z.object({
   scaleFactor: z.number().optional(),
 });
 
+/**
+ * The point domain: `civil3d_point` (COGO points: list, get, create, import, delete, export, transform) and point
+ * groups, with their aliases. Points are survey data: the server instructions tell the AI never to move or edit
+ * them unless the user asks. Every action is one call to PointCommands.cs or PointGroupCommands.cs; import, export
+ * and delete are approval-gated. Import takes the point data as text (`data`, with its `format`), not a file path.
+ * Listed in toolManifest.ts; exposures[0] is the canonical tool.
+ */
 export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "point",
   actions: {

@@ -6,6 +6,18 @@ import { buildWorkflowPlan } from "../orchestration/WorkflowPlanner.js";
 import { resolveParamsFromSelection } from "../orchestration/SelectionResolver.js";
 import { executeRegisteredTool } from "./toolHandlerRegistry.js";
 
+/**
+ * civil3d_orchestrate: turns a plain-language request (or an explicit toolName) into a plan and, with
+ * `execute: true`, runs it. It is exposed by the docs domain (docsDomain.ts) and kept visible in compact mode. The
+ * pieces live in src/orchestration/: IntentRouter picks the route, ProjectContextService reads the drawing and
+ * selection, SelectionResolver fills names from the selection, WorkflowPlanner writes the plan. This file joins
+ * them, decides whether the call can run, and runs the chosen tool through executeRegisteredTool, the same handler
+ * an MCP or HTTP call gets, so validation and approval are never skipped.
+ *
+ * executeToolCallViaOrchestrator is also used by the HTTP bridge for its legacy endpoints.
+ */
+
+/** The orchestrator's input: `request` or `toolName` (+ toolAction, toolParameters), plus any route parameter given directly. */
 const Civil3DOrchestrateInputShape = {
   request: z.string().min(1).optional().describe("Natural-language Civil 3D request."),
   execute: z.boolean().optional().describe("When true, execute the selected action if enough parameters are available."),
@@ -68,6 +80,7 @@ const Civil3DOrchestrateInputSchema = z.object(Civil3DOrchestrateInputShape);
 
 export type OrchestrateArgs = z.infer<typeof Civil3DOrchestrateInputSchema>;
 
+/** The RouteParams fields that may be copied out of toolParameters into the route's parameters. */
 const ROUTE_PARAM_KEYS: Array<keyof RouteParams> = [
   "name",
   "alignmentName",
@@ -114,6 +127,7 @@ const ROUTE_PARAM_KEYS: Array<keyof RouteParams> = [
   "payItems",
 ];
 
+/** The route-parameter fields that are set in `source`. */
 function pickRouteParams(
   source?: Record<string, unknown>,
 ): Partial<RouteParams> {
@@ -128,6 +142,7 @@ function pickRouteParams(
   ) as Partial<RouteParams>;
 }
 
+/** Parameters for a routed request: a value given as an argument wins over the one extracted from the text. */
 function buildMergedParams(args: OrchestrateArgs, routed: ReturnType<typeof routeIntent>) {
   return {
     name: args.name ?? routed.extractedParams.name,
@@ -176,6 +191,7 @@ function buildMergedParams(args: OrchestrateArgs, routed: ReturnType<typeof rout
   };
 }
 
+/** Parameters for a direct (toolName) call: values from the text, then explicit arguments, then toolParameters. */
 function buildDirectParams(args: OrchestrateArgs): RouteParams {
   const extractedRequestParams = args.request ? routeIntent(args.request).extractedParams : {};
 
@@ -228,6 +244,7 @@ function buildDirectParams(args: OrchestrateArgs): RouteParams {
   };
 }
 
+/** The route for an exact toolName (and toolAction or toolParameters.action); unknown tools are an error. */
 function buildDirectRoute(args: OrchestrateArgs): RouteResult {
   const requestedToolName = args.toolName;
   if (!requestedToolName) {
@@ -260,6 +277,7 @@ function buildDirectRoute(args: OrchestrateArgs): RouteResult {
   };
 }
 
+/** The route's required fields that aren't given in `params`. */
 function findMissingRequiredFields(
   requiredFields: string[],
   params: Record<string, unknown> | RouteParams,
@@ -268,6 +286,7 @@ function findMissingRequiredFields(
   return requiredFields.filter((field) => !hasRequiredValue(paramRecord[field]));
 }
 
+/** Everything a direct call needs: its route, parameters, the exact arguments for the tool, and what's missing. */
 function buildDirectExecutionContext(args: OrchestrateArgs) {
   const routed = buildDirectRoute(args);
   const params = buildDirectParams(args);
@@ -282,6 +301,11 @@ function buildDirectExecutionContext(args: OrchestrateArgs) {
   };
 }
 
+/**
+ * The arguments sent to the tool on a direct call: the action (explicit, from toolParameters, or the route's own
+ * unless it is the placeholder "execute"), then the route parameters, then toolParameters, which win; undefined
+ * values are dropped.
+ */
 function buildExactToolParameters(
   args: OrchestrateArgs,
   params: RouteParams,
@@ -320,6 +344,7 @@ function hasRequiredValue(value: unknown): boolean {
   return value != null;
 }
 
+/** The answer for the corridor_prerequisites intent: there is no corridor-creation tool, so it explains the sequence. */
 function buildCorridorAdvice() {
   return {
     recommendedSequence: [
@@ -333,6 +358,7 @@ function buildCorridorAdvice() {
   };
 }
 
+/** Whether the drawing has what the intent needs (alignments, surfaces, profiles), with a suggestion for each gap. */
 function buildContextAwareAdvice(intent: ReturnType<typeof routeIntent>, projectContext: Awaited<ReturnType<typeof getProjectContext>>) {
   const drawingInfo = (projectContext.drawingInfo ?? {}) as {
     objectCounts?: {
@@ -437,6 +463,7 @@ function buildContextAwareAdvice(intent: ReturnType<typeof routeIntent>, project
   };
 }
 
+/** Runs a routed intent: builds the tool's arguments with the route's buildToolArgs and calls the registered tool. */
 async function executeIntent(intent: ReturnType<typeof routeIntent>, params: RouteParams) {
   if (intent.match.intent === "corridor_prerequisites") {
     return buildCorridorAdvice();
@@ -453,6 +480,11 @@ async function executeRegisteredToolDirectly(
   return await executeRegisteredTool(toolName, parameters);
 }
 
+/**
+ * Runs an exact tool call through the orchestrator's argument handling, without planning or reading the drawing
+ * context. Throws "Missing required fields: ..." when the route needs fields that weren't given. Used by the HTTP
+ * bridge's legacy endpoints.
+ */
 export async function executeToolCallViaOrchestrator(
   toolName: string,
   parameters: Record<string, unknown>,
@@ -478,6 +510,12 @@ export async function executeToolCallViaOrchestrator(
   );
 }
 
+/**
+ * The civil3d_orchestrate action. Always asks the plugin for the project context (so it needs Civil 3D), then answers
+ * with the chosen tool and action, the confidence, the parameters (and which came from the selection), advice,
+ * the plan and the missing fields. Status: "planned" / "planned_needs_input" without `execute`; with it,
+ * "needs_input" (nothing run) or "executed" with the tool's result.
+ */
 export async function executeCivil3DOrchestrate(rawArgs: OrchestrateArgs) {
   const args = Civil3DOrchestrateInputSchema.parse(rawArgs);
   if (!args.request && !args.toolName) {

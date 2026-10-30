@@ -149,6 +149,12 @@ const FeatureLineCreateArgsSchema = z.object({
   layer: z.string().optional(),
 });
 
+/**
+ * The grading domain: `civil3d_grading` (grading groups, gradings, grading criteria, feature lines, and a surface
+ * or volume from a grading group) and its aliases. Every action is one call to GradingCommands.cs, which reaches
+ * the grading API late-bound so it tolerates differences between releases. Listed in toolManifest.ts;
+ * exposures[0] is the canonical tool.
+ */
 export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "grading",
   actions: {

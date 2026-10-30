@@ -1,6 +1,18 @@
 import { RouteParams, RouteResult } from "./IntentRouter.js";
 import { ProjectContext } from "./ProjectContextService.js";
 
+/**
+ * The planning step of civil3d_orchestrate (src/tools/civil3d_orchestrate.ts): after IntentRouter has picked a route
+ * and SelectionResolver has filled what it could from the user's selection, this turns the route into a plan the AI
+ * can show or follow: the steps with the tool and action each would call, whether each is ready, missing input or
+ * blocked by the drawing's contents, and questions to ask the user for what is missing.
+ *
+ * It only plans; nothing here calls a tool or the plugin. The drawing's object counts come from the project context
+ * the orchestrator already fetched. A few intents (startup, audits, surface/profile work, sight distance, detention,
+ * slope, cost) have hand-written plans, most of them several steps; every other route gets a one-step plan.
+ */
+
+/** One step of a plan; `status` is "blocked" when the drawing lacks what the step needs (e.g. no surfaces). */
 export interface WorkflowStep {
   title: string;
   toolName: string;
@@ -10,6 +22,7 @@ export interface WorkflowStep {
   notes?: string;
 }
 
+/** A plan: "workflow" for the hand-written multi-step plans, "single_action" for the one-step fallback. */
 export interface WorkflowPlan {
   kind: "single_action" | "workflow";
   title: string;
@@ -19,6 +32,7 @@ export interface WorkflowPlan {
   clarificationQuestions: string[];
 }
 
+/** The drawing's object counts (surfaces, alignments, profiles, corridors) from getProjectContext, or {} if absent. */
 function getObjectCounts(projectContext: ProjectContext) {
   const drawingInfo = (projectContext.drawingInfo ?? {}) as {
     objectCounts?: {
@@ -32,6 +46,7 @@ function getObjectCounts(projectContext: ProjectContext) {
   return drawingInfo.objectCounts ?? {};
 }
 
+/** The required fields that are absent, blank strings or non-finite numbers in the routed parameters. */
 function findMissingFields(params: RouteParams, requiredFields: string[]) {
   return requiredFields.filter((field) => {
     const value = params[field as keyof RouteParams];
@@ -47,6 +62,7 @@ function findMissingFields(params: RouteParams, requiredFields: string[]) {
   });
 }
 
+/** A plain question for each missing field, for the AI to ask the user; unknown fields get a generic one. */
 function buildFieldClarificationQuestions(fields: string[]): string[] {
   return fields.map((field) => {
     switch (field) {
@@ -100,6 +116,16 @@ function buildFieldClarificationQuestions(fields: string[]): string[] {
   });
 }
 
+/**
+ * Builds the plan for a routed intent.
+ *
+ * @param routed         the IntentRouter match (its intent, tool, action and required fields)
+ * @param params         the parameters after selection filling (SelectionResolver)
+ * @param projectContext drawing info, object types and selection from the plugin
+ * @returns the plan, its missing fields and the clarification questions. The hand-written plans write their own
+ *          questions (some, such as project startup, ask none because their inputs are optional); the fallback asks
+ *          one per missing field.
+ */
 export function buildWorkflowPlan(routed: RouteResult, params: RouteParams, projectContext: ProjectContext): WorkflowPlan {
   const objectCounts = getObjectCounts(projectContext);
   const hasSurfaces = (objectCounts.surfaces ?? 0) > 0;
@@ -107,6 +133,7 @@ export function buildWorkflowPlan(routed: RouteResult, params: RouteParams, proj
   const hasProfiles = (objectCounts.profiles ?? 0) > 0;
   const missingFields = findMissingFields(params, routed.match.requiredFields);
 
+  // Hand-written plans, one per intent. Steps reflect what the drawing has (hasSurfaces, ...) and what the user gave.
   if (routed.match.intent === "workflow_project_startup") {
     const clarificationQuestions: string[] = [];
 
@@ -812,6 +839,7 @@ export function buildWorkflowPlan(routed: RouteResult, params: RouteParams, proj
     };
   }
 
+  // Any other intent: one step, the routed tool and action.
   return {
     kind: "single_action",
     title: routed.match.title,

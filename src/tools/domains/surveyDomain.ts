@@ -75,6 +75,12 @@ const SurveyLandXmlImportArgsSchema = z.object({
   duplicatePolicy: z.enum(["skip", "overwrite", "rename"]).optional(),
 });
 
+/**
+ * The survey domain: `civil3d_survey` (survey databases, figures, observations, network adjustment, LandXML
+ * import) and its aliases; only the queries the managed API supports are advertised. Every action is one call to
+ * CogoCommands.cs. workflowDomain.ts reuses these actions for survey_import_adjust_figures. Listed in
+ * toolManifest.ts; exposures[0] is the canonical tool.
+ */
 export const SURVEY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "survey",
   actions: {

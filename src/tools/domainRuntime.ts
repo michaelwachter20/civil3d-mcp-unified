@@ -8,8 +8,21 @@ import { createLogger } from "../utils/logger.js";
 import { createRequestId, runWithRequestId } from "../utils/requestContext.js";
 import type { ToolCapability, ToolCatalogEntry, ToolDomain } from "./toolMetadata.js";
 
+/**
+ * The runtime every manifest tool goes through: it turns a DomainToolDefinition (one file per domain in domains/)
+ * into MCP tools and gives each call the same path:
+ *
+ *   resolveAction (exposure) -> inputSchema.parse -> approvalPolicy.enforce -> action.execute
+ *     -> responseSchema.parse -> MCP result (text + structuredContent + resource link for big reports)
+ *
+ * plus a request id for the logs, MCP progress notifications, optional idempotency keys, and one error shape
+ * (buildToolErrorResult) for everything a handler throws. toolManifest.ts calls captureDomainToolHandlers (for
+ * the HTTP bridge and civil3d_orchestrate) and registerSelectedDomainTools (for the MCP client) for each domain.
+ */
+
 type JsonObject = Record<string, unknown>;
 
+/** The parts of the MCP SDK's handler `extra` this file uses: the progress token, abort signal and notifier. */
 interface ToolProgressExtra {
   _meta?: { progressToken?: string | number };
   signal?: AbortSignal;
@@ -24,6 +37,7 @@ interface ToolProgressExtra {
   }) => Promise<void>;
 }
 
+/** Capabilities that change something; a tool whose actions have none of them is annotated readOnlyHint. */
 const MUTATING_CAPABILITIES = new Set<ToolCapability>([
   "create",
   "edit",
@@ -36,6 +50,11 @@ const MUTATING_CAPABILITIES = new Set<ToolCapability>([
 ]);
 const log = createLogger("DomainRuntime");
 
+/**
+ * One action of a domain. `capabilities` and `safeForRetry` decide approval (approvalPolicy.ts) and the MCP hints;
+ * `requiresActiveDrawing` decides whether the drawing fingerprint is needed; `pluginMethods` names the C# methods
+ * `execute` calls (checked against CommandDispatcher.cs by a test, and listed in docs/tools.generated.md).
+ */
 export interface DomainActionDefinition<TArgs = JsonObject> {
   action: string;
   inputSchema: z.ZodType<TArgs>;
@@ -47,6 +66,11 @@ export interface DomainActionDefinition<TArgs = JsonObject> {
   pluginMethods?: string[];
 }
 
+/**
+ * One MCP tool that reaches some of a domain's actions. `inputShape` is the schema the client sees;
+ * `resolveAction` maps the raw arguments to an action and that action's arguments (an alias fixes the action and
+ * may rename fields). The optional catalog fields override what buildDomainToolCatalogEntries would derive.
+ */
 export interface DomainToolExposure {
   toolName: string;
   displayName: string;
@@ -62,6 +86,7 @@ export interface DomainToolExposure {
   status?: "implemented" | "planned";
 }
 
+/** A domain: its actions and its exposures; exposures[0] is the canonical tool shown in compact mode. */
 export interface DomainToolDefinition {
   domain: ToolDomain;
   actions: Record<string, DomainActionDefinition>;
@@ -77,6 +102,11 @@ function uniqueCapabilities(values: Iterable<ToolCapability | undefined>): ToolC
   return [...new Set([...values].filter((value): value is ToolCapability => Boolean(value)))];
 }
 
+/**
+ * The MCP error result for anything a handler threw: `isError`, the message prefixed with the tool and action, and
+ * `errorCode` / `rpcCode` taken from the error when it carries them (Civil3DRpcError, knowledgeError), otherwise
+ * inferred from the message. The HTTP bridge reads errorCode to choose the status.
+ */
 function buildToolErrorResult(toolName: string, actionName: string | undefined, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   const typedErrorCode = error && typeof error === "object" && "code" in error
@@ -106,6 +136,7 @@ function buildToolErrorResult(toolName: string, actionName: string | undefined, 
   };
 }
 
+/** A CIVIL3D.* code guessed from an untyped error's message (timeouts, connection failures, not found, ...). */
 function inferDomainErrorCode(message: string): string {
   if (/timed out|timeout/i.test(message)) return "CIVIL3D.TIMEOUT";
   if (/failed to connect|connection (?:failed|closed)|plugin not running/i.test(message)) return "CIVIL3D.UNAVAILABLE";
@@ -116,6 +147,7 @@ function inferDomainErrorCode(message: string): string {
   return "CIVIL3D.INTERNAL_ERROR";
 }
 
+/** The JSON-RPC number for a CIVIL3D.* code, matching JsonRpcProtocol.NumericErrorCode on the plugin side. */
 function inferRpcErrorCode(domainCode: string): number {
   if (domainCode === "CIVIL3D.METHOD_NOT_FOUND") return -32601;
   if (domainCode === "CIVIL3D.INVALID_INPUT") return -32602;
@@ -127,6 +159,13 @@ function inferRpcErrorCode(domainCode: string): number {
   return -32000;
 }
 
+/**
+ * Runs one call: resolve and validate the action, refuse an idempotencyKey on a non-retryable action, enforce
+ * approval with the raw arguments (the token is bound to exactly what the client sent), execute, validate the
+ * response, and keep a large or report-like answer as an MCP resource. With an idempotencyKey the result is shared
+ * between identical calls on the same drawing (idempotencyStore.ts); approvalToken and the key itself are left out
+ * of the signature.
+ */
 async function executeExposure(
   definition: DomainToolDefinition,
   exposure: DomainToolExposure,
@@ -213,6 +252,7 @@ async function executeExposure(
   );
 }
 
+/** Sends an MCP progress notification when the client asked for progress; a failed send is logged, never fatal. */
 async function emitProgress(
   extra: ToolProgressExtra | undefined,
   progress: number,
@@ -234,6 +274,7 @@ async function emitProgress(
   }
 }
 
+/** The MCP output schema: { action, result } with the union of the supported actions' response schemas. */
 export function buildExposureOutputSchema(
   definition: DomainToolDefinition,
   exposure: DomainToolExposure,
@@ -254,6 +295,10 @@ export function buildExposureOutputSchema(
   return z.object({ action: actionSchema, result: resultSchema });
 }
 
+/**
+ * MCP tool annotations derived from the actions: readOnlyHint when none mutates, destructiveHint when any needs
+ * approval, idempotentHint when all are safe to retry. openWorldHint is false: the tools act on the local drawing.
+ */
 export function buildExposureAnnotations(
   definition: DomainToolDefinition,
   exposure: DomainToolExposure,
@@ -280,10 +325,16 @@ export function buildExposureAnnotations(
   };
 }
 
+/** Registers every exposure of a domain with the MCP server (tests and tools that don't need compact mode). */
 export function registerDomainTools(server: McpServer, definition: DomainToolDefinition) {
   registerSelectedDomainTools(server, definition, definition.exposures);
 }
 
+/**
+ * The handler for one exposure: gives the call a request id (carried with the abort signal through
+ * requestContext.ts, so the plugin call can be cancelled and logs line up), sends progress, logs start and end, and
+ * turns any error into buildToolErrorResult. It never throws; the request id is returned in `_meta`.
+ */
 function createExposureHandler(
   definition: DomainToolDefinition,
   exposure: DomainToolExposure,
@@ -327,12 +378,20 @@ function createExposureHandler(
   };
 }
 
+/**
+ * Stores a handler for every exposure, aliases included, in toolHandlerRegistry.ts, so the HTTP bridge and
+ * civil3d_orchestrate can call any tool even when compact mode doesn't list it to MCP clients.
+ */
 export function captureDomainToolHandlers(definition: DomainToolDefinition) {
   for (const exposure of definition.exposures) {
     captureToolHandler(exposure.toolName, createExposureHandler(definition, exposure));
   }
 }
 
+/**
+ * Registers the given exposures with the MCP server, adding the arguments every tool accepts (`approvalToken`,
+ * `idempotencyKey`), the output schema and the annotations.
+ */
 export function registerSelectedDomainTools(
   server: McpServer,
   definition: DomainToolDefinition,
@@ -357,6 +416,11 @@ export function registerSelectedDomainTools(
   }
 }
 
+/**
+ * Catalog entries (tool_catalog.ts, docs/tools.generated.md, civil3d://catalog/tools) for a domain's exposures:
+ * capabilities and plugin methods merged from the supported actions, `operations` when there is more than one,
+ * requiresActiveDrawing if any action needs it, safeForRetry only if every action is.
+ */
 export function buildDomainToolCatalogEntries(definition: DomainToolDefinition): ToolCatalogEntry[] {
   return definition.exposures.map((exposure) => {
     const supportedActionDefinitions = exposure.supportedActions

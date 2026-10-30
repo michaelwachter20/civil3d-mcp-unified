@@ -2,11 +2,21 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The alignment domain: `civil3d_alignment` (list, inspect, station/offset conversions, create and delete, and
+ * geometry editing) and its aliases (`civil3d_alignment_report`, `civil3d_alignment_add_tangent`, ...). The plugin
+ * side is AlignmentCommands.cs (read, create, delete, sample) and AlignmentEditCommands.cs (entities, station
+ * equations, offsets, widenings). Note that the plugin's editing methods take `alignmentName` while this tool's
+ * canonical argument is `name`; the actions below rename it.
+ *
+ * Every action forwards to one plugin method except `report`, which samples stations and summarizes them here.
+ */
 const Point2DSchema = z.object({
   x: z.number(),
   y: z.number(),
 });
 
+/** For actions whose answer isn't checked field by field: any object passes. */
 const GenericAlignmentResponseSchema = z.object({}).passthrough();
 
 const AlignmentSummarySchema = z.object({
@@ -76,6 +86,7 @@ const AlignmentStationSamplesResponseSchema = z.object({
   samples: z.array(AlignmentReportStationSampleSchema),
 });
 
+/** The `report` action's answer: the alignment detail, a summary computed in Node, and the station samples. */
 const AlignmentReportResponseSchema = z.object({
   alignment: AlignmentDetailResponseSchema,
   summary: z.object({
@@ -96,6 +107,10 @@ const AlignmentReportResponseSchema = z.object({
   stationSamples: z.array(AlignmentReportStationSampleSchema),
 });
 
+/**
+ * Every argument any `civil3d_alignment` action takes, all optional except `action`: the single input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalAlignmentInputShape = {
   action: z.enum([
     "list",
@@ -264,6 +279,11 @@ const AlignmentWidenTransitionArgsSchema = z.object({
   offsetName: z.string().optional(),
 });
 
+/**
+ * Stations from start to end every `interval`, always ending exactly on `endStation`, rounded to 6 decimals. Throws
+ * before building the list when it would exceed `maximumSamples`, so a long alignment with a small interval fails
+ * with advice instead of a huge answer.
+ */
 function buildStationSequence(startStation: number, endStation: number, interval: number, maximumSamples: number) {
   const stations: number[] = [];
   const length = Math.max(0, endStation - startStation);
@@ -289,6 +309,10 @@ function buildStationSequence(startStation: number, endStation: number, interval
   return stations;
 }
 
+/**
+ * The alignment domain's actions and exposures, listed in toolManifest.ts. exposures[0] is the canonical
+ * `civil3d_alignment` tool; the others are aliases (exposed with CIVIL3D_ENABLE_TOOL_ALIASES=true).
+ */
 export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "alignment",
   actions: {
@@ -384,6 +408,8 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // getAlignment, then the alignment sampled every `interval` (default: a twentieth of its length, at least 25) at
+    // `offset`, at most maximumSamples (default 100, max 200) stations, plus counts of lines, arcs and spirals.
     report: {
       action: "report",
       inputSchema: AlignmentReportArgsSchema,
@@ -461,6 +487,8 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Defined, but not listed in any exposure's supportedActions (the canonical tool's action enum leaves it out), so no
+    // tool reaches it at the moment.
     add_curve: {
       action: "add_curve",
       inputSchema: AlignmentAddCurveArgsSchema,
@@ -585,6 +613,7 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // exposures[0] is the canonical tool. The aliases take `alignmentName` and map it to the actions' `name`.
   exposures: [
     {
       toolName: "civil3d_alignment",

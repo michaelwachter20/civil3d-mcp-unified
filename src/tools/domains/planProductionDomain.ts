@@ -160,6 +160,12 @@ const SheetSetExportArgsSchema = z.object({
   plotStyleTable: z.string().optional(),
 });
 
+/**
+ * The plan production domain: `civil3d_plan_production` (sheet sets, sheets, title blocks, plan/profile sheets,
+ * sheet views and scales, PDF publish and sheet set export) and its aliases. Every action is one call to
+ * PlanProductionCommands.cs; publish and export write files, so they are approval-gated and their paths are
+ * checked by FileBoundary in the plugin. Listed in toolManifest.ts; exposures[0] is the canonical tool.
+ */
 export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "plan_production",
   actions: {

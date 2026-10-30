@@ -40,6 +40,12 @@ import { WORKFLOW_DOMAIN_DEFINITION } from "./domains/workflowDomain.js";
 import { SCRIPTING_DOMAIN_DEFINITION } from "./domains/scriptingDomain.js";
 import type { ToolCatalogEntry } from "./toolMetadata.js";
 
+/**
+ * The tool manifest: every domain definition, in the order their tools are registered. Adding a domain means a new
+ * file in domains/ and an entry here (and its name in ToolDomain, toolMetadata.ts); register.ts doesn't change.
+ * Everything that lists tools derives from this array: the MCP registration, the handler registry used by HTTP
+ * and civil3d_orchestrate, the catalog resource, civil3d_docs, the orchestrator's routes, docs/tools.generated.md.
+ */
 export const MIGRATED_DOMAIN_DEFINITIONS = [
   ALIGNMENT_DOMAIN_DEFINITION,
   SURFACE_DOMAIN_DEFINITION,
@@ -74,16 +80,22 @@ export const MIGRATED_DOMAIN_DEFINITIONS = [
   SCRIPTING_DOMAIN_DEFINITION,
 ];
 
+/** One catalog entry per exposure of every domain (tool_catalog.ts adds civil3d_help). */
 export const GENERATED_TOOL_CATALOG_ENTRIES: ToolCatalogEntry[] = MIGRATED_DOMAIN_DEFINITIONS.flatMap(
   (definition) => buildDomainToolCatalogEntries(definition),
 );
 
+/** The domain, exposure and action a tool name + action resolve to (see findManifestAction). */
 export interface ManifestActionMatch {
   definition: DomainToolDefinition;
   exposure: DomainToolExposure;
   actionDefinition: DomainActionDefinition;
 }
 
+/**
+ * Finds the exposure named `toolName` that supports `action`, with the action's definition; used by the approval
+ * tools to learn an action's capabilities without running it.
+ */
 export function findManifestAction(toolName: string, action: string): ManifestActionMatch | undefined {
   for (const definition of MIGRATED_DOMAIN_DEFINITIONS as DomainToolDefinition[]) {
     const exposure = definition.exposures.find(
@@ -97,6 +109,11 @@ export function findManifestAction(toolName: string, action: string): ManifestAc
   return undefined;
 }
 
+/**
+ * Registers every domain at startup: all handlers are captured for HTTP and orchestration, and the exposures that
+ * selectManifestExposures picks are listed to the MCP client. CIVIL3D_ENABLE_TOOL_ALIASES is read once, here, so a
+ * change needs a server restart.
+ */
 export function registerManifestTools(server: McpServer) {
   const includeAliases = process.env.CIVIL3D_ENABLE_TOOL_ALIASES?.trim().toLowerCase() === "true";
   for (const definition of MIGRATED_DOMAIN_DEFINITIONS) {
@@ -105,6 +122,12 @@ export function registerManifestTools(server: McpServer) {
   }
 }
 
+/**
+ * Which exposures MCP clients see. With aliases enabled, all of them. In compact mode (the default): the canonical
+ * tool of each domain (exposures[0]); every scripting tool, since each is first-class; and civil3d_orchestrate
+ * next to civil3d_docs. Fewer overlapping tool descriptions help the model pick; the aliases stay callable over
+ * HTTP and through the orchestrator either way.
+ */
 export function selectManifestExposures(
   definition: DomainToolDefinition,
   includeAliases = false,

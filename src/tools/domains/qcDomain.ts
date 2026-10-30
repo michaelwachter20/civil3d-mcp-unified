@@ -90,6 +90,12 @@ const QcReportArgsSchema = z.object({
   includeLabels: z.boolean().optional(),
 });
 
+/**
+ * The QC domain: `civil3d_qc` (checks of an alignment, profile, corridor, pipe network or surface, and the QC
+ * report file) and its aliases. Every action is one call to QcCommands.cs; each check answers with findings
+ * (severity, type, message). The report writes a .txt file through FileBoundary. Label and layer checks are in the
+ * standards domain. Listed in toolManifest.ts; exposures[0] is the canonical tool.
+ */
 export const QC_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "qc",
   actions: {

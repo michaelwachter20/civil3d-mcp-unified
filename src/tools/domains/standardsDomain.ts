@@ -128,6 +128,14 @@ const QcFixDrawingStandardsArgsSchema = z.object({
   dryRun: z.boolean().optional(),
 });
 
+/**
+ * The standards domain: `civil3d_standards` (labels and label styles, styles, the framework standards lookup, label
+ * checks, and the layer standards check and fix) and its aliases. The plugin side is LabelCommands.cs,
+ * StyleCommands.cs and QcCommands.cs. `lookup` runs in Node only: it searches the framework standards shipped in
+ * src/standards/data (FrameworkStandardsService.ts) and needs no drawing. `fix_drawing_standards` renames and
+ * recolors layers and is approval-gated (its name contains "fix"). Listed in toolManifest.ts; exposures[0] is the
+ * canonical tool.
+ */
 export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "standards",
   actions: {

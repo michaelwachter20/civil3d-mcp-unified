@@ -2,6 +2,16 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The surface domain: `civil3d_surface` and its aliases (`civil3d_surface_edit`, `civil3d_surface_volume_*`,
+ * `civil3d_surface_analyze_*`, ...). Each action declares its input schema, response schema, capabilities and the
+ * plugin methods it calls (SurfaceCommands.cs, plus the hydrology methods for the drainage workflow);
+ * domainRuntime.ts turns that into validated, approval-checked MCP tools.
+ *
+ * Most actions forward their arguments to one plugin method. Two run in Node: `comparison_workflow` and
+ * `drainage_workflow` call several plugin methods in turn and combine the answers. The response schemas below are
+ * the shapes the plugin returns; when one changes on the C# side, change it here too, or the response check fails.
+ */
 const Point2DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -15,6 +25,7 @@ const Point3DSchema = z.object({
 
 const Point2DOr3DSchema = z.union([Point3DSchema, Point2DSchema]);
 
+/** For actions whose answer isn't checked field by field: any object passes. */
 const GenericSurfaceResponseSchema = z.object({}).passthrough();
 
 const SurfaceSummarySchema = z.object({
@@ -77,6 +88,7 @@ const SurfaceVolumeResultSchema = z.object({
   }),
 });
 
+/** computeSurfaceVolume's answer. Cut and fill areas are null: the API's TIN volume properties don't give them. */
 const SurfaceVolumeResponseSchema = z.object({
   cutVolume: z.number(),
   fillVolume: z.number(),
@@ -189,6 +201,11 @@ const SurfaceDrainageWorkflowResponseSchema = z.object({
   runoffEstimate: HydrologyRunoffResponseSchema,
 });
 
+/**
+ * Every argument any `civil3d_surface` action takes, all optional except `action`: this is the single input schema
+ * the MCP client sees. Each action's own `*ArgsSchema` below says which arguments it actually needs and is what
+ * validates the call.
+ */
 const canonicalSurfaceInputShape = {
   action: z.enum([
     "list",
@@ -431,6 +448,11 @@ const SurfaceDrainageWorkflowArgsSchema = z.object({
   intensityUnits: z.enum(["in_per_hr", "mm_per_hr"]),
 });
 
+/**
+ * The surface domain's actions and exposures, listed in toolManifest.ts. The first exposure is the canonical
+ * `civil3d_surface` tool (shown by default); the others are aliases, exposed only with
+ * CIVIL3D_ENABLE_TOOL_ALIASES=true but always callable over HTTP and from civil3d_orchestrate.
+ */
 export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "surface",
   actions: {
@@ -602,6 +624,8 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // compute_volume, volume_calculate and volume_report all measure through a temporary TIN volume surface in the
+    // plugin (a read, nothing is left in the drawing); volume_calculate's `method` is only echoed back.
     compute_volume: {
       action: "compute_volume",
       inputSchema: SurfaceComputeVolumeArgsSchema,
@@ -649,6 +673,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Inside a boundary polygon the plugin estimates cut and fill by sampling both surfaces on a grid (approximate).
     volume_by_region: {
       action: "volume_by_region",
       inputSchema: SurfaceVolumeByRegionArgsSchema,
@@ -665,6 +690,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // The analyze_* actions return the ranges stored on the surface's Analysis tab; they fail when none are stored.
     analyze_slope: {
       action: "analyze_slope",
       inputSchema: SurfaceAnalyzeSlopeArgsSchema,
@@ -779,6 +805,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // An import: approval-gated, and the plugin checks the path against the allowed import roots.
     create_from_dem: {
       action: "create_from_dem",
       inputSchema: SurfaceCreateFromDemArgsSchema,
@@ -798,6 +825,8 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Two getSurface calls and one volume, then the differences (mean/min/max elevation, areas, counts) computed here.
+    // netVolumeDirection is "fill" when the net volume from the plugin is positive, "cut" when negative.
     comparison_workflow: {
       action: "comparison_workflow",
       inputSchema: SurfaceComparisonWorkflowArgsSchema,
@@ -851,6 +880,9 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         };
       }),
     },
+    // Traces the flow path downhill from (x, y), samples the surface along it, and estimates peak runoff with the
+    // Rational Method from the given area, C and intensity. The runoff doesn't use the traced path; it is reported next
+    // to it.
     drainage_workflow: {
       action: "drainage_workflow",
       inputSchema: SurfaceDrainageWorkflowArgsSchema,
@@ -919,6 +951,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
       }),
     },
   },
+  // exposures[0] is the canonical tool; each alias fixes its action and passes the matching arguments through.
   exposures: [
     {
       toolName: "civil3d_surface",

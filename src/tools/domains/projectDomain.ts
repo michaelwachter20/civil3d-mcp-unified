@@ -96,6 +96,11 @@ const DataShortcutCreateReferenceArgsSchema = z.object({
   objectType: z.enum(["surface", "alignment", "profile", "pipe_network"]),
 });
 
+/**
+ * The project domain: `civil3d_project`, Civil 3D data shortcuts (list, create, promote, reference, sync) and its
+ * aliases. Every action is one call to DataShortcutCommands.cs. Not to be confused with civil3d_project_notes (the
+ * suite's job database, scriptingDomain.ts). Listed in toolManifest.ts; exposures[0] is the canonical tool.
+ */
 export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "project",
   actions: {
