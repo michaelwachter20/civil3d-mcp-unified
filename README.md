@@ -16,7 +16,8 @@
     <a href="#code-execution-and-saved-scripts">Code Execution</a> •
     <a href="#working-alongside-the-ai">Working Alongside the AI</a> •
     <a href="#installation">Installation</a> •
-    <a href="./docs/tools.generated.md">Tool Reference</a>
+    <a href="./docs/tools.generated.md">Tool Reference</a> •
+    <a href="./docs/ARCHITECTURE.md">Architecture</a>
   </p>
 
 </div>
@@ -57,6 +58,9 @@ MCP client  <-- stdio ----------->  civil3d-mcp (Node.js)
 HTTP client <-- HTTP :3000 ------>  civil3d-mcp (Node.js)
 civil3d-mcp <-- JSON-RPC/TCP :8080 --> Civil3DMcpPlugin.dll --> Civil 3D 2027 API (+ Roslyn C#)
 ```
+
+How the two halves work inside is in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md); the guide for changing the code
+is [CLAUDE.md](./CLAUDE.md).
 
 ### What this fork adds
 
@@ -1479,6 +1483,8 @@ use the default loopback endpoint.
 
 | Doc | Description |
 |---|---|
+| [ARCHITECTURE.md](./docs/ARCHITECTURE.md) | How it works inside: request path, domains, plugin, knowledge, errors |
+| [CLAUDE.md](./CLAUDE.md) | Guide for AI assistants and developers changing the code: layout, checks, rules |
 | [DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Full deployment: Docker, npm, env vars, registry autoload |
 | [tools.generated.md](./docs/tools.generated.md) | Release-checked canonical and alias catalog generated from the runtime manifest |
 | [tools.md](./docs/tools.md) | Extended parameter and workflow reference |
