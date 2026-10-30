@@ -2,6 +2,32 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **Point import and export: easting and northing were swapped.** `pnezd` read the northing as X; `penz` read the
+  elevation as Y and the northing as Z; the export wrote the same way, so files from it were wrong in other programs.
+  Now X is the easting and Y the northing in every format, both ways (`PointText`). Numbers are read and written with
+  a dot for decimals whatever the PC's regional settings, a description keeps its spaces ("EP 12"), and a bad line
+  creates no points. Points keep their numbers from the file when free in the drawing (`keepPointNumbers`, default
+  true); the answer lists any renumbered.
+
+- **Pipe sizing (`size_network`) in the drawing's units.** Catalog sizes ("15 inch", "375 mm") are converted to drawing
+  units, Manning's uses k = 1.486 in feet and 1 in meters, and each pipe's slope comes from its ends (`PipeMath`; Civil
+  3D's own `Pipe.Slope` isn't documented as a percent or a ratio). Applying swaps only the pipes whose part isn't the
+  chosen one, and sends the part only: before, every pipe with a design flow was swapped, then resized to the number in
+  the part name (inches) as if it were drawing units. Nothing is changed in a drawing whose units aren't feet or meters.
+  The hydraulics checks (`hydraulic_analysis`, `calculate_hgl`) use the same slope, Manning's, head loss and gravity
+  in the drawing's units, and say which units their numbers are in.
+
+- **Interference check (`check_interference`) works.** It used to check the names and always answer "no conflicts".
+  Against a pipe network: the clearance between pipe outsides for every pair; against a surface: the cover over each
+  pipe, sampled along it (`minClearance`, `sampleSpacing`). Pipes only; structures aren't checked.
+
+- **Surface QC:** the triangle count is read from a TIN surface's TIN properties; it was read where Civil 3D keeps none,
+  so every surface with points was reported as having no triangles.
+
+- **Fixing drawing standards:** `colorIndex` and `lineweight` go to the layers that break the check's color or
+  lineweight rule (or every layer with `applyToAllLayers`), not to every layer; xref layers are left alone, and a layer
+  that already has the value isn't listed as changed.
+
 - **The user's own standards stay usable:** a drawing in a job's User Knowledge folder can be read as a go-by
   (`Reference(name)`), used as a template or title block, or opened read-only (`FileBoundary.ResolveReferencePath`).
   Data imports (points, surfaces, LandXML) and drawings opened to edit are still refused from anywhere in the shared
