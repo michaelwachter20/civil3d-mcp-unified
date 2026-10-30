@@ -2,15 +2,28 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * The framework standards search behind `civil3d_standards action=lookup` (standardsDomain.ts) and the
+ * `civil3d://standards/framework` resource (mcpResources.ts). The rules are general CAD-standards guidance
+ * (templates, styles, layers, labels, plotting, ...) shipped with the server in
+ * src/standards/data/civil3d_framework_rules.json, copied to build/standards/data by the build. Node only: no
+ * drawing and no plugin call.
+ *
+ * Search is plain keyword scoring, no index: the file is small (a few dozen rules), read once and cached.
+ */
+
+/** One rule as stored in civil3d_framework_rules.json: a section of the framework document and its guidance. */
 export interface FrameworkPromptRule {
   section_number: string;
   title: string;
   pages: number[];
   rule: string;
+  /** The rule's own weight (how central it is), added to every match score up to 20. */
   score: number;
   tags: string[];
 }
 
+/** What to search for: free text, a topic (a key of TOPIC_ALIASES or any word), exact tags; 1-20 results (5). */
 export interface StandardsLookupArgs {
   query?: string;
   topic?: string;
@@ -28,6 +41,10 @@ export interface StandardsLookupMatch {
   matchScore: number;
 }
 
+/**
+ * The lookup answer: the best matches (highest score first), how many rules were searched, and up to five distinct
+ * rule texts as `recommendedPractices`. `matchedCount` is the number returned, after the `maxResults` cut.
+ */
 export interface StandardsLookupResult {
   query: string | null;
   topic: string | null;
@@ -38,6 +55,7 @@ export interface StandardsLookupResult {
   recommendedPractices: string[];
 }
 
+/** Extra search words for each known topic, so `topic: "layers"` also matches "layer manager", "layer state", .... */
 const TOPIC_ALIASES: Record<string, string[]> = {
   templates: ["template", "templates", "production drawing", "production drawings", "hierarchy"],
   styles: ["style", "styles", "feature style", "label style", "code set"],
@@ -50,8 +68,10 @@ const TOPIC_ALIASES: Record<string, string[]> = {
   profile_section: ["profile", "profiles", "section", "sections", "profile view", "section view"],
 };
 
+/** The rules, read once per process; a read or parse failure stays cached too, so later lookups fail the same way. */
 let cachedRulesPromise: Promise<FrameworkPromptRule[]> | null = null;
 
+/** The rules file next to this module, in src/standards/data or (when built) build/standards/data. */
 function getPromptRulesPath(): string {
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(
@@ -71,6 +91,7 @@ async function loadPromptRules(): Promise<FrameworkPromptRule[]> {
   return await cachedRulesPromise;
 }
 
+/** Lowercase, punctuation to spaces (underscores and hyphens kept), single spaces. */
 function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\s_\-]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -91,6 +112,11 @@ function getTopicTerms(topic?: string): string[] {
   return Array.from(new Set([normalizedTopic, ...(TOPIC_ALIASES[normalizedTopic] ?? [])].flatMap(splitTerms)));
 }
 
+/**
+ * How well a rule matches: 12 per requested tag it has, 6 per topic word in its text, 5 per query word of six or
+ * more letters (3 for shorter ones), 8 when its title contains the topic, plus its own `score` (at most 20).
+ * Matching is substring matching, so "lab" finds "label".
+ */
 function scoreRule(rule: FrameworkPromptRule, args: StandardsLookupArgs): number {
   const queryTerms = splitTerms(args.query ?? "");
   const topicTerms = getTopicTerms(args.topic);
@@ -124,6 +150,7 @@ function scoreRule(rule: FrameworkPromptRule, args: StandardsLookupArgs): number
   return matchScore + Math.min(rule.score, 20);
 }
 
+/** The first five distinct rule texts among the matches, in match order. */
 function buildRecommendedPractices(matches: StandardsLookupMatch[]): string[] {
   const uniqueRules = new Set<string>();
   const recommendations: string[] = [];
@@ -145,6 +172,14 @@ function buildRecommendedPractices(matches: StandardsLookupMatch[]): string[] {
   return recommendations;
 }
 
+/**
+ * Searches the framework rules and returns the best `maxResults` (default 5, 1-20). With no query, topic or tags it
+ * returns the highest-weighted rules.
+ *
+ * NOTE: the filter below keeps rules with `matchScore > 0`, but scoreRule always adds the rule's own score (every
+ * rule in the data file has one of 6 or more), so nothing is ever filtered out: a query that matches nothing still
+ * returns the top-weighted rules as if they matched. Comparing the score without the rule weight would fix it.
+ */
 export async function lookupFrameworkStandards(args: StandardsLookupArgs): Promise<StandardsLookupResult> {
   const rules = await loadPromptRules();
   const maxResults = Math.max(1, Math.min(args.maxResults ?? 5, 20));

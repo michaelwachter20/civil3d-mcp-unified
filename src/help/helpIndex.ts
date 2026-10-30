@@ -24,6 +24,18 @@ import type {
   HelpTopicIndexEntry,
 } from "./types.js";
 
+/**
+ * The search index behind `civil3d_help` (src/tools/helpTool.ts): one OfflineHelpIndex per installed help version,
+ * managed by Civil3DHelpManager.
+ *
+ * Indexing parses every help page (helpParser.ts), several thousand of them, so it is done once and cached as
+ * gzipped JSON under `%LOCALAPPDATA%\Civil3DMcp\help-index\<version>` (or CIVIL3D_HELP_CACHE_ROOT). A new process
+ * reuses the cache while the help files' fingerprint is unchanged; within a process the corpus is scanned only on
+ * the first call. Search is MiniSearch (prefix matching, light fuzziness for longer queries, title and tags boosted),
+ * with a few engineer phrasings widened to Autodesk's terms ("cut and fill" also searches earthwork volume).
+ */
+
+/** A `civil3d_help action=search` request: the query, optional version and filters, and `limit` (1-20, default 8). */
 export interface HelpSearchOptions {
   query: string;
   version?: string;
@@ -33,12 +45,14 @@ export interface HelpSearchOptions {
   limit?: number;
 }
 
+/** Called while indexing (every 250 pages) so the tool can send MCP progress notifications. */
 export type HelpIndexProgress = (
   completed: number,
   total: number,
   message: string,
 ) => void | Promise<void>;
 
+/** Test overrides: the installations to use instead of discovering them, and where to keep the cache. */
 export interface Civil3DHelpManagerOptions {
   installations?: HelpInstallation[];
   cacheRoot?: string;
@@ -48,6 +62,10 @@ interface SearchDocument extends HelpTopicIndexEntry {
   tagsText: string;
 }
 
+/**
+ * The index of one help installation: topics by id and URI, images by id, and the MiniSearch index. Everything
+ * waits on ensureReady, which loads the cache or rebuilds it.
+ */
 export class OfflineHelpIndex {
   private topics: HelpTopicIndexEntry[] = [];
   private byId = new Map<string, HelpTopicIndexEntry>();
@@ -65,6 +83,11 @@ export class OfflineHelpIndex {
     this.cachePath = path.join(cacheRoot, installation.version, "index.json.gz");
   }
 
+  /**
+   * Makes the index usable and returns its status. `force` (reindex) ignores both the in-memory state and the cache.
+   * A rebuild skips pages that fail to parse and duplicate topic ids, yields to the event loop every 250 pages so
+   * the server keeps answering, and writes the cache atomically. Throws when the help folder has no topic pages.
+   */
   async ensureReady(
     force = false,
     progress?: HelpIndexProgress,
@@ -123,6 +146,11 @@ export class OfflineHelpIndex {
     return this.status;
   }
 
+  /**
+   * The best topics for a query, after the feature-area, topic-type and tag filters (all tags must match). The
+   * confidence comes from the top score alone (12 or more high, 4 or more medium), a rough hint for the AI on
+   * whether to trust the answer or rephrase.
+   */
   async search(
     options: HelpSearchOptions,
     progress?: HelpIndexProgress,
@@ -151,6 +179,7 @@ export class OfflineHelpIndex {
     };
   }
 
+  /** The full topic (Markdown included) by id or `civil3d://help/topics/...` URI, parsed again from its page. */
   async getTopic(idOrUri: string): Promise<HelpTopic | undefined> {
     await this.ensureReady();
     const entry = this.byId.get(idOrUri) ?? this.byUri.get(idOrUri);
@@ -171,6 +200,7 @@ export class OfflineHelpIndex {
     return this.ensureReady();
   }
 
+  /** Loads the cache file when it matches this installation and fingerprint; false (rebuild) when missing, stale or unreadable. */
   private loadCache(fingerprint: string): boolean {
     if (!fs.existsSync(this.cachePath)) return false;
     try {
@@ -228,6 +258,12 @@ export class OfflineHelpIndex {
   }
 }
 
+/**
+ * Picks the help installation for a request and keeps one OfflineHelpIndex per installation. With no version asked
+ * for it uses CIVIL3D_HELP_VERSION or 2027 if installed, else the first found; asking for a version that isn't
+ * installed throws rather than answering from another release. Install folders and cache paths are left out of
+ * answers unless CIVIL3D_DEBUG_PATHS=true.
+ */
 export class Civil3DHelpManager {
   private readonly installations: HelpInstallation[];
   private readonly cacheRoot: string;
@@ -304,6 +340,10 @@ export class Civil3DHelpManager {
   }
 }
 
+/**
+ * The images worth sending with a topic (at most `limit`, capped at 5): real images up to 2 MiB that are at least
+ * 10,000 square pixels (or, size unknown, at least 2 KB, so not an icon), largest first.
+ */
 export function selectRenderableImages(topic: HelpTopic, limit: number): HelpImageRef[] {
   const boundedLimit = Math.min(Math.max(limit, 0), 5);
   return [...topic.images]
@@ -341,6 +381,7 @@ function toSearchResult(
   };
 }
 
+/** 500 characters of the topic text starting 100 before the first query word found (the start when none is). */
 function excerpt(text: string, query: string): string {
   const compact = text.replace(/\s+/g, " ").trim();
   const lower = compact.toLowerCase();
@@ -349,6 +390,7 @@ function excerpt(text: string, query: string): string {
   return compact.slice(Math.max(0, first - 100), Math.max(0, first - 100) + 500);
 }
 
+/** Adds Autodesk's words for a few phrases engineers use ("road model" also searches "corridor"). */
 function expandEngineerTerms(query: string): string {
   const lower = query.toLowerCase();
   const expansions: string[] = [query];
@@ -366,6 +408,7 @@ function tokenize(value: string): string[] {
     .filter((token) => !["the", "and", "for", "with", "how", "what", "why", "civil", "3d"].includes(token));
 }
 
+/** Filter values compare ignoring case, spaces, hyphens and underscores ("pipe_networks" matches "Pipe Networks"). */
 function sameFilter(left: string, right: string): boolean {
   const normalize = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, "");
   return normalize(left) === normalize(right);

@@ -2,6 +2,18 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The point domain: `civil3d_point` for COGO points and point groups, and its aliases (`create_cogo_point`,
+ * `civil3d_point_group_create` / `_update` / `_delete`, `civil3d_point_export`, `civil3d_point_transform`). The plugin
+ * side is PointCommands.cs (list, get, create, import, import_file, list_formats, delete) and PointGroupCommands.cs
+ * (groups, export, transform); domainRuntime.ts turns these definitions into validated, approval-checked MCP tools.
+ *
+ * Every action forwards to one plugin method; nothing is worked out in Node. Points are usually survey data, so the
+ * ways of making them differ on purpose: `import_file` goes through Civil 3D's own importer, while `create` and
+ * `import` (typed-in text) make the plugin ask the user in Civil 3D first (PointCreationGate.cs).
+ */
+
+/** One point to create: easting (x), northing (y), elevation (z) in drawing units, and an optional raw description. */
 const PointCreateSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -11,6 +23,7 @@ const PointCreateSchema = z.object({
 
 const PointMutationResponseSchema = z.object({}).passthrough();
 
+/** A COGO point as listCogoPoints / getCogoPoint return it: x is the easting, y the northing, in drawing units. */
 const PointSchema = z.object({
   number: z.number(),
   name: z.string().nullable(),
@@ -40,11 +53,19 @@ const PointGroupsResponseSchema = z.object({
   groups: z.array(PointGroupSchema),
 });
 
+/**
+ * Which points `transform` moves: the listed numbers, else the members of the point group. With neither, the plugin
+ * moves every point in the drawing.
+ */
 const PointTransformSelectionShape = {
   pointNumbers: z.array(z.number().int().positive()).optional(),
   groupName: z.string().optional(),
 };
 
+/**
+ * Every argument any `civil3d_point` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalPointInputShape = {
   action: z.enum([
     "list",
@@ -114,6 +135,10 @@ const PointListGroupsArgsSchema = z.object({
   action: z.literal("list_groups"),
 });
 
+/**
+ * `import`: points typed in as text (`data`, one point per line in `format`; pnezd is number, northing, easting,
+ * elevation, description). Not for files: a file goes through `import_file`. The plugin asks the user first.
+ */
 const PointImportArgsSchema = z.object({
   action: z.literal("import"),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz"]),
@@ -138,6 +163,11 @@ const PointDeleteArgsSchema = z.object({
   pointNumbers: z.array(z.number()).min(1),
 });
 
+/**
+ * `group_create`: a point group with Civil 3D's standard query. `includeNumbers` / `excludeNumbers` are range
+ * strings ("1-100,205") and `includeDescriptions` a raw-description pattern ("MH*"); with none of them the group is
+ * created empty.
+ */
 const PointGroupCreateArgsSchema = z.object({
   action: z.literal("group_create"),
   name: z.string(),
@@ -161,6 +191,10 @@ const PointGroupDeleteArgsSchema = z.object({
   name: z.string(),
 });
 
+/**
+ * `export`: the points as text in the answer (`data`), not a file. A group and a number list together export only
+ * the points in both; with neither, every point. Columns come back in the order `import` reads them.
+ */
 const PointExportArgsSchema = z.object({
   action: z.literal("export"),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
@@ -169,6 +203,10 @@ const PointExportArgsSchema = z.object({
   delimiter: z.string().optional(),
 });
 
+/**
+ * `transform`: moves points in place. The plugin scales, then rotates (radians, counter-clockwise), both about the
+ * drawing origin (0,0), not about the points, then translates; elevations are only translated.
+ */
 const PointTransformArgsSchema = z.object({
   action: z.literal("transform"),
   ...PointTransformSelectionShape,
@@ -374,6 +412,8 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // NOTE: with neither pointNumbers nor groupName, TransformCogoPointsAsync moves every point in the drawing; nothing
+    // here or in the plugin asks for an explicit "all", although points are usually survey data.
     transform: {
       action: "transform",
       inputSchema: PointTransformArgsSchema,

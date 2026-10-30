@@ -4,8 +4,20 @@ import { approvalPolicy, isApprovalRequired } from "./approvalPolicy.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
 import { findManifestAction } from "./toolManifest.js";
 
+/**
+ * The two approval tools, `civil3d_preview_action` and `civil3d_request_approval`, registered directly by
+ * register.ts (not through the domain manifest). The rules themselves live in approvalPolicy.ts; domainRuntime.ts
+ * enforces them on every manifest tool call.
+ *
+ * The flow for a risky action (delete, import, a non-retryable edit, ...): the AI may preview it to learn whether a
+ * token is needed, requests a token with the exact tool, action and parameters it will send, then repeats the call
+ * with `approvalToken`. The token is single use, lasts `ttlSeconds` (30-600, default 300) and is bound to a hash of
+ * those parameters and to the active drawing's fingerprint, so a token for "delete alignment Elm St" can't delete
+ * anything else, or anything after the drawing changed.
+ */
 type JsonObject = Record<string, unknown>;
 
+/** Arguments of both tools; `parameters` must be the full argument object of the later call, `action` included. */
 const approvalInputShape = {
   toolName: z.string().min(1),
   action: z.string().min(1),
@@ -32,6 +44,11 @@ const ApprovalResponseSchema = z.object({
   instruction: z.string(),
 });
 
+/**
+ * The manifest action being approved, checked the way the real call will be: the tool's exposure must resolve the
+ * parameters to the named action (for the canonical tool that means `parameters.action` is set) and the action's
+ * input schema must accept them. So a token is never issued for a call that would fail validation anyway.
+ */
 function resolveApprovalTarget(args: { toolName: string; action: string; parameters: JsonObject }) {
   const target = findManifestAction(args.toolName, args.action);
   if (!target) {
@@ -67,6 +84,12 @@ function errorResult(toolName: string, error: unknown) {
   };
 }
 
+/**
+ * Registers both tools with the MCP server and captures their handlers for the HTTP bridge. The preview never
+ * changes anything; the request refuses (an error result) for an action that doesn't need approval, and asks the
+ * plugin for the drawing fingerprint (getDrawingInfo), so it needs Civil 3D running; only an action that needs no
+ * drawing may get a token with none open. Failures come back as `isError` results with the message, not thrown.
+ */
 export function registerApprovalTool(server: McpServer) {
   const previewHandler = async (rawArgs: JsonObject) => {
     try {

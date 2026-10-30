@@ -6,6 +6,14 @@ using System.Text.RegularExpressions;
 
 namespace Civil3DMcpPlugin;
 
+// The library of saved .csx scripts behind civil3d_script (src/tools/domains/scriptingDomain.ts). ScriptCommands.cs
+// is the only caller: it saves, lists, shows, retires and runs scripts through this class, and ScriptEngine compiles
+// the code. Everything here is file work in the scripts folder (through FileBoundary); nothing touches a drawing.
+
+/// <summary>
+/// One argument a saved script declares in its header: a C#-style <c>Name</c>, a <c>Type</c> (one of string,
+/// number, integer, boolean, point, string[], json), whether it is required, an optional default and a description.
+/// </summary>
 internal sealed record ScriptParameter(
   string Name,
   string Type,
@@ -13,6 +21,11 @@ internal sealed record ScriptParameter(
   JsonNode? Default,
   string? Description);
 
+/// <summary>
+/// A saved script as read from (or just written to) its .csx file: header fields, the code after the header, the
+/// file's path and time, the header's <c>script_version</c>, and, right after a replacing save, where the previous
+/// version was archived. <c>Mode</c> is "write" (runs as a drawing change, inside UNDO BEGIN/END) or "read".
+/// </summary>
 internal sealed record SavedScript(
   string Name,
   string Description,
@@ -82,6 +95,11 @@ internal static class ScriptLibrary
     }
   }
 
+  /// <summary>
+  /// The file-safe script name: trimmed, lower case, spaces as '-', without a trailing ".csx" (e.g. "Renumber Points"
+  /// becomes "renumber-points"). Anything else that isn't 1-64 of a-z, 0-9, '-' or '_' is refused with
+  /// CIVIL3D.INVALID_INPUT, which also keeps names from reaching outside the scripts folder.
+  /// </summary>
   public static string NormalizeName(string rawName)
   {
     var name = (rawName ?? string.Empty).Trim().ToLowerInvariant().Replace(' ', '-');
@@ -100,6 +118,11 @@ internal static class ScriptLibrary
     return name;
   }
 
+  /// <summary>
+  /// Parses a parameter list (from a save request or a script's header) into <see cref="ScriptParameter"/>s; null
+  /// gives none. Refuses with CIVIL3D.INVALID_INPUT anything that isn't an array of objects, a name that isn't a C#
+  /// identifier, an unknown type or a duplicate name. A missing type means "string".
+  /// </summary>
   public static IReadOnlyList<ScriptParameter> ParseParameters(JsonNode? node)
   {
     if (node == null)
@@ -162,6 +185,13 @@ internal static class ScriptLibrary
     return parameters;
   }
 
+  /// <summary>
+  /// Saves a script as <c>&lt;name&gt;.csx</c> in <see cref="Directory"/> with its header written by
+  /// <see cref="Serialize"/>. A description is required (CIVIL3D.INVALID_INPUT) so the script can be found later. An
+  /// existing script is replaced only with <paramref name="overwrite"/> (CIVIL3D.CONFLICT otherwise); its current file
+  /// is first copied to <see cref="ArchiveDirectory"/> and the version number goes up by one. The write is atomic.
+  /// The MCP server checks the text for job data before it gets here.
+  /// </summary>
   public static SavedScript Save(
     string rawName,
     string description,
@@ -199,8 +229,13 @@ internal static class ScriptLibrary
     return new SavedScript(name, description.Trim(), mode, parameters, code, path, DateTime.UtcNow, version, archived);
   }
 
+  /// <summary>Where replaced and retired versions go: <c>_archive</c> inside the scripts folder.</summary>
   public static string ArchiveDirectory => System.IO.Path.Combine(Directory, "_archive");
 
+  /// <summary>
+  /// Copies a script file to the archive as <c>&lt;name&gt;.&lt;UTC time&gt;.&lt;reason&gt;.csx</c> (reason
+  /// "replaced" or "retired") and returns the archive copy's path.
+  /// </summary>
   private static string Archive(string path, string name, string reason)
   {
     var stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
@@ -208,6 +243,11 @@ internal static class ScriptLibrary
       ArchiveDirectory, $"{name}.{stamp}.{reason}{Extension}", File.ReadAllText(path), overwrite: true);
   }
 
+  /// <summary>
+  /// Every valid saved script in the scripts folder, sorted by file name (the archive folder isn't searched). Files
+  /// without the <c>// @c3dmcp-script</c> header or that can't be read are skipped (unreadable ones are logged). An
+  /// empty list when the folder doesn't exist yet.
+  /// </summary>
   public static IReadOnlyList<SavedScript> List()
   {
     var directory = Directory;
@@ -229,6 +269,10 @@ internal static class ScriptLibrary
     return scripts;
   }
 
+  /// <summary>
+  /// One saved script by name. CIVIL3D.OBJECT_NOT_FOUND (listing the scripts there are) when there is no such file,
+  /// CIVIL3D.INVALID_INPUT when the file exists but isn't a valid saved script.
+  /// </summary>
   public static SavedScript Get(string rawName)
   {
     var name = NormalizeName(rawName);
@@ -247,6 +291,7 @@ internal static class ScriptLibrary
   }
 
   /// <summary>Retires a script: it is copied to _archive, then removed from the active library.</summary>
+  /// <returns>The archive copy's path, or null when there was no such script (nothing is done then).</returns>
   public static string? Delete(string rawName)
   {
     var name = NormalizeName(rawName);
@@ -262,6 +307,11 @@ internal static class ScriptLibrary
   }
 
   /// <summary>Merges defaults, enforces required parameters, and coerces simple types.</summary>
+  /// <remarks>
+  /// Arguments the script doesn't declare are passed through unchanged. A missing required one is refused with
+  /// CIVIL3D.INVALID_INPUT, as is a value that can't be coerced (see <see cref="Coerce"/>; an "integer" given as
+  /// 2.6 is rounded to 3 rather than refused).
+  /// </remarks>
   public static JsonObject BuildArguments(SavedScript script, JsonObject? provided)
   {
     var result = new JsonObject();
@@ -300,6 +350,11 @@ internal static class ScriptLibrary
     return result;
   }
 
+  /// <summary>
+  /// A script as the tools show it: name, description, mode, parameters, version, last update (UTC, ISO 8601), path,
+  /// where the previous version was archived when it was just replaced, and the code only when
+  /// <paramref name="includeCode"/> is true (listing leaves it out to keep the answer small).
+  /// </summary>
   public static object Describe(SavedScript script, bool includeCode)
   {
     var summary = new Dictionary<string, object?>
@@ -333,6 +388,7 @@ internal static class ScriptLibrary
     return summary;
   }
 
+  /// <summary>"write" (also "execute", and the default) or "read" (also "query", "readonly", "read-only").</summary>
   internal static string NormalizeMode(string? mode)
   {
     return (mode ?? "write").Trim().ToLowerInvariant() switch
@@ -343,6 +399,11 @@ internal static class ScriptLibrary
     };
   }
 
+  /// <summary>
+  /// Converts one argument to its declared type, accepting strings for numbers and booleans (invariant culture), a
+  /// single value for <c>string[]</c>, and any JSON for <c>string</c> (as its JSON text). A point must be an object
+  /// with x and y. Failures become CIVIL3D.INVALID_INPUT naming the argument.
+  /// </summary>
   private static JsonNode Coerce(ScriptParameter parameter, JsonNode value)
   {
     try
@@ -384,6 +445,11 @@ internal static class ScriptLibrary
     }
   }
 
+  /// <summary>
+  /// The .csx file text: the comment header (marker, name, one-line description, mode, parameters as JSON,
+  /// script_version, updated time), the <c>// ---</c> line, then the code with LF line endings and one final newline.
+  /// The header is all comments, so the file still compiles as C# script.
+  /// </summary>
   private static string Serialize(string name, string description, string mode, IReadOnlyList<ScriptParameter> parameters, string code, int version)
   {
     var parameterJson = new JsonArray(parameters.Select(parameter =>
@@ -412,6 +478,13 @@ internal static class ScriptLibrary
     return builder.ToString();
   }
 
+  /// <summary>
+  /// Reads a .csx file back into a <see cref="SavedScript"/>, or null (logged as a warning when it can't be read or
+  /// parsed) when it isn't one: it must start with the marker and have a <c>// ---</c> line. The name falls back to
+  /// the file name, the mode to "write", the version to 1.
+  /// </summary>
+  // NOTE: the header end is found as "\n// ---\n", so a file whose code is empty and has no newline after "// ---"
+  // isn't recognized; and the header's "name:" wins over the file name, so a hand-renamed file reports its old name.
   private static SavedScript? TryLoad(string path)
   {
     try

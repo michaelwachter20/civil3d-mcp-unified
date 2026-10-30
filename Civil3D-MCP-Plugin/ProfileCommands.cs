@@ -4,8 +4,22 @@ using Autodesk.Civil.DatabaseServices;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_profile's basic read, create and delete actions (src/tools/domains/profileDomain.ts;
+/// pipeDomain.ts's <c>automate_profile_view</c> also lists profiles and makes a surface profile): <c>listProfiles</c>,
+/// <c>getProfile</c>, <c>getProfileElevation</c>, <c>sampleProfileElevations</c>, <c>createProfileFromSurface</c>,
+/// <c>createLayoutProfile</c> and <c>deleteProfile</c>. PVI and curve editing is in ProfileEditCommands.cs.
+/// <para>
+/// A profile is found by alignment name and profile name. Stations and elevations are in the drawing's units, and
+/// grades are as Civil 3D returns them (<c>Profile.GradeAt</c>, <c>ProfileTangent.Grade</c>).
+/// </para>
+/// </summary>
 public static class ProfileCommands
 {
+  /// <summary>
+  /// The profiles of <c>alignmentName</c>: name, handle, type (surface, layout or superimposed), station range and
+  /// elevation range. <c>style</c> is always empty here (getProfile reads it). Read only.
+  /// </summary>
   public static Task<object?> ListProfilesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -26,6 +40,11 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// One profile in detail: type, style, layer, station and elevation ranges, PVI count and every entity (tangent,
+  /// parabola, asymmetric parabola or circular curve) with its stations, elevations, length and, for tangents,
+  /// grade. Read only.
+  /// </summary>
   public static Task<object?> GetProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -60,6 +79,10 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// Elevation and grade of a profile at one <c>station</c>. A station outside the profile (or one Civil 3D can't
+  /// evaluate) is CIVIL3D.API_ERROR with Civil 3D's message. Read only.
+  /// </summary>
   public static Task<object?> GetProfileElevationAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -83,6 +106,13 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// Elevation and grade every <c>interval</c> from <c>startStation</c> to <c>endStation</c> (default: the profile's
+  /// own range). The end station is included only when it falls on the interval. Used by civil3d_profile's
+  /// <c>sample_elevations</c> and <c>report</c> actions. Read only.
+  /// </summary>
+  // NOTE: nothing here or in profileDomain.ts's sample_elevations schema refuses an interval of zero or less, which
+  // would make the loop below run forever on the AutoCAD main thread, growing the samples list until memory runs out.
   public static Task<object?> SampleProfileElevationsAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -122,6 +152,11 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// Creates a surface (existing ground) profile <c>profileName</c> of <c>surfaceName</c> along
+  /// <c>alignmentName</c>, with the optional <c>layer</c>, <c>style</c> and <c>labelSet</c> names (defaults from
+  /// LookupUtils otherwise). Writes to the drawing.
+  /// </summary>
   public static Task<object?> CreateProfileFromSurfaceAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -147,6 +182,10 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// Creates an empty layout (design) profile <c>profileName</c> on <c>alignmentName</c>, ready for PVIs to be added
+  /// (ProfileEditCommands), with the optional <c>layer</c>, <c>style</c> and <c>labelSet</c>. Writes to the drawing.
+  /// </summary>
   public static Task<object?> CreateLayoutProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -170,6 +209,10 @@ public static class ProfileCommands
     });
   }
 
+  /// <summary>
+  /// Erases one profile of an alignment. Anything that depends on it (profile view graphs, corridor baselines) is
+  /// Civil 3D's to handle; the approval policy requires an approval token for this delete. Writes to the drawing.
+  /// </summary>
   public static Task<object?> DeleteProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -268,6 +311,9 @@ public static class ProfileCommands
     }
   }
 
+  /// <summary>Civil 3D's profile type name mapped to "surface", "superimposed" or (anything else) "layout".</summary>
+  // NOTE: this looks for "surface" in the ProfileType enum name; if surface profiles report as "EG" (existing
+  // ground), as the enum names them, they are reported as "layout" here.
   private static string MapProfileType(string? value)
   {
     var text = value?.ToLowerInvariant() ?? string.Empty;
@@ -284,6 +330,7 @@ public static class ProfileCommands
     return "layout";
   }
 
+  /// <summary>Civil 3D's profile entity type name mapped to the tool's names: tangent, parabola, asymmetric_parabola, circular_curve.</summary>
   private static string MapProfileEntityType(string value)
   {
     var text = value.ToLowerInvariant();

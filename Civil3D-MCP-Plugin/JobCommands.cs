@@ -3,6 +3,12 @@ using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_job (src/tools/domains/jobDomain.ts): <c>startJob</c> runs one of a few long
+/// operations in the background, and <c>getJobStatus</c> / <c>cancelJob</c> look at or stop any job in JobRegistry,
+/// including corridor rebuilds started by civil3d_corridor. Jobs exist so long work doesn't hit the server's command
+/// timeout: the call answers at once with a job id and the caller polls.
+/// </summary>
 public static class JobCommands
 {
   private static readonly IReadOnlyDictionary<string, string> LongRunningOperations =
@@ -13,6 +19,14 @@ public static class JobCommands
       ["bulk_qc_report"] = "qcReportGenerate",
     };
 
+  /// <summary>
+  /// Starts <c>operation</c> (publish_sheet_pdf, surface_dem_import or bulk_qc_report; anything else is
+  /// CIVIL3D.INVALID_INPUT) as a background job with <c>parameters</c> passed to its plugin method, and returns the
+  /// job at once. The work goes through <c>CommandDispatcher</c> like a normal request, so it takes its turn in the
+  /// host queue and runs only on the drawing that was active when the job started. It waits 250 ms first so an
+  /// immediate cancel still stops it; a cancel that arrives once the Civil 3D work has begun can't undo it, and the
+  /// job is then reported completed with a warning saying so. Errors become a failed job, never a thrown error here.
+  /// </summary>
   public static Task<object?> StartJobAsync(JsonObject? parameters)
   {
     var operation = PluginRuntime.GetRequiredString(parameters, "operation");
@@ -94,18 +108,21 @@ public static class JobCommands
     return Task.FromResult<object?>(ToResponse(job));
   }
 
+  /// <summary>The job <c>jobId</c> as it stands now (see <see cref="ToResponse"/>); CIVIL3D.OBJECT_NOT_FOUND for an unknown or expired id. Doesn't use the host queue.</summary>
   public static object? GetJobStatus(JsonObject? parameters)
   {
     var jobId = PluginRuntime.GetRequiredString(parameters, "jobId");
     return ToResponse(JobRegistry.Get(jobId));
   }
 
+  /// <summary>Asks job <c>jobId</c> to stop (<see cref="JobRegistry.Cancel"/>) and returns it; it may still be "running" until its worker stops.</summary>
   public static object? CancelJob(JsonObject? parameters)
   {
     var jobId = PluginRuntime.GetRequiredString(parameters, "jobId");
     return ToResponse(JobRegistry.Cancel(jobId));
   }
 
+  /// <summary>The non-blank entries of a dictionary result's "warnings" list, if it has one, to copy onto the job.</summary>
   private static IEnumerable<string> ExtractWarnings(object? result)
   {
     if (result is not IDictionary<string, object?> dictionary
@@ -123,6 +140,7 @@ public static class JobCommands
       .ToArray();
   }
 
+  /// <summary>The job answer every job method returns: the job's fields, its result once finished, and the registry's counts.</summary>
   private static Dictionary<string, object?> ToResponse(JobRecord job)
   {
     var stats = JobRegistry.GetStats();

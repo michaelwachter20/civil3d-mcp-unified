@@ -5,6 +5,16 @@ import { fileURLToPath } from "node:url";
 import MiniSearch from "minisearch";
 import type { HelpVideoRef } from "./types.js";
 
+/**
+ * The Autodesk tutorial videos `civil3d_help` can suggest (helpTool.ts): a catalog read from `autodesk_videos.json`,
+ * the output of scripts/scrape_autodesk_videos.py, which the build copies to `build/help/data/`. Searched by title
+ * with MiniSearch; each video gets a `civil3d://help/videos/<version>/<id>` resource that renders a small HTML player.
+ *
+ * Only https links on help.autodesk.com are kept (a page ending .htm and an .mp4, optionally a .webm), so a tampered
+ * catalog can't make the tool hand out other links. A missing or unreadable catalog just means no videos.
+ */
+
+/** One scraped help page in autodesk_videos.json: its URL, title and the video files found on it. */
 interface RawVideoPage {
   url?: string;
   title?: string;
@@ -20,6 +30,7 @@ interface VideoSearchDocument extends HelpVideoRef {
   searchText: string;
 }
 
+/** The loaded videos with a title search index; construct directly in tests, fromDefaultFile otherwise. */
 export class AutodeskVideoCatalog {
   private readonly byId: Map<string, HelpVideoRef>;
   private readonly searchIndex: MiniSearch<VideoSearchDocument>;
@@ -38,6 +49,7 @@ export class AutodeskVideoCatalog {
     })));
   }
 
+  /** The catalog from CIVIL3D_VIDEO_CATALOG, else the copy next to the build, else `autodesk_videos.json` in the working folder; empty if none exists. */
   static fromDefaultFile(): AutodeskVideoCatalog {
     const configuredPath = process.env.CIVIL3D_VIDEO_CATALOG;
     const candidates = [
@@ -49,6 +61,11 @@ export class AutodeskVideoCatalog {
     return new AutodeskVideoCatalog(catalogPath ? loadVideoFile(catalogPath) : []);
   }
 
+  /**
+   * Videos whose titles match the query (filler words such as "how do I", "civil 3d", "video" ignored), at most
+   * `limit` (capped at 5). Only strong matches: a score of at least 4 and at least half the best one's, so a topic
+   * search doesn't come back with an unrelated video.
+   */
   search(query: string, limit = 2): HelpVideoRef[] {
     const compactQuery = normalizeVideoText(query);
     if (!compactQuery) return [];
@@ -81,11 +98,17 @@ export class AutodeskVideoCatalog {
 
 let defaultCatalog: AutodeskVideoCatalog | undefined;
 
+/** The process-wide catalog, loaded on first use. */
 export function getAutodeskVideoCatalog(): AutodeskVideoCatalog {
   defaultCatalog ??= AutodeskVideoCatalog.fromDefaultFile();
   return defaultCatalog;
 }
 
+/**
+ * A self-contained HTML page that plays the video from help.autodesk.com, with a link to the MP4 and the help page.
+ * Every value is HTML-escaped, and the page's Content-Security-Policy allows media from help.autodesk.com only and
+ * no scripts, since MCP clients may render it.
+ */
 export function renderVideoPlayerHtml(video: HelpVideoRef): string {
   const title = escapeHtml(video.title);
   const mp4Url = escapeHtml(video.mp4Url);
@@ -100,6 +123,11 @@ export function renderVideoPlayerHtml(video: HelpVideoRef): string {
 <body><video controls preload="metadata"><source src="${mp4Url}" type="video/mp4">${webmSource}<a href="${mp4Url}">Play ${title}</a></video><p><strong>${title}</strong> · <a href="${pageUrl}">Autodesk Help</a></p></body></html>`;
 }
 
+/**
+ * The videos in a scrape file, sorted by title: pages from failed scrapes and pages without a trusted .htm and .mp4
+ * URL are skipped, the id is a hash of the MP4 URL (so duplicates collapse), and the version is the year in the
+ * page's `/cloudhelp/<year>/` path. Any read or parse error gives an empty list.
+ */
 function loadVideoFile(filePath: string): HelpVideoRef[] {
   try {
     const results = JSON.parse(fs.readFileSync(filePath, "utf8")) as RawVideoScrapeResult[];
@@ -135,6 +163,7 @@ function loadVideoFile(filePath: string): HelpVideoRef[] {
   }
 }
 
+/** The URL when it is https on help.autodesk.com and its path ends with `requiredSuffix`; otherwise undefined. */
 function trustedAutodeskUrl(value: string | undefined, requiredSuffix: string): string | undefined {
   if (!value) return undefined;
   try {
@@ -151,6 +180,7 @@ function cleanVideoTitle(value: string): string {
   return value.replace(/^video:\s*/i, "").replace(/\s+/g, " ").trim();
 }
 
+/** Lower-case search text with question words, "civil 3d", "video" and other filler removed. */
 function normalizeVideoText(value: string): string {
   return cleanVideoTitle(value)
     .toLowerCase()

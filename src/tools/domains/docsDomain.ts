@@ -1,6 +1,19 @@
 import { z } from "zod";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The docs domain: `civil3d_docs` (two actions), its alias `list_tool_capabilities`, and `civil3d_orchestrate`, which
+ * toolManifest.ts lists to MCP clients even in compact mode. Neither action calls the plugin from here:
+ * `list_tool_capabilities` filters the flat tool catalog (tool_catalog.ts), and `orchestrate` hands everything to
+ * civil3d_orchestrate.ts, which routes a plain-language request (or an explicit tool and action) to a tool, plans
+ * it, and with `execute: true` runs it through executeRegisteredTool, so the chosen tool's own validation and
+ * approval apply.
+ *
+ * Both modules are imported lazily inside `execute` because they import the tool manifest, which imports this file;
+ * a static import would be a cycle.
+ */
+
+/** The catalog answer: every domain name, and the catalog entries left after the domain and status filters. */
 const ToolCapabilityListResponseSchema = z.object({
   domains: z.array(z.string()),
   tools: z.array(z.object({
@@ -23,6 +36,12 @@ const ListToolCapabilitiesArgsSchema = z.object({
   status: z.enum(["implemented", "planned"]).optional(),
 });
 
+/**
+ * `request` (plain language) or `toolName` (+ `toolAction`, `toolParameters`) says what to do; `execute` runs the
+ * plan instead of only returning it. The named fields after them (alignmentName, surfaceName, payItems, ...) are
+ * hints the router uses to fill the chosen tool's arguments; names left out may be filled from the user's selection
+ * in Civil 3D.
+ */
 const OrchestrateArgsSchema = z.object({
   action: z.literal("orchestrate"),
   request: z.string().min(1).optional(),
@@ -57,6 +76,7 @@ const OrchestrateArgsSchema = z.object({
   })).optional(),
 });
 
+/** Every argument either `civil3d_docs` action takes, all optional except `action`: what MCP clients see. */
 const canonicalDocsInputShape = {
   action: z.enum(["list_tool_capabilities", "orchestrate"]),
   domain: z.string().optional(),
@@ -93,6 +113,11 @@ const canonicalDocsInputShape = {
   })).optional(),
 };
 
+/**
+ * The docs domain definition, listed in toolManifest.ts. `orchestrate` is declared safe to retry and needs no
+ * approval of its own; when it executes, the approval check of the tool it runs applies (that tool's action, with
+ * the parameters it is actually called with).
+ */
 export const DOCS_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "docs",
   actions: {

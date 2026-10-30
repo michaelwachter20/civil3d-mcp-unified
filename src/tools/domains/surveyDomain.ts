@@ -2,8 +2,23 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The survey domain file: `civil3d_survey` (survey databases, figures and observations) and its aliases
+ * `civil3d_survey_database_list`, `_figure_list`, `_figure_get` and `_observation_list`. The plugin side is
+ * CogoCommands.cs; domainRuntime.ts turns these definitions into validated, approval-checked MCP tools.
+ *
+ * Every action forwards to one plugin method. Only the four queries are exposed. The other four actions
+ * (database_create, network_adjust, figure_create, landxml_import) exist for workflowDomain.ts's
+ * survey_import_adjust_figures, but Civil 3D documents no managed API for them: the plugin checks the arguments and
+ * then always answers CIVIL3D.API_ERROR, changing nothing, so the user has to do those steps in the Survey toolspace.
+ */
+
 const GenericSurveyResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument the exposed `civil3d_survey` actions take, all optional except `action`: the one input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalSurveyInputShape = {
   action: z.enum([
     "database_list",
@@ -21,6 +36,7 @@ const SurveyDatabaseListArgsSchema = z.object({
   action: z.literal("database_list"),
 });
 
+/** `database_create`: not exposed; the plugin always refuses it (no managed API). */
 const SurveyDatabaseCreateArgsSchema = z.object({
   action: z.literal("database_create"),
   name: z.string(),
@@ -45,6 +61,11 @@ const SurveyObservationListArgsSchema = z.object({
   observationType: z.enum(["all", "angles", "distances", "directions", "gps"]).optional(),
 });
 
+/**
+ * `network_adjust`, `figure_create` and `landxml_import`: reached only through the survey workflow. The plugin
+ * validates the required fields (and the LandXML path against the import roots) and then refuses with
+ * CIVIL3D.API_ERROR; method, confidence level and the rest are never used.
+ */
 const SurveyNetworkAdjustArgsSchema = z.object({
   action: z.literal("network_adjust"),
   databaseName: z.string(),

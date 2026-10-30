@@ -11,12 +11,29 @@ import type {
   HelpTopicType,
 } from "./types.js";
 
+/**
+ * Turns one page of the Autodesk Offline Help installed with Civil 3D into a HelpTopic for `civil3d_help`: title,
+ * summary, Markdown body, headings, images, guessed feature area and topic type, tags and a search text.
+ * helpIndex.ts calls listHelpTopicFiles / sourceFingerprint / parseHelpTopic when it (re)builds the cached index.
+ *
+ * The help ships in one of two layouts: plain `files*` folders of `.htm` pages, or `wrapped-files*` folders where
+ * each page is a `.htm.js` file holding the HTML as a JavaScript string (`var topic = "..."`), which
+ * extractWrappedTopicHtml unpacks without running it. Every path read, pages and images alike, is checked to be
+ * inside the help root (helpDiscovery.assertPathInsideHelpRoot).
+ */
+
+/** Pages whose body text is shorter than this (navigation stubs, empty shells) are skipped. */
 const EMPTY_BODY_MINIMUM = 80;
+/** Arrow and link icons the help uses as decoration: not worth listing as a topic's images. */
 const DECORATIVE_IMAGE_NAMES = new Set([
   "ac.menuaro.gif",
   "cclink.png",
 ]);
 
+/**
+ * Every topic page under the help root, sorted: the `.htm.js` files under `wrapped-files*` folders when the install
+ * has any, otherwise the `.htm` files under `files*` folders (never both, so a page isn't indexed twice).
+ */
 export function listHelpTopicFiles(root: string): string[] {
   const safeRoot = path.resolve(root);
   const directories = fs.readdirSync(safeRoot, { withFileTypes: true });
@@ -46,6 +63,10 @@ export function listHelpTopicFiles(root: string): string[] {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+/**
+ * A cheap fingerprint of the help pages ("count:latest mtime:total bytes"), stored with the cached index so a help
+ * update or reinstall is noticed and the index rebuilt, without hashing every file.
+ */
 export function sourceFingerprint(files: string[]): string {
   let latestModified = 0;
   let totalBytes = 0;
@@ -57,6 +78,10 @@ export function sourceFingerprint(files: string[]): string {
   return `${files.length}:${latestModified}:${totalBytes}`;
 }
 
+/**
+ * The HTML inside a wrapped `.htm.js` page: the string literal assigned after `var topic`, read character by
+ * character and unescaped by hand (never evaluated). Undefined when there is no such assignment.
+ */
 export function extractWrappedTopicHtml(jsText: string): string | undefined {
   const assignment = jsText.indexOf("var topic");
   if (assignment < 0) return undefined;
@@ -85,6 +110,13 @@ export function extractWrappedTopicHtml(jsText: string): string | undefined {
   return decodeJsStringLiteral(literal);
 }
 
+/**
+ * One help page as a HelpTopic, or undefined for a page with no title or almost no text. `configuredVersion` (the
+ * installation's version, which helpIndex.ts always passes) overrides the release read from the page. The topic's
+ * `id` is a hash of version and
+ * Autodesk topic id (the page's GUID), so it stays the same across rebuilds; `canonicalUrl` points at the same
+ * topic on help.autodesk.com when the id is a GUID. Throws if `filePath` is outside `root`.
+ */
 export function parseHelpTopic(
   root: string,
   filePath: string,
@@ -150,11 +182,13 @@ export function parseHelpTopic(
   };
 }
 
+/** The topic without its Markdown body, as kept in the index file (the body is re-read from the page when asked for). */
 export function toIndexEntry(topic: HelpTopic): HelpTopicIndexEntry {
   const { markdown: _markdown, ...entry } = topic;
   return entry;
 }
 
+/** Unescapes a quoted JavaScript string literal (quotes included in `literal`): \n, \t, \xNN, \uNNNN and the rest. */
 function decodeJsStringLiteral(literal: string): string | undefined {
   if (literal.length < 2) return undefined;
   let output = "";
@@ -190,6 +224,11 @@ function decodeJsStringLiteral(literal: string): string | undefined {
   return output;
 }
 
+/**
+ * The topic's local images (no web or data: URLs, no decorative icons, nothing outside the help root, only files
+ * that exist), each with a `civil3d://help/images/...` URI that civil3d_help serves, its size and, for PNG and GIF,
+ * its dimensions. A caption is taken from a following "Figure ..." paragraph, else the alt text.
+ */
 function extractImages(
   $: cheerio.CheerioAPI,
   rootElement: cheerio.Cheerio<AnyNode>,
@@ -242,6 +281,10 @@ function extractImages(
   return [...images.values()];
 }
 
+/**
+ * A simple Markdown version of the topic body: headings, paragraphs, numbered and bulleted lists, tables as pipe rows
+ * (no header separator) and images as links to their help-image URIs. Anything else is walked for its children.
+ */
 function renderMarkdown(
   $: cheerio.CheerioAPI,
   rootElement: cheerio.Cheerio<AnyNode>,
@@ -320,6 +363,7 @@ function renderImage(
   lines.push(`![${image.caption || image.alt || "Civil 3D help image"}](${image.uri})`, "");
 }
 
+/** Width and height from a PNG or GIF header (first 32 bytes only); undefined for other formats. */
 function readImageDimensions(filePath: string): { width: number; height: number } | undefined {
   const buffer = Buffer.alloc(32);
   const descriptor = fs.openSync(filePath, "r");
@@ -361,6 +405,14 @@ function detectVersion(html: string): string | undefined {
     ?? html.match(/name=["']release["'][^>]+content=["'](\d{4})/i)?.[1];
 }
 
+/**
+ * The Civil 3D feature a topic is mostly about: the area whose terms occur most often in its title, headings and
+ * body ("General" when none do; ties go to the area listed first).
+ *
+ * NOTE: occurrences() counts plain substrings, so short terms also match inside other words ("tin" in "existing",
+ * "setting", "continue"; "station" in "workstation"; "sheet" in "spreadsheet"), which pulls many unrelated topics
+ * toward Surfaces. Word-boundary matching would be more accurate.
+ */
 function inferFeatureArea(text: string): string {
   const lower = text.toLowerCase();
   const areas: Array<[string, string[]]> = [
@@ -386,6 +438,7 @@ function inferFeatureArea(text: string): string {
   return best.name;
 }
 
+/** The kind of page, from its `topic-type` meta, its title ("To create ..." is a procedure) and its opening text. */
 function inferTopicType(raw: string, title: string, body: string): HelpTopicType {
   const text = `${raw} ${title} ${body.slice(0, 600)}`.toLowerCase();
   if (text.includes("troubleshoot") || /^why\b/i.test(title)) return "Troubleshooting";
@@ -397,6 +450,7 @@ function inferTopicType(raw: string, title: string, body: string): HelpTopicType
   return "Concept";
 }
 
+/** Search tags such as `feature:surfaces`, `doc:procedure`, `object:feature_line`, `task:create`, sorted. */
 function inferTags(text: string, featureArea: string, topicType: HelpTopicType): string[] {
   const lower = text.toLowerCase();
   const tags = new Set<string>([
@@ -423,6 +477,7 @@ function inferTags(text: string, featureArea: string, topicType: HelpTopicType):
   return [...tags].sort();
 }
 
+/** The GUIDs of the help topics this page links to (at most 80), for "related topics". */
 function extractRelatedTopicIds($: cheerio.CheerioAPI): string[] {
   const ids = new Set<string>();
   $("a[href]").each((_, node) => {
@@ -448,6 +503,7 @@ function occurrences(text: string, term: string): number {
   return text.split(term).length - 1;
 }
 
+/** Collapses every run of whitespace (newlines included) to one space and trims. */
 export function cleanText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }

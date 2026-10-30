@@ -14,6 +14,18 @@ import {
 } from "../help/videoCatalog.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
 
+/**
+ * `civil3d_help`: search the Autodesk Offline Help installed with Civil 3D and the Autodesk tutorial video catalog,
+ * read a topic (Markdown, with its images inline and as resource links), report the index status, or rebuild the
+ * index. It never calls the plugin, so it works with Civil 3D closed.
+ *
+ * Registered directly by register.ts (not through the domain manifest), so it has its own small error shape and
+ * progress reporting here instead of domainRuntime.ts's. The work is in src/help/: helpIndex.ts (the cached search
+ * index), helpParser.ts (pages), helpDiscovery.ts (where the help is installed), videoCatalog.ts (videos).
+ * registerHelpResources adds the `civil3d://help/topics|images|videos/...` resources the results link to.
+ */
+
+/** The MCP request extras this file uses: the client's progress token and the notification sender. */
 interface ProgressExtra {
   _meta?: { progressToken?: string | number };
   sendNotification?: (notification: {
@@ -45,11 +57,23 @@ interface HelpToolInput {
 
 let defaultManager: Civil3DHelpManager | undefined;
 
+/** The process-wide help manager, made on first use (finding the installed help then, not at import time). */
 export function getCivil3DHelpManager(): Civil3DHelpManager {
   defaultManager ??= new Civil3DHelpManager();
   return defaultManager;
 }
 
+/**
+ * Registers `civil3d_help` with the MCP server and captures its handler for the HTTP bridge. Actions:
+ * - `search` (needs `query`): ranked topics with a confidence, plus by default one matching video;
+ * - `search_videos` (needs `query`): videos only;
+ * - `get_topic` (`id` or `uri`): the topic's Markdown and metadata, up to `maxImages` images as resource links and,
+ *   unless `includeImages: false`, inline base64 within CIVIL3D_HELP_MAX_IMAGE_BYTES (6 MiB) in total;
+ * - `status`: installations found and the index state;
+ * - `reindex`: rebuilds the index, refused unless CIVIL3D_ENABLE_HELP_REINDEX=true (it can take minutes).
+ * The first search of a process may build the index, which is why progress notifications are sent. File paths
+ * appear in answers only with CIVIL3D_DEBUG_PATHS=true. `manager` and `videoCatalog` are parameters for tests.
+ */
 export function registerHelpTool(
   server: McpServer,
   manager = getCivil3DHelpManager(),
@@ -193,6 +217,10 @@ export function registerHelpTool(
   );
 }
 
+/**
+ * The MCP resources that help answers link to: a topic as Markdown, an image as base64, and a video as a small HTML
+ * player page. Not listable (templates only); an unknown id throws.
+ */
 export function registerHelpResources(
   server: McpServer,
   manager = getCivil3DHelpManager(),
@@ -266,6 +294,7 @@ export function registerHelpResources(
   );
 }
 
+/** A topic as returned to the AI: Markdown, metadata, related ids, and images without their file paths. */
 function topicResult(topic: HelpTopic) {
   const debugPaths = process.env.CIVIL3D_DEBUG_PATHS === "true";
   return {
@@ -313,6 +342,7 @@ function publicVideo(video: HelpVideoRef) {
   };
 }
 
+/** For each video, an embedded HTML player resource and a link to the MP4, so a client can show one or the other. */
 function videoContentBlocks(videos: HelpVideoRef[]): ContentBlock[] {
   return videos.flatMap<ContentBlock>((video) => [
     {
@@ -333,6 +363,7 @@ function videoContentBlocks(videos: HelpVideoRef[]): ContentBlock[] {
   ]);
 }
 
+/** An MCP error result with the same `errorCode` / `rpcCode` fields domainRuntime.ts puts on manifest tools' errors. */
 function toolError(code: string, message: string, rpcCode: number) {
   return {
     content: [{ type: "text" as const, text: message }],
@@ -354,6 +385,7 @@ function errorCode(error: unknown): string {
   return "CIVIL3D.INTERNAL_ERROR";
 }
 
+/** Sends MCP progress notifications when the client gave a progress token; otherwise does nothing. Send failures are ignored. */
 function createProgressReporter(extra?: ProgressExtra) {
   return async (progress: number, total: number, message: string) => {
     const progressToken = extra?._meta?.progressToken;
@@ -365,6 +397,7 @@ function createProgressReporter(extra?: ProgressExtra) {
   };
 }
 
+/** Index-building progress scaled to 0-95 of 100, leaving the last step for the action's own "done" message. */
 function indexProgress(
   emit: ReturnType<typeof createProgressReporter>,
 ): HelpIndexProgress {
@@ -374,6 +407,7 @@ function indexProgress(
   };
 }
 
+/** The version in a `civil3d://help/topics/<version>/<id>` URI, so get_topic opens the right help without `version`. */
 function versionFromTopicUri(uri?: string): string | undefined {
   if (!uri) return undefined;
   try {

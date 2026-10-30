@@ -2,6 +2,19 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The project domain file: `civil3d_project` (Civil 3D data shortcuts) and its aliases `civil3d_data_shortcut`,
+ * `civil3d_data_shortcut_create`, `_promote`, `_reference` and `_sync`. The plugin side is DataShortcutCommands.cs;
+ * domainRuntime.ts turns these definitions into validated, approval-checked MCP tools. Not the suite's job database
+ * (`civil3d_project_notes`, scriptingDomain.ts).
+ *
+ * Every action forwards to one plugin method, but Civil 3D has little managed API for data shortcuts, so several
+ * don't finish the job: create opens Civil 3D's dialog for the user, sync queues SynchronizeReferences to run after
+ * the answer, and reference, create_reference and promote answer "manual_step_required" with the Toolspace steps.
+ * The answer's `status` says which; the AI must pass that on rather than report the shortcut as done.
+ */
+
+/** Object types Civil 3D can share as data shortcuts. */
 const DataShortcutObjectTypeSchema = z.enum([
   "surface",
   "alignment",
@@ -12,6 +25,7 @@ const DataShortcutObjectTypeSchema = z.enum([
   "section_view_group",
 ]);
 
+/** A data shortcut reference already in this drawing; `isSynced` false means its source has changed since. */
 const IncomingDataShortcutSchema = z.object({
   objectName: z.string(),
   objectType: z.enum(["surface", "alignment", "profile", "pipe_network"]),
@@ -20,6 +34,7 @@ const IncomingDataShortcutSchema = z.object({
   isValid: z.boolean(),
 });
 
+/** One of this drawing's own objects that could be published as a data shortcut, and whether it already is. */
 const ExportableDataShortcutSchema = z.object({
   objectName: z.string(),
   objectType: z.string(),
@@ -33,6 +48,10 @@ const DataShortcutListResponseSchema = z.object({
 
 const GenericProjectResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument any `civil3d_project` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalProjectInputShape = {
   action: z.enum([
     "data_shortcut_list",
@@ -82,6 +101,11 @@ const DataShortcutReferenceArgsSchema = z.object({
   layer: z.string().optional(),
 });
 
+/**
+ * `data_shortcut_sync`: lists the references that look out of date and, unless `dryRun`, queues Civil 3D's
+ * SynchronizeReferences, which runs after the answer and covers every reference in the drawing: `projectFolder` and
+ * `shortcutNames` only filter what is reported.
+ */
 const DataShortcutSyncArgsSchema = z.object({
   action: z.literal("data_shortcut_sync"),
   projectFolder: z.string().optional(),
@@ -215,6 +239,8 @@ export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
       ],
       resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),
     },
+    // Older combined alias: `operations` list / sync / create_reference map to the data_shortcut_* actions. Its sync
+    // takes no filters or dryRun, so it always queues SynchronizeReferences.
     {
       toolName: "civil3d_data_shortcut",
       displayName: "Civil 3D Data Shortcut",

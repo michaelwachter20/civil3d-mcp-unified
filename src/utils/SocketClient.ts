@@ -2,16 +2,35 @@ import * as net from "net";
 import { createLogger } from "./logger.js";
 import { createRpcRequestId } from "./requestContext.js";
 
+/**
+ * The TCP client for the Civil 3D plugin: one JSON-RPC 2.0 request over one connection to the plugin's loopback
+ * listener (RpcTcpServer.cs, port 8080 by default), then the plugin's single JSON answer. ConnectionManager.ts makes
+ * one ApplicationClientConnection per call (`withApplicationConnection`), wires the caller's abort signal to
+ * `cancel`, and disconnects afterwards; domain actions only ever see `sendCommand`.
+ *
+ * A JSON-RPC error answer becomes a Civil3DRpcError carrying the plugin's domain code (`error.data.code`, such as
+ * CIVIL3D.OBJECT_NOT_FOUND) and the numeric code; domainRuntime.ts and the HTTP bridge read both. Connection
+ * failures, timeouts and malformed answers are plain Errors.
+ */
+
 const log = createLogger("SocketClient");
+/** How long one command may take before it is rejected (CIVIL3D_COMMAND_TIMEOUT, ms; default two minutes). */
 const COMMAND_TIMEOUT_MS = parseInt(process.env.CIVIL3D_COMMAND_TIMEOUT ?? "120000", 10);
+/** Largest answer accepted before the connection is dropped (CIVIL3D_MAX_RESPONSE_BYTES; default 8 MiB). */
 const MAX_RESPONSE_BYTES = parseInt(process.env.CIVIL3D_MAX_RESPONSE_BYTES ?? "8388608", 10);
 
+/** A request waiting for its answer: settled by the answer, the timeout, or the connection failing. */
 interface PendingRequest {
   resolve: (response: string) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
 
+/**
+ * An error the plugin answered with: `code` is the domain code (e.g. "CIVIL3D.INVALID_INPUT") and `rpcCode` the
+ * JSON-RPC number (e.g. -32602). Also thrown by ConnectionManager.ts and toolHandlerRegistry.ts for cancellation and
+ * unknown tools, so callers can treat every coded failure the same way.
+ */
 export class Civil3DRpcError extends Error {
   constructor(
     message: string,
@@ -23,6 +42,10 @@ export class Civil3DRpcError extends Error {
   }
 }
 
+/**
+ * One connection to the plugin. The plugin reads one request per connection, so although the class keeps a map of
+ * pending requests, it is used for a single `sendCommand` and then disconnected (ConnectionManager.ts).
+ */
 export class ApplicationClientConnection {
   host: string;
   port: number;
@@ -44,6 +67,9 @@ export class ApplicationClientConnection {
       log.info("Connected", { host: this.host, port: this.port });
     });
 
+    // NOTE: each chunk is decoded on its own (`data.toString()`), so a multi-byte UTF-8 character split across two
+    // chunks comes out as replacement characters; a large answer with non-ASCII text (a layer named "Höhe", say) can
+    // be garbled. Collecting Buffers, or socket.setEncoding("utf8"), would decode across chunk boundaries.
     this.socket.on("data", (data) => {
       this.buffer += data.toString();
       if (Buffer.byteLength(this.buffer, "utf8") > MAX_RESPONSE_BYTES) {
@@ -77,6 +103,10 @@ export class ApplicationClientConnection {
     this.responseCallbacks.clear();
   }
 
+  /**
+   * The plugin sends one JSON object and no delimiter, so the answer is complete once the buffer parses. Each chunk
+   * re-parses the whole buffer, which is fine for the sizes MAX_RESPONSE_BYTES allows.
+   */
   private processBuffer(): void {
     try {
       JSON.parse(this.buffer);
@@ -87,6 +117,10 @@ export class ApplicationClientConnection {
     }
   }
 
+  /**
+   * Starts connecting and returns at once: true means the attempt began, not that it succeeded. A refused
+   * connection arrives later as the socket's "error" event, which rejects the pending request.
+   */
   public connect(): boolean {
     if (this.isConnected) {
       return true;
@@ -107,6 +141,10 @@ export class ApplicationClientConnection {
     this.isConnected = false;
   }
 
+  /**
+   * Abandons the request: rejects it with CIVIL3D.CANCELLED (or the given error) and destroys the socket. The plugin
+   * notices the client went away and cancels the request on its side.
+   */
   public cancel(error = new Civil3DRpcError(
     "Civil 3D request was cancelled by the caller.",
     "CIVIL3D.CANCELLED",
@@ -137,6 +175,12 @@ export class ApplicationClientConnection {
     }
   }
 
+  /**
+   * Sends plugin method `command` (a CommandDispatcher.cs name such as "listAlignments") with `params` and resolves
+   * with the JSON-RPC `result`. Rejects with Civil3DRpcError for an error answer, and with a plain Error when the
+   * connection fails, the answer is not a valid JSON-RPC 2.0 envelope for this request id, or COMMAND_TIMEOUT_MS
+   * passes. A timeout only rejects; it doesn't close the socket (the caller's disconnect does).
+   */
   public sendCommand(command: string, params: any = {}): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.isConnected && !this.connect()) {

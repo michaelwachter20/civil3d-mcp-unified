@@ -4,6 +4,14 @@ import { MIGRATED_DOMAIN_DEFINITIONS, selectManifestExposures } from "./toolMani
 import { TOOL_CATALOG } from "./tool_catalog.js";
 import { getReportResource, listReportResources } from "./reportResourceStore.js";
 
+/**
+ * The server's general MCP resources, registered by register.ts after the tools: the tool catalog
+ * (`civil3d://catalog/tools`), a short safety and approval note, the bundled framework standards, and the kept
+ * report results (`civil3d://reports/{id}`, from reportResourceStore.ts). The help resources are registered
+ * separately by helpTool.ts. None of these need Civil 3D.
+ */
+
+/** The text of `civil3d://docs/safety-and-approval`: the one path every drawing change takes. */
 const SAFETY_GUIDANCE = `# Civil 3D MCP safety and execution
 
 All drawing work follows one authoritative path:
@@ -16,6 +24,12 @@ MCP or HTTP caller -> schema validation -> approval policy -> host queue -> Civi
 - The Node MCP layer plans, validates, brokers, and reports results; it does not mutate drawings directly.
 `;
 
+/**
+ * Registers the resources. The catalog lists every catalog entry plus `defaultTools`, the tool names MCP clients
+ * actually see in this configuration (aliases only with CIVIL3D_ENABLE_TOOL_ALIASES=true). The standards resource
+ * returns the first 20 entries of the framework standards. Report resources are listable and complete their ids;
+ * an expired id throws.
+ */
 export function registerMcpResources(server: McpServer): void {
   server.registerResource(
     "civil3d-tool-catalog",

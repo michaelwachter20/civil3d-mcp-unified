@@ -2,6 +2,18 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The grading domain: `civil3d_grading` (grading groups, gradings, criteria, feature lines), the `civil3d_feature_line`
+ * alias (its own `list` / `get` / `export_as_polyline` operations, mapped onto the `feature_line_*` actions) and one
+ * alias per action (`civil3d_grading_group_create`, `civil3d_feature_line_create`, ...). The plugin side is
+ * GradingCommands.cs; domainRuntime.ts turns the definition into validated, approval-checked MCP tools. Every action
+ * forwards to one plugin method; nothing is worked out in Node.
+ *
+ * Gradings inside a group are picked by handle (from `list`), groups and feature lines by name. Coordinates are in
+ * drawing units.
+ */
+
+/** A point in drawing units; a missing elevation becomes 0. */
 const Point3DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -19,6 +31,7 @@ const FeatureLineListResponseSchema = z.object({
   featureLines: z.array(FeatureLineSummarySchema),
 });
 
+/** One feature line with its vertices; lengths and elevations are in the drawing units that `units` names. */
 const FeatureLineDetailResponseSchema = z.object({
   name: z.string(),
   handle: z.string(),
@@ -34,6 +47,10 @@ const FeatureLineDetailResponseSchema = z.object({
 
 const GenericGradingResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument any `civil3d_grading` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalGradingInputShape = {
   action: z.enum([
     "group_list",
@@ -92,6 +109,7 @@ const GradingGroupVolumeArgsSchema = z.object({
   name: z.string(),
 });
 
+/** Without `surfaceName`, Civil 3D names the group's new surface itself. */
 const GradingGroupSurfaceCreateArgsSchema = z.object({
   action: z.literal("group_surface_create"),
   name: z.string(),
@@ -109,6 +127,10 @@ const GradingGetArgsSchema = z.object({
   handle: z.string(),
 });
 
+/**
+ * A grading from a feature line (by name) into a group, with a criteria name from criteria_list (Civil 3D's default
+ * when left out) on the given side (right when left out).
+ */
 const GradingCreateArgsSchema = z.object({
   action: z.literal("create"),
   groupName: z.string(),
@@ -142,6 +164,7 @@ const FeatureLineExportArgsSchema = z.object({
   targetLayer: z.string().optional(),
 });
 
+/** A new feature line through at least two points, in order, on layer "0" unless `layer` says otherwise. */
 const FeatureLineCreateArgsSchema = z.object({
   action: z.literal("feature_line_create"),
   points: z.array(Point3DSchema).min(2),
@@ -210,6 +233,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("deleteGradingGroup", { name: args.name }),
       ),
     },
+    // Cut and fill as the grading group reports them, in the drawing's volume units; net is cut minus fill.
     group_volume: {
       action: "group_volume",
       inputSchema: GradingGroupVolumeArgsSchema,
@@ -332,6 +356,9 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("getFeatureLine", { name: args.name }),
       ),
     },
+    // "Export" means into the drawing: the plugin adds a 3D polyline through the feature line's vertices to model
+    // space (on `targetLayer`, else the feature line's layer) and leaves the feature line as it is. The `export`
+    // capability makes it approval-gated.
     feature_line_export_as_polyline: {
       action: "feature_line_export_as_polyline",
       inputSchema: FeatureLineExportArgsSchema,
@@ -364,6 +391,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // The canonical tool first; the rest are aliases, listed to MCP clients only with CIVIL3D_ENABLE_TOOL_ALIASES=true.
   exposures: [
     {
       toolName: "civil3d_grading",
@@ -403,6 +431,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       },
       supportedActions: ["feature_line_list", "feature_line_get", "feature_line_export_as_polyline"],
       operations: ["list", "get", "export_as_polyline"],
+      // Anything other than list or get becomes the export; the `action` enum above is what keeps other values out.
       resolveAction: (rawArgs) => ({
         action:
           rawArgs.action === "list"

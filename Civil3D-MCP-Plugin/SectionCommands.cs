@@ -10,8 +10,25 @@ using System.Text;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_section (src/tools/domains/sectionDomain.ts): sample line groups and sample lines
+/// along an alignment, section views and section view groups, and a CSV export of the sampled section points. The
+/// dispatcher names are <c>listSampleLineGroups</c>, <c>createSampleLines</c>, <c>getSectionData</c>,
+/// <c>createSectionViews</c>, <c>listSectionViews</c>, <c>updateSectionViewStyles</c>, <c>createSectionViewGroup</c>
+/// and <c>exportSectionData</c>.
+/// <para>
+/// Alignments, sample line groups and styles are found by name (case-insensitive). Stations, offsets and elevations
+/// are in the drawing's own units; the answers name them (<c>CivilObjectUtils.LinearUnits</c>). Section view layout
+/// (rows, gaps) comes from the drawing's draft placement settings, because the .NET API doesn't take it per call, so
+/// asking for it is refused rather than silently ignored.
+/// </para>
+/// </summary>
 public static class SectionCommands
 {
+  /// <summary>
+  /// Lists the sample line groups of one alignment (<c>alignmentName</c>, required) with each group's name, handle,
+  /// sample line count and the stations of its sample lines. Read only.
+  /// </summary>
   public static Task<object?> ListSampleLineGroupsAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -50,6 +67,17 @@ public static class SectionCommands
     });
   }
 
+  /// <summary>
+  /// Creates a new sample line group <c>groupName</c> on <c>alignmentName</c> and one sample line per station, each
+  /// a straight line from <c>leftWidth</c> left of the alignment to <c>rightWidth</c> right of it (drawing units,
+  /// both positive). Stations come from <c>stations</c> (an array, duplicates dropped, sorted) or else every
+  /// <c>interval</c> from the alignment's start; with neither it refuses with CIVIL3D.INVALID_INPUT. <c>surfaces</c>
+  /// (optional names) limits which section sources are sampled; without it every source is sampled. Sample lines are
+  /// named "SL-" plus the station (e.g. "SL-1250"). Writes to the drawing in one undo step.
+  /// </summary>
+  // NOTE: the interval loop adds the interval to a running double, so rounding can drop the alignment's ending
+  // station even when the length is an exact multiple of the interval; and the "SL-{station:0.##}" name uses the
+  // current culture, so a comma-decimal locale gives names like "SL-12,5".
   public static Task<object?> CreateSampleLinesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -119,6 +147,13 @@ public static class SectionCommands
     });
   }
 
+  /// <summary>
+  /// Finds the sample line at <c>station</c> (within 0.0001) in sample line group <c>sampleLineGroupName</c> of
+  /// <c>alignmentName</c> and returns its station and the drawing's units. CIVIL3D.OBJECT_NOT_FOUND when the
+  /// alignment has no groups, the group isn't there or no sample line is at that station. Read only.
+  /// </summary>
+  // NOTE: "surfaces" in the answer is always an empty list: the section data at the sample line is never read, so
+  // the caller learns only that the sample line exists (exportSectionData is the path that reads section points).
   public static Task<object?> GetSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -172,6 +207,14 @@ public static class SectionCommands
   // createSectionViews
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Creates a section view group for every sample line of <c>sampleLineGroupName</c> on <c>alignmentName</c>,
+  /// placed from (<c>insertionX</c>, <c>insertionY</c>) by the drawing's draft placement settings, and applies the
+  /// optional section view <c>style</c> and <c>bandSetStyle</c> to every new view. <c>leftOffset</c> /
+  /// <c>rightOffset</c> (together, left less than right) set the offset range; <c>stationStart</c> /
+  /// <c>stationEnd</c> limit the station range (default: the whole alignment). Refuses <c>rows</c> and
+  /// <c>gapBetweenViews</c> with CIVIL3D.API_ERROR because the API has no per-call layout. Writes to the drawing.
+  /// </summary>
   public static Task<object?> CreateSectionViewsAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -232,6 +275,11 @@ public static class SectionCommands
   // listSectionViews
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Lists section views (name, handle, style, alignment and sample line group) for one alignment or, without
+  /// <c>alignmentName</c>, every alignment, optionally only in <c>sampleLineGroupName</c>. Finding none is an error
+  /// (CIVIL3D.OBJECT_NOT_FOUND), not an empty list. Read only.
+  /// </summary>
   public static Task<object?> ListSectionViewsAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetOptionalString(parameters, "alignmentName");
@@ -281,6 +329,11 @@ public static class SectionCommands
   // updateSectionViewStyles
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Sets the section view <c>style</c> and/or imports the band set <c>bandSetStyle</c> (at least one required,
+  /// CIVIL3D.INVALID_INPUT otherwise) on the section views of <c>sampleLineGroupName</c>. <c>applyToAll</c>
+  /// (default true) false changes only the first view. Returns how many views changed. Writes to the drawing.
+  /// </summary>
   public static Task<object?> UpdateSectionViewStylesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -322,6 +375,12 @@ public static class SectionCommands
   // createSectionViewGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Like <see cref="CreateSectionViewsAsync"/> over the whole alignment, but also sets the group's
+  /// <c>plotStyle</c> (group plot style name) and takes no band set or ranges. Refuses <c>rows</c>, <c>columns</c>,
+  /// <c>gapX</c> and <c>gapY</c> with CIVIL3D.API_ERROR (draft placement uses the drawing's settings). Writes to the
+  /// drawing.
+  /// </summary>
   public static Task<object?> CreateSectionViewGroupAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -384,6 +443,14 @@ public static class SectionCommands
   // exportSectionData
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Writes a CSV of every section point of every sample line in <c>sampleLineGroupName</c> (optionally only
+  /// between <c>stationStart</c> and <c>stationEnd</c>): station, section source name, offset and, unless
+  /// <c>includeElevations</c> is false, elevation, in drawing units with invariant-culture numbers. The file goes to
+  /// <c>outputPath</c> through <c>FileBoundary.WriteAllTextAtomic</c> (allowed roots, <c>.csv</c> only, no overwrite
+  /// without <c>overwrite: true</c>). <c>includeMaterials</c> is refused (CIVIL3D.INVALID_INPUT) before anything is
+  /// written. Reads the drawing only; the one side effect is the file.
+  /// </summary>
   public static Task<object?> ExportSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -447,6 +514,7 @@ public static class SectionCommands
     });
   }
 
+  /// <summary>Quotes a CSV field that holds a comma, quote or line break, doubling any quotes inside.</summary>
   private static string EscapeCsv(string value)
   {
     if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
@@ -517,6 +585,11 @@ public static class SectionCommands
     }
   }
 
+  /// <summary>
+  /// Adds a section view group to <paramref name="group"/> with draft placement at <paramref name="insertionPoint"/>,
+  /// over the given station range (default: the alignment's start and end) and, when both are given, offset range.
+  /// Refuses one offset without the other, or left not less than right, with CIVIL3D.INVALID_INPUT.
+  /// </summary>
   private static SectionViewGroup CreateSectionViewGroup(
     Alignment alignment,
     SampleLineGroup group,
@@ -547,6 +620,11 @@ public static class SectionCommands
     return group.SectionViewGroups.Add(insertionPoint, start, end, rangeOptions, placementOptions);
   }
 
+  /// <summary>
+  /// Sets the style and/or imports the band set (either may be <c>ObjectId.Null</c> to leave it) on every view, or
+  /// only the first when <paramref name="applyToAll"/> is false, opening views for write as needed. Returns how many
+  /// views changed.
+  /// </summary>
   private static int ApplySectionViewStyles(
     IReadOnlyList<SectionView> sectionViews,
     ObjectId styleId,

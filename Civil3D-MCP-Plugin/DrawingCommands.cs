@@ -9,8 +9,26 @@ using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods about the drawing as a whole and the Civil 3D window, behind civil3d_drawing
+/// (src/tools/domains/drawingRuntimeDomain.ts: info, settings, new, open, save, undo, redo, list_open, switch,
+/// selected_objects_info, list_object_types) and civil3d_health (pluginDomain.ts). The orchestrator's
+/// ProjectContextService calls <c>getProjectContext</c>, and the approval policy fingerprints the active drawing with
+/// <c>getDrawingInfo</c>, so that answer must stay stable for an unchanged drawing.
+/// <para>
+/// Most methods read through <c>CivilExecution.ReadAsync</c>. Opening, creating and switching drawings run through
+/// <c>ExecuteInCommandContextAsync</c> / <c>ExecuteReadOnlyAsync</c> because they act on the document manager, not on
+/// one drawing's database. Paths go through <c>FileBoundary</c>.
+/// </para>
+/// </summary>
 public static class DrawingCommands
 {
+  /// <summary>
+  /// The health answer for civil3d_health: Civil 3D and plugin versions, whether a drawing is open, the host queue
+  /// (operation in progress, depth, capacity, current request and how long it has run), the user's active commands,
+  /// memory use, the plugin log's path and health, and background job counts. Doesn't go through the host queue, so
+  /// it answers even while a long request is running.
+  /// </summary>
   public static Task<object?> GetCivil3DHealthAsync()
   {
     var status = PluginRuntime.GetStatus();
@@ -54,12 +72,17 @@ public static class DrawingCommands
     return Task.FromResult<object?>(response);
   }
 
+  /// <summary>The active drawing's file, units, coordinate system code, unsaved-changes flag and object counts (see <see cref="BuildDrawingInfo"/>).</summary>
   public static Task<object?> GetDrawingInfoAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
       BuildDrawingInfo(doc, civilDoc, database, transaction));
   }
 
+  /// <summary>
+  /// Everything civil3d_orchestrate needs in one round trip: the drawing info, the object type list and the objects
+  /// the user has selected (at most <c>selectedObjectLimit</c>, default 25, clamped to 1-100). Read only.
+  /// </summary>
   public static Task<object?> GetProjectContextAsync(JsonObject? parameters)
   {
     var requestedLimit = PluginRuntime.GetOptionalInt(parameters, "selectedObjectLimit") ?? 25;
@@ -74,6 +97,12 @@ public static class DrawingCommands
       });
   }
 
+  /// <summary>
+  /// Drawing settings: coordinate system code, its category and datum, the current layer and the first style of
+  /// each kind (surface, alignment, profile, pipe network; corridor is always null). Read only.
+  /// </summary>
+  // NOTE: "scaleFactor" is the DIMSCALE system variable (dimension scale), not the coordinate system's grid scale
+  // factor, and "coordinateZone" is the coordinate system's category; "elevationReference" is always null.
   public static Task<object?> GetDrawingSettingsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -101,6 +130,12 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>
+  /// Saves the active drawing to its own file, or with <c>saveAs</c> to a new <c>.dwg</c> path inside the allowed
+  /// export folders (an existing file only with <c>overwrite: true</c>). A drawing never saved needs <c>saveAs</c>
+  /// (CIVIL3D.INVALID_INPUT otherwise). Saves in the current DWG version; the approval policy treats it as a write
+  /// that needs approval.
+  /// </summary>
   public static Task<object?> SaveDrawingAsync(JsonObject? parameters)
   {
     var overwrite = PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false;
@@ -128,6 +163,11 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>
+  /// Opens a new drawing tab, from <c>templatePath</c> (a <c>.dwt</c> or <c>.dwg</c> in the folders allowed for
+  /// reference files) or from AutoCAD's default template, and makes it the active drawing, so later requests act on
+  /// it. Returns its name and (empty until saved) file path.
+  /// </summary>
   public static async Task<object?> NewDrawingAsync(JsonObject? parameters)
   {
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
@@ -303,6 +343,12 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>
+  /// Undoes the last <c>steps</c> (default 1) undo steps of the active drawing by sending <c>UNDO n</c> to the command
+  /// line. Refuses with CIVIL3D.CONFLICT when the user has run commands since the AI's last change (they would be
+  /// undone first), unless <c>force</c> is true because the user agreed. The command is queued, so it runs just after
+  /// this answer is sent rather than before it.
+  /// </summary>
   public static Task<object?> UndoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
@@ -329,6 +375,7 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>Redoes <c>steps</c> (default 1) undone steps by queuing <c>REDO n</c> on the command line, like undo.</summary>
   public static Task<object?> RedoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
@@ -343,11 +390,16 @@ public static class DrawingCommands
     });
   }
 
+  /// <summary>The fixed list of Civil 3D object types the tools know about; it doesn't look at the drawing.</summary>
   public static Task<object?> ListCivilObjectTypesAsync()
   {
     return Task.FromResult<object?>(BuildCivilObjectTypes());
   }
 
+  /// <summary>
+  /// The objects in the user's current (pickfirst) selection, at most <c>limit</c> (default 100): handle, .NET type
+  /// name, name and description. An empty list when nothing is selected. Read only; the selection is left as it is.
+  /// </summary>
   public static Task<object?> GetSelectedCivilObjectsInfoAsync(JsonObject? parameters)
   {
     var limit = PluginRuntime.GetOptionalInt(parameters, "limit") ?? 100;
@@ -356,6 +408,11 @@ public static class DrawingCommands
       BuildSelectedCivilObjects(doc, transaction, limit));
   }
 
+  /// <summary>
+  /// The getDrawingInfo answer: file name and path, coordinate system code, linear and angular units, whether there
+  /// are unsaved changes (DBMOD) and counts of surfaces, alignments, profiles, corridors, pipe networks, COGO points
+  /// and parcels. <c>projectName</c> is always null.
+  /// </summary>
   private static Dictionary<string, object?> BuildDrawingInfo(
     Document doc,
     CivilDocument civilDoc,
@@ -466,6 +523,10 @@ public static class DrawingCommands
     return ReadCoordinateSystemFields(civilDoc).code;
   }
 
+  /// <summary>
+  /// The drawing's coordinate system code from its unit and zone settings, with the category and datum Civil 3D's
+  /// coordinate system library has for it; all null when the drawing has none. The vertical datum isn't read.
+  /// </summary>
   private static (string? code, string? zone, string? datum, string? verticalDatum) ReadCoordinateSystemFields(CivilDocument civilDoc)
   {
     var unitZone = civilDoc.Settings.DrawingSettings.UnitZoneSettings;

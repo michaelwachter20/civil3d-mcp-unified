@@ -2,8 +2,20 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The assembly domain: `civil3d_assembly` (corridor assemblies and their subassemblies) and its aliases
+ * `civil3d_assembly_create`, `civil3d_subassembly_create` and `civil3d_assembly_edit`. The plugin side is
+ * AssemblyCreationCommands.cs, which uses only the documented Civil 3D API; domainRuntime.ts turns the definition into
+ * validated, approval-checked MCP tools. Every action forwards to one plugin method; Node only splits `insertionPoint`
+ * into the plugin's `insertX` / `insertY`.
+ *
+ * Assemblies are found by name, subassemblies by name within their assembly. corridorDomain.ts uses an assembly by
+ * name when it adds a corridor region.
+ */
+
 const GenericAssemblyResponseSchema = z.object({}).passthrough();
 
+/** A subassembly parameter value: a number (in the units the subassembly's own help gives), text or a flag. */
 const AssemblyParameterValueSchema = z.union([z.number(), z.string(), z.boolean()]);
 
 const AssemblySummarySchema = z.object({
@@ -32,6 +44,11 @@ const AssemblyDetailResponseSchema = z.object({
   usedByCorridors: z.array(z.string()),
 });
 
+/**
+ * Every argument any `civil3d_assembly` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call. Note the two
+ * spellings of side: answers use lowercase ("left"), the create argument is capitalised ("Left").
+ */
 const canonicalAssemblyInputShape = {
   action: z.enum(["list", "get", "create", "create_subassembly", "edit"]),
   name: z.string().optional(),
@@ -58,6 +75,7 @@ const AssemblyGetArgsSchema = z.object({
   name: z.string(),
 });
 
+/** An empty assembly (no subassemblies yet) of the given Civil 3D assembly type, at a model-space point. */
 const AssemblyCreateArgsSchema = z.object({
   action: z.literal("create"),
   name: z.string(),
@@ -69,6 +87,11 @@ const AssemblyCreateArgsSchema = z.object({
   description: z.string().optional(),
 });
 
+/**
+ * Imports a stock subassembly (`subassemblyType`, as Civil 3D's stock catalog names it) and attaches it to the
+ * assembly; "Both" makes two, one per side. Each gets a unique name "<type>-<side>-<id>" and the given parameters.
+ * The plugin refuses (and commits nothing) when the subassembly has no writable Side parameter.
+ */
 const AssemblyCreateSubassemblyArgsSchema = z.object({
   action: z.literal("create_subassembly"),
   assemblyName: z.string(),
@@ -77,6 +100,11 @@ const AssemblyCreateSubassemblyArgsSchema = z.object({
   parameters: z.record(z.string(), AssemblyParameterValueSchema).optional(),
 });
 
+/**
+ * Three things in one action: without `subassemblyName` it lists the assembly's subassemblies; with it and
+ * `delete: true` it erases that subassembly; otherwise it writes `parameters` to it, refusing the whole edit (nothing
+ * committed) if any parameter isn't writable.
+ */
 const AssemblyEditArgsSchema = z.object({
   action: z.literal("edit"),
   assemblyName: z.string(),
@@ -155,6 +183,9 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Declared with `delete` because it can erase a subassembly, so every call needs approval, even one that only
+    // lists. The plugin runs the listing inside a write too (an undo step that changes nothing); `get` is the
+    // read-only way to inspect.
     edit: {
       action: "edit",
       inputSchema: AssemblyEditArgsSchema,
@@ -173,6 +204,7 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // The canonical tool first; the rest are aliases, listed to MCP clients only with CIVIL3D_ENABLE_TOOL_ALIASES=true.
   exposures: [
     {
       toolName: "civil3d_assembly",

@@ -2,8 +2,23 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The QC domain file: `civil3d_qc` and its aliases `civil3d_qc_check_alignment`, `_check_profile`,
+ * `_check_corridor`, `_check_pipe_network`, `_check_surface` and `civil3d_qc_report_generate`. The plugin side is
+ * QcCommands.cs (which also serves the label and layer checks of standardsDomain.ts); domainRuntime.ts turns these
+ * definitions into validated, approval-checked MCP tools.
+ *
+ * Every action forwards to one plugin method and answers with findings (severity error / warning / info, a `type`
+ * and a message). A limit left out (maxGrade, minCover, ...) is sent as null and that check is skipped; the
+ * `check*` switches default to on.
+ */
+
 const GenericQcResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument any `civil3d_qc` action takes, all optional except `action`: the one input schema MCP clients see.
+ * The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalQcInputShape = {
   action: z.enum([
     "check_alignment",
@@ -39,6 +54,10 @@ const canonicalQcInputShape = {
   includeLabels: z.boolean().optional(),
 };
 
+/**
+ * `check_alignment`: zero-length or invalid entities, and with `designSpeed` curves under a rough minimum radius
+ * (V squared / 15: a sanity check, not a design check).
+ */
 const QcAlignmentArgsSchema = z.object({
   action: z.literal("check_alignment"),
   name: z.string(),
@@ -48,6 +67,10 @@ const QcAlignmentArgsSchema = z.object({
   checkSpirals: z.boolean().optional(),
 });
 
+/**
+ * `check_profile`: grades above `maxGrade` and vertical curves with K below `minKValue`. The plugin compares grades
+ * as the API gives them, a fraction, so 6 % is `maxGrade: 0.06`, not 6.
+ */
 const QcProfileArgsSchema = z.object({
   action: z.literal("check_profile"),
   alignmentName: z.string(),
@@ -61,6 +84,10 @@ const QcCorridorArgsSchema = z.object({
   name: z.string(),
 });
 
+/**
+ * `check_pipe_network`: each pipe of a gravity network against the limits given, in drawing units. Cover and
+ * velocity are the values stored on the pipe; a pipe with no stored velocity reads 0 and isn't reported as slow.
+ */
 const QcPipeNetworkArgsSchema = z.object({
   action: z.literal("check_pipe_network"),
   name: z.string(),
@@ -71,6 +98,10 @@ const QcPipeNetworkArgsSchema = z.object({
   maxVelocity: z.number().positive().optional(),
 });
 
+/**
+ * `check_surface`: sanity checks from the surface's general properties (no points, no triangles, an elevation range
+ * over ten times `spikeThreshold`, a flat or near-zero surface). It doesn't look at single triangles.
+ */
 const QcSurfaceArgsSchema = z.object({
   action: z.literal("check_surface"),
   name: z.string(),
@@ -78,6 +109,11 @@ const QcSurfaceArgsSchema = z.object({
   flatTriangleThreshold: z.number().nonnegative().optional(),
 });
 
+/**
+ * `generate_report`: runs simpler versions of the checks over every object of the included kinds and writes a .txt
+ * report to `outputPath` (inside the export roots, FileBoundary.cs; an existing file only with `overwrite`). The
+ * drawing isn't changed.
+ */
 const QcReportArgsSchema = z.object({
   action: z.literal("generate_report"),
   outputPath: z.string(),
@@ -181,6 +217,8 @@ export const QC_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // NOTE: this writes a file, but its capabilities (query, analyze, generate) include none of approvalPolicy.ts's
+    // mutating ones and its name matches no approval word, so it runs without an approval token.
     generate_report: {
       action: "generate_report",
       inputSchema: QcReportArgsSchema,

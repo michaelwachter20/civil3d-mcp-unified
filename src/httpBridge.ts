@@ -11,8 +11,24 @@ import { Civil3DRpcError } from "./utils/SocketClient.js";
 import { createRequestId, runWithRequestId } from "./utils/requestContext.js";
 import { dependencyVersions } from "./version.js";
 
+/**
+ * The local HTTP bridge: the same tools as the MCP server, for HTTP clients that don't speak MCP (scripts, the
+ * Copilot add-in, health checks). src/index.ts starts it next to the stdio transport.
+ *
+ * It has no tool logic of its own. `POST /execute` with `{ tool, parameters }` looks the tool up in
+ * toolHandlerRegistry.ts (every handler captured at registration, aliases included even when MCP doesn't list them)
+ * and calls the same handler, so validation, approval and idempotency are exactly those of an MCP call. Also:
+ * `GET /tools`, `GET /health` (`?deep=1` asks the plugin), `/health/live`, `/health/ready`, `/health/plugin`,
+ * `/health/queue`, `/health/version`.
+ *
+ * Safety: binds to 127.0.0.1:3000 by default; binding anywhere else needs both `MCP_HTTP_TOKEN` (Bearer or
+ * X-MCP-Token header) and `MCP_HTTP_ALLOWED_HOSTS`. The Host header is always checked (against DNS rebinding), a
+ * browser Origin must be in `MCP_HTTP_ALLOWED_ORIGINS`, and wildcards are refused. Each request gets an id (the
+ * caller's `X-Request-Id` when it is well formed) and is cancelled if the client disconnects before the answer.
+ */
 const log = createLogger("HttpBridge");
 
+/** Overrides for the bridge's settings; anything left out comes from the `MCP_HTTP_*` environment variables. */
 export interface HttpBridgeOptions {
   host?: string;
   port?: number;
@@ -53,6 +69,7 @@ function parseAllowedHosts(value: string | undefined): string[] {
     .filter((host): host is string => Boolean(host));
 }
 
+/** The bare, lower-case host name of a Host header or "host:port" value (IPv6 brackets dropped); undefined if unparsable. */
 function normalizeHost(authority: string | undefined): string | undefined {
   if (!authority?.trim()) return undefined;
   try {
@@ -64,6 +81,11 @@ function normalizeHost(authority: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Settings from the options, else the environment, else the defaults (127.0.0.1, port 3000, 1 MiB bodies). Throws,
+ * so the server doesn't start, when a non-loopback bind lacks a token or an allowed-hosts list, or when either list
+ * holds "*". With no allowed hosts on loopback, only localhost names are accepted.
+ */
 function resolveConfig(options: HttpBridgeOptions = {}): ResolvedHttpBridgeConfig {
   const envPort = process.env.MCP_HTTP_PORT ? parseInt(process.env.MCP_HTTP_PORT, 10) : 3000;
   const envMaxBody = process.env.MCP_HTTP_MAX_BODY_BYTES
@@ -109,6 +131,7 @@ function resolveConfig(options: HttpBridgeOptions = {}): ResolvedHttpBridgeConfi
   return config;
 }
 
+/** An error that already knows its HTTP status and domain code (`CIVIL3D.*`), sent as `{ error: { code, message } }`. */
 class HttpBridgeError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -124,6 +147,7 @@ type ExecuteRequest = {
   parameters?: Record<string, unknown>;
 };
 
+/** Reads the request body as JSON, stopping with 413 once it passes `maxBodyBytes`; an empty body is `{}`. */
 async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Promise<ExecuteRequest> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -154,6 +178,7 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
   }
 }
 
+/** True when no token is configured, or the request carries it as `Authorization: Bearer ...` or `X-MCP-Token`. */
 function isAuthorized(request: IncomingMessage, authToken: string | undefined): boolean {
   if (!authToken) {
     return true; // auth disabled when MCP_HTTP_TOKEN is unset
@@ -172,6 +197,7 @@ function isAuthorized(request: IncomingMessage, authToken: string | undefined): 
   return false;
 }
 
+/** Constant-time token comparison, so response timing doesn't reveal how much of a guessed token was right. */
 function tokensEqual(candidate: string, expected: string): boolean {
   const candidateBytes = Buffer.from(candidate, "utf8");
   const expectedBytes = Buffer.from(expected, "utf8");
@@ -179,11 +205,13 @@ function tokensEqual(candidate: string, expected: string): boolean {
     && timingSafeEqual(candidateBytes, expectedBytes);
 }
 
+/** Requests without an Origin header (curl, scripts) pass; a browser's Origin must be listed exactly. */
 function isOriginAllowed(request: IncomingMessage, allowedOrigins: string[]): boolean {
   const origin = request.headers.origin;
   return typeof origin !== "string" || allowedOrigins.includes(origin);
 }
 
+/** The Host header must name an allowed host: a web page that rebinds its own DNS name to 127.0.0.1 is refused. */
 function isHostAllowed(request: IncomingMessage, allowedHosts: string[]): boolean {
   const host = normalizeHost(request.headers.host);
   return typeof host === "string" && allowedHosts.includes(host);
@@ -222,6 +250,7 @@ function writeError(
   writeJson(response, statusCode, { error: { code, message } });
 }
 
+/** The HTTP status for a plugin domain code (499 for a cancelled request, as nginx uses it; 500 for anything unknown). */
 function statusForDomainCode(code: string): number {
   if (code === "CIVIL3D.INVALID_JSON" || code === "CIVIL3D.INVALID_REQUEST" || code === "CIVIL3D.INVALID_INPUT") return 400;
   if (code === "CIVIL3D.AUTH_REQUIRED") return 401;
@@ -235,6 +264,11 @@ function statusForDomainCode(code: string): number {
   return 500;
 }
 
+/**
+ * Any thrown error as an HttpBridgeError: plugin errors keep their domain code; plain errors (connection, timeout,
+ * a failed tool result rethrown by executeRegisteredTool) get one guessed from the message text, so the wording of
+ * those messages matters here.
+ */
 function mapHttpError(error: unknown): HttpBridgeError {
   if (error instanceof HttpBridgeError) return error;
   if (error instanceof Civil3DRpcError) {
@@ -278,6 +312,7 @@ const LEGACY_TOOL_NAMES = new Set([
   "civil3d_surface_report",
 ]);
 
+/** Runs one of LEGACY_TOOL_NAMES as the equivalent canonical tool call, through the orchestrator. */
 async function executeLegacyTool(toolName: string, parameters: Record<string, unknown>): Promise<unknown> {
   switch (toolName) {
     case "civil3d_list_alignments":
@@ -339,6 +374,7 @@ async function executeBridgeTool(toolName: string, parameters: Record<string, un
   );
 }
 
+/** `GET /health` and `/health/live`: the bridge alone, or with `?deep=1` the plugin's `civil3d_health` answer (503 when it fails). */
 async function handleHealth(request: IncomingMessage, response: ServerResponse): Promise<void> {
   // Cheap liveness by default — only probe the plugin when ?deep=1 is set.
   const url = new URL(request.url ?? "/health", "http://localhost");
@@ -369,6 +405,7 @@ async function probePlugin(): Promise<Record<string, unknown>> {
   return objectResult(await executeBridgeTool("civil3d_health", {}));
 }
 
+/** The plugin's host-queue part of a health answer; healthy unless the queue is full (or the plugin doesn't report it). */
 function queueHealth(result: Record<string, unknown>) {
   const queueDepth = typeof result.queueDepth === "number" ? result.queueDepth : undefined;
   const queueCapacity = typeof result.queueCapacity === "number" ? result.queueCapacity : undefined;
@@ -376,6 +413,11 @@ function queueHealth(result: Record<string, unknown>) {
   return { healthy, queueDepth, queueCapacity, jobs: result.jobs };
 }
 
+/**
+ * The probe endpoints for monitors: `/health/version` (no plugin call), `/health/plugin` (the plugin's raw health),
+ * `/health/queue` (503 when the host queue is full) and `/health/ready` (200 only when the plugin answers, its
+ * listener is running and the queue has room).
+ */
 async function handleOperationalHealth(path: string, response: ServerResponse): Promise<void> {
   if (path === "/health/version") {
     writeJson(response, 200, { bridge: "ok", versions: dependencyVersions() });
@@ -415,6 +457,7 @@ async function handleOperationalHealth(path: string, response: ServerResponse): 
   }
 }
 
+/** `POST /execute`: body `{ tool, parameters }`; answers the tool's result with 200, or `{ error }` with a mapped status. */
 async function handleExecute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -451,6 +494,11 @@ function writePreflight(
   response.end();
 }
 
+/**
+ * Starts the bridge and returns the Node `http.Server` (index.ts closes it on shutdown). Throws before listening when
+ * the settings are unsafe (see resolveConfig). Each request is checked in this order: Host, Origin, CORS preflight,
+ * token, then routed. A failure to listen (port taken) is only logged, so the MCP server over stdio keeps working.
+ */
 export function startHttpBridge(options: HttpBridgeOptions = {}) {
   const config = resolveConfig(options);
 

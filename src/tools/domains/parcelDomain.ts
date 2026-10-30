@@ -2,6 +2,16 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The parcel domain file: `civil3d_parcel` (sites and parcels) and its aliases `civil3d_parcel_create`,
+ * `civil3d_parcel_edit`, `civil3d_parcel_lot_line_adjust` and `civil3d_parcel_report`. The plugin side is
+ * ParcelEditingCommands.cs, which reaches sites and parcels partly by reflection because those members vary between
+ * Civil 3D releases; domainRuntime.ts turns these definitions into validated, approval-checked MCP tools.
+ *
+ * Every action forwards to one plugin method. Areas are worked out by the plugin as if the drawing were in feet
+ * (`targetAreaSqFt`, the report's `units`), so answers for a drawing in meters need care.
+ */
+
 const GenericParcelResponseSchema = z.object({}).passthrough();
 
 const ParcelSiteSchema = z.object({
@@ -42,6 +52,10 @@ const ParcelDetailResponseSchema = z.object({
   style: z.string().optional(),
 }).passthrough();
 
+/**
+ * Every argument any `civil3d_parcel` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalParcelInputShape = {
   action: z.enum([
     "list_sites",
@@ -86,6 +100,11 @@ const ParcelGetArgsSchema = z.object({
   parcelName: z.string(),
 });
 
+/**
+ * `create`: a parcel in site `siteName` from either `sourceHandle` (the hex handle of a closed entity, such as a
+ * polyline, used as the boundary) or `points` (at least three [x, y] vertices in drawing units, closed by the
+ * plugin). The plugin refuses a call with neither.
+ */
 const ParcelCreateArgsSchema = z.object({
   action: z.literal("create"),
   siteName: z.string(),
@@ -106,6 +125,11 @@ const ParcelEditArgsSchema = z.object({
   description: z.string().optional(),
 });
 
+/**
+ * `lot_line_adjust`: slide a lot line until the parcel reaches `targetAreaSqFt`, within `tolerance` (default 1, in
+ * the drawing's square units). `lotLineHandle` picks which lot line moves. The answer's `converged` says whether the
+ * area ended within tolerance; when it is false, check the parcel in Civil 3D.
+ */
 const ParcelLotLineAdjustArgsSchema = z.object({
   action: z.literal("lot_line_adjust"),
   siteName: z.string(),
@@ -115,6 +139,11 @@ const ParcelLotLineAdjustArgsSchema = z.object({
   tolerance: z.number().positive().optional(),
 });
 
+/**
+ * `report`: area, perimeter and (with `includeCoordinates`) vertices of the named parcels, or of every parcel in
+ * the site. With `outputPath` the rows are also written to a .csv inside the export roots (FileBoundary.cs; an
+ * existing file only with `overwrite`). `units` converts the area from square feet: sqft, acres, sqm or ha.
+ */
 const ParcelReportArgsSchema = z.object({
   action: z.literal("report"),
   siteName: z.string(),
@@ -210,6 +239,10 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // NOTE: AdjustParcelLotLineAsync calls `AdjustLotLine` / `SlideAngle` on the Parcel by reflection, which aren't
+    // documented Parcel members, and compares the target in square feet with Parcel.Area in drawing units without
+    // converting (TargetAreaToDrawingUnits returns its input). When neither method exists nothing moves, and in a
+    // drawing in meters `converged` compares square feet with square meters.
     lot_line_adjust: {
       action: "lot_line_adjust",
       inputSchema: ParcelLotLineAdjustArgsSchema,
@@ -228,6 +261,9 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // NOTE: with `outputPath` this writes a CSV file, yet it is declared query/analyze/generate and safeForRetry, so
+    // approvalPolicy.ts asks no approval for the write (FileBoundary.cs still refuses paths outside the export roots
+    // and overwriting without `overwrite`). Its area conversion (ConvertArea) also assumes the drawing is in feet.
     report: {
       action: "report",
       inputSchema: ParcelReportArgsSchema,

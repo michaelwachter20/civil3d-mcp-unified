@@ -3,12 +3,26 @@ import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import { lookupFrameworkStandards } from "../../standards/FrameworkStandardsService.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The standards domain file: `civil3d_standards` and its aliases `civil3d_label`, `civil3d_style`,
+ * `civil3d_standards_lookup`, `civil3d_qc_check_labels`, `civil3d_qc_check_drawing_standards` and
+ * `civil3d_qc_fix_drawing_standards`. Labels are LabelCommands.cs, styles StyleCommands.cs, the label and layer checks
+ * and the layer fix QcCommands.cs; domainRuntime.ts turns these definitions into validated, approval-checked MCP
+ * tools.
+ *
+ * Every drawing action forwards to one plugin method. `lookup` is the exception: it never calls the plugin and
+ * searches the framework standards data in Node (src/standards/FrameworkStandardsService.ts).
+ */
+
+/** A plan point {x, y} in drawing units: where a surface spot label goes. */
 const LabelPointSchema = z.object({
   x: z.number(),
   y: z.number(),
 });
 
+/** Object types whose labels `label_list` can read. */
 const LabelListObjectTypeSchema = z.enum(["alignment", "profile", "surface", "pipe_network"]);
+/** Object types whose style collections `style_list` / `style_get` can read (StyleCommands.cs). */
 const StyleObjectTypeSchema = z.enum([
   "surface",
   "alignment",
@@ -29,6 +43,10 @@ const StyleSummarySchema = z.object({
   isDefault: z.boolean(),
 });
 
+/**
+ * Every argument any `civil3d_standards` action takes, all optional except `action`: the one input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ */
 const canonicalStandardsInputShape = {
   action: z.enum([
     "label_list",
@@ -71,6 +89,12 @@ const LabelListArgsSchema = z.object({
   objectName: z.string(),
 });
 
+/**
+ * `label_add`: which `labelType` works with which object, and whether it needs `station` or `point`, is decided by
+ * LabelCommands.AddLabelAsync (alignment/profile station labels or a label set, surface spot elevations, pipe and
+ * structure plan labels); anything else comes back as CIVIL3D.INVALID_INPUT listing what is supported. A missing or
+ * unknown `labelStyle` falls back to the first style rather than failing.
+ */
 const LabelAddArgsSchema = z.object({
   action: z.literal("label_add"),
   objectType: z.string(),
@@ -97,6 +121,7 @@ const StyleGetArgsSchema = z.object({
   styleName: z.string(),
 });
 
+/** `lookup`: free-text `query`, a `topic` and/or `tags` filter over the framework standards; at most 20 results. */
 const StandardsLookupArgsSchema = z.object({
   action: z.literal("lookup"),
   query: z.string().optional(),
@@ -119,6 +144,13 @@ const QcDrawingStandardsArgsSchema = z.object({
   checkColors: z.boolean().optional(),
 });
 
+/**
+ * `fix_drawing_standards`: renames and restyles layers (never 0, Defpoints or xref layers). Spaces become underscores
+ * (`fixSpaces`, default on), `layerPrefix` is added where missing, names are cut to `maxNameLength` (default 64).
+ * `colorIndex` (ACI 1-255) and `lineweight` (AutoCAD's LineWeight value, hundredths of a millimetre, e.g. 25 for
+ * 0.25 mm) go on the layers that break the matching check, or on all of them with `applyToAllLayers`. `dryRun` only
+ * lists the changes.
+ */
 const QcFixDrawingStandardsArgsSchema = z.object({
   action: z.literal("fix_drawing_standards"),
   layerPrefix: z.string().optional(),

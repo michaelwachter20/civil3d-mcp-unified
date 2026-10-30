@@ -5,8 +5,22 @@ using Autodesk.Civil.DatabaseServices;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// Plugin methods behind civil3d_corridor (src/tools/domains/corridorDomain.ts): <c>listCorridors</c>,
+/// <c>getCorridor</c>, <c>rebuildCorridor</c>, <c>getCorridorSurfaces</c>, <c>getCorridorFeatureLines</c> and
+/// <c>computeCorridorVolumes</c>. Corridor creation and editing live elsewhere (CorridorCreationCommands and friends).
+/// <para>
+/// The rebuild is the one long operation: it runs as a background job (JobRegistry), so the call answers at once
+/// with a job id and the caller polls civil3d_job. Everything else is a plain read. Volumes are in the drawing's
+/// volume units (<c>CivilObjectUtils.VolumeUnits</c>).
+/// </para>
+/// </summary>
 public static class CorridorCommands
 {
+  /// <summary>
+  /// Every corridor in the drawing: name, handle, baseline, region and corridor-surface counts, whether it is out of
+  /// date, and its last build time when Civil 3D exposes one. Read only.
+  /// </summary>
   public static Task<object?> ListCorridorsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -25,6 +39,11 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>
+  /// One corridor by <c>name</c>: style, layer, state, its baselines (alignment, profile and regions with assembly
+  /// and station range), corridor surfaces and the number of feature line codes. Read only.
+  /// </summary>
+  // NOTE: each region's "frequency" is always 0: the assembly insertion frequency is never read.
   public static Task<object?> GetCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -74,6 +93,13 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>
+  /// Starts rebuilding corridor <c>name</c> as a background job and answers at once with its <c>jobId</c> (state
+  /// "running"); civil3d_job <c>status</c> reports progress and the result. The rebuild itself is one
+  /// <c>CivilExecution.WriteAsync</c> (one undo step) on the drawing that was active when the job started; another
+  /// drawing active by then makes the job fail with nothing changed. Cancelling only works before
+  /// <c>Corridor.Rebuild()</c> starts or is noticed after it returns, because Civil 3D's rebuild can't be interrupted.
+  /// </summary>
   public static Task<object?> RebuildCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -171,6 +197,7 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>The corridor surfaces of corridor <c>name</c>: name, the built surface's handle (null if not built) and boundary names. Read only.</summary>
   public static Task<object?> GetCorridorSurfacesAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -185,6 +212,7 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>The feature line codes of corridor <c>name</c> (code names only, not their geometry). Read only.</summary>
   public static Task<object?> GetCorridorFeatureLinesAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -199,6 +227,12 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>
+  /// Cut, fill and net volume between one of corridor <c>name</c>'s surfaces (<c>corridorSurface</c>, which must be
+  /// built) and a drawing surface (<c>referenceSurface</c>), in the drawing's volume units, from a temporary TIN
+  /// volume surface (see <see cref="ComputeVolumeBetweenSurfaces"/>). CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// corridor surface, CIVIL3D.API_ERROR for one that isn't built.
+  /// </summary>
   public static Task<object?> ComputeCorridorVolumesAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -268,6 +302,14 @@ public static class CorridorCommands
     return CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Surface>(transaction, definition.SurfaceId, OpenMode.ForRead);
   }
 
+  /// <summary>
+  /// Unadjusted cut, fill and net volume of <paramref name="comparisonSurface"/> against
+  /// <paramref name="baseSurface"/>, from a TIN volume surface with a throwaway name. It is created inside the read
+  /// transaction, which is never committed, so the temporary surface is rolled back and the drawing keeps nothing.
+  /// </summary>
+  // NOTE: this creates an object inside CivilExecution.ReadAsync, which runs without a document lock and relies on
+  // the uncommitted transaction to discard it; if Civil 3D insists on a lock for TinVolumeSurface.Create it would
+  // fail with a lock violation (QuantityCommands.cs uses the same pattern).
   private static Dictionary<string, object?> ComputeVolumeBetweenSurfaces(
     Database database,
     Transaction transaction,

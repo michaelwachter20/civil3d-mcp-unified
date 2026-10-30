@@ -2,6 +2,18 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The section domain: `civil3d_section` (sample lines, section data, section views) and its aliases
+ * `civil3d_section_view_create`, `_view_list`, `_view_update_style`, `_view_group_create` and `_view_export`. The
+ * plugin side is SectionCommands.cs; domainRuntime.ts turns the definition at the bottom into validated,
+ * approval-checked MCP tools. Every action forwards to one plugin method; the only work in Node is splitting
+ * `insertionPoint` into the plugin's `insertionX` / `insertionY`.
+ *
+ * Sample line groups are always looked up under an alignment, by name. Stations, offsets and widths are in drawing
+ * units. Section view placement (rows, gaps) follows the drawing's draft placement settings, which the .NET API
+ * doesn't let a call change.
+ */
+
 // ─── Shared schemas ───────────────────────────────────────────────────────────
 
 const GenericSectionResponseSchema = z.object({}).passthrough();
@@ -17,6 +29,12 @@ const SectionListSampleLinesResponseSchema = z.object({
   sampleLineGroups: z.array(SampleLineGroupSchema),
 });
 
+/**
+ * The section at one sample line: per sampled surface, matching lists of offsets and elevations.
+ * NOTE: the plugin's getSectionData always answers with an empty `surfaces` list (it finds the sample line but never
+ * reads its sections), so this only confirms the sample line exists; view_export is the action that reads section
+ * points.
+ */
 const SectionDataResponseSchema = z.object({
   station: z.number(),
   surfaces: z.array(z.object({
@@ -37,6 +55,7 @@ const SectionListSampleLinesArgsSchema = z.object({
   alignmentName: z.string(),
 });
 
+/** `station` must match an existing sample line's station (to 0.0001); it is not interpolated. */
 const SectionGetDataArgsSchema = z.object({
   action: z.literal("get_section_data"),
   alignmentName: z.string(),
@@ -44,6 +63,12 @@ const SectionGetDataArgsSchema = z.object({
   station: z.number(),
 });
 
+/**
+ * A new sample line group `groupName` on the alignment, with one sample line per station: the given `stations`, or
+ * every `interval` from the alignment's start station. Each line runs `leftWidth` left and `rightWidth` right of the
+ * alignment and is named "SL-<station>". `surfaces` names the sources to sample; an empty list samples every source.
+ * The plugin always creates a new group; it doesn't add lines to an existing one.
+ */
 const SectionCreateSampleLinesArgsSchema = z.object({
   action: z.literal("create_sample_lines"),
   alignmentName: z.string(),
@@ -63,6 +88,11 @@ const SectionCreateSampleLinesArgsSchema = z.object({
   }
 });
 
+/**
+ * Section views for every sample line of the group, placed from `insertionPoint` [x, y] in model space. Style and
+ * band set are names (the drawing's defaults when left out); the offsets and station range narrow what the views
+ * show.
+ */
 const SectionViewCreateArgsSchema = z.object({
   action: z.literal("view_create"),
   alignmentName: z.string(),
@@ -82,6 +112,10 @@ const SectionViewListArgsSchema = z.object({
   sampleLineGroupName: z.string().optional(),
 });
 
+/**
+ * Needs `style` or `bandSetStyle` (the plugin refuses a call with neither). `applyToAll` is true unless set; false changes only
+ * the group's first section view.
+ */
 const SectionViewUpdateStyleArgsSchema = z.object({
   action: z.literal("view_update_style"),
   alignmentName: z.string(),
@@ -100,6 +134,11 @@ const SectionViewGroupCreateArgsSchema = z.object({
   plotStyle: z.string().optional(),
 });
 
+/**
+ * Writes the group's section points to a CSV file (Station, Source, Offset and, unless `includeElevations` is false,
+ * Elevation), optionally only between two stations. Despite the name it exports data, not views. The path goes
+ * through FileBoundary's export roots in the plugin and an existing file is kept unless `overwrite` is true.
+ */
 const SectionViewExportArgsSchema = z.object({
   action: z.literal("view_export"),
   alignmentName: z.string(),
@@ -113,6 +152,10 @@ const SectionViewExportArgsSchema = z.object({
 
 // ─── Canonical input shape ────────────────────────────────────────────────────
 
+/**
+ * Every argument any `civil3d_section` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects above say what each action needs and validate the call.
+ */
 const canonicalSectionInputShape = {
   action: z.enum([
     "list_sample_lines",
@@ -311,6 +354,7 @@ export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // The canonical tool first; the view aliases are listed to MCP clients only with CIVIL3D_ENABLE_TOOL_ALIASES=true.
   exposures: [
     {
       toolName: "civil3d_section",

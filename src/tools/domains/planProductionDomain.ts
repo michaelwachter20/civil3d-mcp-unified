@@ -2,6 +2,21 @@ import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 
+/**
+ * The plan production domain: `civil3d_plan_production` and one alias per action (`civil3d_sheet_set_list`,
+ * `civil3d_sheet_add`, `civil3d_sheet_publish_pdf`, ...). The plugin side is PlanProductionCommands.cs, which reaches
+ * Civil 3D's sheet objects by reflection because the managed API doesn't document them; domainRuntime.ts turns these
+ * definitions into validated, approval-checked MCP tools. Every action forwards to one plugin method; nothing runs in
+ * Node.
+ *
+ * Several plugin methods refuse by design and change nothing: `createSheetSet`, `createPlanProfileSheet`,
+ * `publishSheetPdf` and `exportSheetSet` check their arguments (and the output path, through FileBoundary) and then
+ * throw CIVIL3D.API_ERROR, because there is no documented managed API (or no way yet to verify the PDF was written).
+ * The working actions are the reads, `sheet_add`, `sheet_set_title_block`, `plan_profile_sheet_update_alignment` and
+ * the viewport actions. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`, so it refuses too.)
+ */
+
+/** One sheet in a sheet set, as the list and info answers give it. */
 const SheetSummarySchema = z.object({
   name: z.string(),
   number: z.string(),
@@ -29,6 +44,11 @@ const SheetDetailSchema = z.object({
 
 const GenericPlanProductionResponseSchema = z.object({}).passthrough();
 
+/**
+ * Every argument any `civil3d_plan_production` action takes, all optional except `action`: the one input schema MCP
+ * clients see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
+ * `plan_profile_sheet_create` is missing from the enum on purpose (see its action below).
+ */
 const canonicalPlanProductionInputShape = {
   action: z.enum([
     "sheet_set_list",
@@ -99,6 +119,7 @@ const SheetGetPropertiesArgsSchema = z.object({
   sheetName: z.string(),
 });
 
+/** `titleBlockPath` is a .dwg or .dwt file; the plugin resolves it through FileBoundary's reference roots. */
 const SheetSetTitleBlockArgsSchema = z.object({
   action: z.literal("sheet_set_title_block"),
   sheetSetName: z.string(),
@@ -125,6 +146,11 @@ const PlanProfileSheetUpdateAlignmentArgsSchema = z.object({
   profileName: z.string().optional(),
 });
 
+/**
+ * A new paper-space viewport on a layout. Center, width and height are in paper units (the plugin defaults to a
+ * viewport 8 by 6 centered at 0,0); `scale` is the drawing units per paper unit (40 for 1" = 40'), stored as a custom
+ * scale of 1/scale. `viewName` applies a named model view to the viewport when one exists.
+ */
 const SheetViewCreateArgsSchema = z.object({
   action: z.literal("sheet_view_create"),
   layoutName: z.string(),
@@ -136,6 +162,12 @@ const SheetViewCreateArgsSchema = z.object({
   scale: z.number().optional(),
 });
 
+/**
+ * `scale` as in sheet_view_create (40 for 1" = 40'); without `viewportHandle` the plugin takes the first viewport in
+ * the layout.
+ * NOTE: the plugin also falls back to the first viewport when `viewportHandle` matches none, instead of refusing, and
+ * the first viewport in a layout is usually AutoCAD's overall paper-space viewport, not a model view.
+ */
 const SheetViewSetScaleArgsSchema = z.object({
   action: z.literal("sheet_view_set_scale"),
   layoutName: z.string(),
@@ -261,6 +293,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Not in the canonical tool's supportedActions and has no alias, so only the orchestrator reaches it; the plugin
+    // always refuses (CIVIL3D.API_ERROR, nothing created) because there is no documented plan/profile sheet factory.
     plan_profile_sheet_create: {
       action: "plan_profile_sheet_create",
       inputSchema: PlanProfileSheetCreateArgsSchema,
@@ -287,6 +321,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // NOTE: the plugin sets the sheet's alignment (and profile) id by trying property names through reflection and
+    // ignores whether any of them took, so it can answer `updated: true` when nothing changed.
     plan_profile_sheet_update_alignment: {
       action: "plan_profile_sheet_update_alignment",
       inputSchema: PlanProfileSheetUpdateAlignmentArgsSchema,
@@ -340,6 +376,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // sheet_publish_pdf and sheet_set_export: the plugin checks the output path (FileBoundary: export roots, .pdf,
+    // no overwrite without `overwrite: true`) and then refuses with CIVIL3D.API_ERROR; no file is written.
     sheet_publish_pdf: {
       action: "sheet_publish_pdf",
       inputSchema: SheetPublishPdfArgsSchema,
@@ -381,6 +419,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // The canonical tool first; the rest are one-action aliases, listed to MCP clients only with
+  // CIVIL3D_ENABLE_TOOL_ALIASES=true.
   exposures: [
     {
       toolName: "civil3d_plan_production",

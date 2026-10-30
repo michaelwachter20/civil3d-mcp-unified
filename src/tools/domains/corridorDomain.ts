@@ -3,10 +3,23 @@ import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
 import { JobLaunchResponseSchema } from "./sharedSchemas.js";
 
+/**
+ * The corridor domain: `civil3d_corridor` and its aliases (`civil3d_corridor_summary`,
+ * `civil3d_corridor_target_mapping_get/set`, `civil3d_corridor_region_add/delete`). The reads, the rebuild and the
+ * volumes are CorridorCommands.cs; target mappings and regions are CorridorEditingCommands.cs. domainRuntime.ts turns
+ * the definition at the bottom into validated, approval-checked MCP tools.
+ *
+ * Every action forwards to one plugin method except `summary`, which runs in Node (see the definition's comment).
+ * `rebuild` comes back at once with a job id (the plugin rebuilds in the background); the region and target-mapping
+ * edits rebuild the corridor themselves, inside their own write, before they answer. The aliases name the corridor
+ * `corridorName` and rename it to `name`; the plugin's editing methods take `corridorName` again.
+ */
+
 // ─── Shared schemas ───────────────────────────────────────────────────────────
 
 const GenericCorridorResponseSchema = z.object({}).passthrough();
 
+/** A corridor's build state as the plugin reports it: built, out of date (needs a rebuild), or failed to build. */
 const CorridorStateSchema = z.enum(["built", "out_of_date", "error"]);
 
 const CorridorSummarySchema = z.object({
@@ -23,6 +36,7 @@ const CorridorListResponseSchema = z.object({
   corridors: z.array(CorridorSummarySchema),
 });
 
+/** One region of a baseline: the assembly applied between two stations, sampled every `frequency` drawing units. */
 const CorridorRegionSchema = z.object({
   name: z.string(),
   assemblyName: z.string(),
@@ -71,6 +85,11 @@ const CorridorFeatureLinesResponseSchema = z.object({
 // contract is explicit.
 const CorridorRebuildResponseSchema = JobLaunchResponseSchema;
 
+/**
+ * Cut, fill and net volume between a corridor surface and a reference surface, in the drawing's volume units
+ * (`units.volume`). The plugin takes Civil 3D's unadjusted volumes (no cut or fill factors) from a temporary TIN
+ * volume surface.
+ */
 const CorridorVolumesResponseSchema = z.object({
   cutVolume: z.number(),
   fillVolume: z.number(),
@@ -83,6 +102,11 @@ const CorridorVolumesResponseSchema = z.object({
   }),
 });
 
+/**
+ * What `summary` returns: the plugin's corridor detail and surface list as they came, the volumes (null when they
+ * were skipped), and totals worked out in Node. `totalRegionLength` is the sum of every region's end minus start
+ * station, in drawing units.
+ */
 const CorridorFullSummaryResponseSchema = z.object({
   corridor: CorridorDetailResponseSchema,
   surfaceInventory: CorridorSurfacesResponseSchema,
@@ -140,6 +164,10 @@ const CorridorSummaryArgsSchema = z.object({
   referenceSurface: z.string().optional(),
 });
 
+/**
+ * Baselines and regions are picked by zero-based index (as get lists them), not by name. Without `regionIndex` the
+ * read lists every region of the baseline; `baselineIndex` defaults to 0, the first baseline.
+ */
 const CorridorTargetMappingGetArgsSchema = z.object({
   action: z.literal("target_mapping_get"),
   name: z.string(),
@@ -147,6 +175,11 @@ const CorridorTargetMappingGetArgsSchema = z.object({
   baselineIndex: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * Sets subassembly targets on one region (`regionIndex` and `baselineIndex` default to 0): each entry names the
+ * subassembly target parameter and the surface, alignment, profile or polyline to aim it at. The plugin rebuilds the
+ * corridor afterwards.
+ */
 const CorridorTargetMappingSetArgsSchema = z.object({
   action: z.literal("target_mapping_set"),
   name: z.string(),
@@ -159,6 +192,11 @@ const CorridorTargetMappingSetArgsSchema = z.object({
   })),
 });
 
+/**
+ * A new region on a baseline (default the first): an assembly by name over a station range. `frequency` is the
+ * sampling interval along tangents in drawing units (10 when left out); the curve and knee-point frequencies default
+ * to the same value. The plugin rebuilds the corridor afterwards.
+ */
 const CorridorRegionAddArgsSchema = z.object({
   action: z.literal("region_add"),
   name: z.string(),
@@ -180,6 +218,10 @@ const CorridorRegionDeleteArgsSchema = z.object({
 
 // ─── Canonical input shape ────────────────────────────────────────────────────
 
+/**
+ * Every argument any `civil3d_corridor` action takes, all optional except `action`: the one input schema MCP clients
+ * see. The per-action `*ArgsSchema` objects above say what each action needs and validate the call.
+ */
 const canonicalCorridorInputShape = {
   action: z.enum([
     "list",
@@ -293,6 +335,11 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // `corridorSurface` is the name of one of the corridor's own surfaces (get_surfaces), `referenceSurface` any
+    // surface in the drawing (usually existing ground).
+    // NOTE: the plugin creates its temporary TIN volume surface inside a read (CivilExecution.ReadAsync: no document
+    // lock, transaction never committed). It relies on the uncommitted transaction to discard the surface; creating an
+    // object without a lock may also fail on some setups.
     compute_volumes: {
       action: "compute_volumes",
       inputSchema: CorridorComputeVolumesArgsSchema,
@@ -326,6 +373,8 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
           await appClient.sendCommand("getCorridorSurfaces", { name: args.name }),
         );
 
+        // Volumes need both surfaces: the corridor surface asked for, else the corridor's only surface; the reference
+        // surface is never guessed. Without both, the volumes are skipped rather than failing the summary.
         const selectedCorridorSurface = (args.corridorSurface as string | undefined)
           ?? (surfaceInventory.surfaces.length === 1 ? surfaceInventory.surfaces[0].name : null);
         const referenceSurface = (args.referenceSurface as string | undefined) ?? null;
@@ -444,6 +493,8 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
   },
+  // The canonical tool first; the aliases (listed only with CIVIL3D_ENABLE_TOOL_ALIASES=true) take `corridorName`
+  // and pass it on as `name`.
   exposures: [
     {
       toolName: "civil3d_corridor",
