@@ -5,8 +5,10 @@ on:
   pull_request:
 
 jobs:
+  # Windows, like Civil 3D and the Release workflow: job paths are Windows paths, and on Linux a backslash in a
+  # test's "Packages\2026-02\C-101.dwg" is part of the file's name rather than a folder.
   node:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
