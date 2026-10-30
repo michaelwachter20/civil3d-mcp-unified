@@ -268,7 +268,18 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
-  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text and pipe arithmetic checks passed.");
+  // What counts as the AI making points (PointCreationRules): those ask the user in Civil 3D first.
+  Assert(PointCreationRules.ScriptAddsPoints("var id = CivilDoc.CogoPoints.Add(new Point3d(e, n, z), true);")
+         && PointCreationRules.ScriptAddsPoints("var pts = CivilDoc.CogoPoints;\nforeach (var p in list) pts.Add(p, true);"),
+    "A script adding COGO points, directly or through a variable, counts.");
+  Assert(!PointCreationRules.ScriptAddsPoints("foreach (ObjectId id in CivilDoc.CogoPoints) Count++;")
+         && !PointCreationRules.ScriptAddsPoints("names.Add(alignment.Name);"),
+    "A script that only reads points, or adds to a list without touching points, doesn't count.");
+  Assert(PointCreationRules.IsCreateCommand("CREATEPOINTS") && PointCreationRules.IsCreateCommand("createpoints")
+         && !PointCreationRules.IsCreateCommand("IMPORTPOINTS"),
+    "CREATEPOINTS asks; IMPORTPOINTS (Civil 3D's own importer) doesn't.");
+
+  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text, pipe arithmetic and point creation checks passed.");
 }
 finally
 {

@@ -52,6 +52,8 @@ const canonicalPointInputShape = {
     "create",
     "list_groups",
     "import",
+    "import_file",
+    "list_formats",
     "delete",
     "group_create",
     "group_update",
@@ -67,6 +69,9 @@ const canonicalPointInputShape = {
   startNumber: z.number().optional(),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
   data: z.string().optional(),
+  path: z.string().optional().describe("import_file: the point file, inside the import roots"),
+  fileFormat: z.string().optional().describe("import_file: a Civil 3D point file format name, e.g. \"PNEZD (comma delimited)\" (list_formats)"),
+  pointGroup: z.string().optional().describe("import_file: put the imported points in this point group (created when missing)"),
   targetSurface: z.string().optional(),
   keepPointNumbers: z.boolean().optional().describe("import: keep each point's number from the file when it is free in the drawing (default true)"),
   pointNumbers: z.array(z.number().int().positive()).optional(),
@@ -115,6 +120,17 @@ const PointImportArgsSchema = z.object({
   data: z.string(),
   targetSurface: z.string().optional(),
   keepPointNumbers: z.boolean().optional(),
+});
+
+const PointImportFileArgsSchema = z.object({
+  action: z.literal("import_file"),
+  path: z.string(),
+  fileFormat: z.string(),
+  pointGroup: z.string().optional(),
+});
+
+const PointListFormatsArgsSchema = z.object({
+  action: z.literal("list_formats"),
 });
 
 const PointDeleteArgsSchema = z.object({
@@ -247,6 +263,36 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Civil 3D's own importer (CogoPoints.ImportPoints), the way points from a file come in: no question in Civil 3D.
+    // create, import (typed-in data) and scripts that add points ask the user there first (PointCreationGate.cs).
+    import_file: {
+      action: "import_file",
+      inputSchema: PointImportFileArgsSchema,
+      responseSchema: PointMutationResponseSchema,
+      capabilities: ["create", "import"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["importPointFile"],
+      execute: async (args) => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("importPointFile", {
+          path: args.path,
+          format: args.fileFormat,
+          pointGroup: args.pointGroup,
+        }),
+      ),
+    },
+    list_formats: {
+      action: "list_formats",
+      inputSchema: PointListFormatsArgsSchema,
+      responseSchema: PointMutationResponseSchema,
+      capabilities: ["query"],
+      requiresActiveDrawing: true,
+      safeForRetry: true,
+      pluginMethods: ["listPointFileFormats"],
+      execute: async () => await withApplicationConnection(
+        async (appClient) => await appClient.sendCommand("listPointFileFormats", {}),
+      ),
+    },
     delete: {
       action: "delete",
       inputSchema: PointDeleteArgsSchema,
@@ -353,9 +399,9 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_point",
       displayName: "Civil 3D Point",
-      description: "Reads, creates, imports, transforms, exports, and deletes Civil 3D COGO points and point groups through a single domain tool.",
+      description: "Reads, creates, imports, transforms, exports, and deletes Civil 3D COGO points and point groups through a single domain tool. Points from a file: always import_file (Civil 3D's own importer; list_formats gives the format names). create, and import with typed-in data, ask the user in Civil 3D first (a window they answer, a no after 60 s) and are only for points the user asked for, never survey data.",
       inputShape: canonicalPointInputShape,
-      supportedActions: ["list", "get", "create", "list_groups", "import", "delete", "group_create", "group_update", "group_delete", "export", "transform"],
+      supportedActions: ["list", "get", "create", "list_groups", "import", "import_file", "list_formats", "delete", "group_create", "group_update", "group_delete", "export", "transform"],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
         args: rawArgs,

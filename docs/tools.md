@@ -1140,6 +1140,33 @@ Imports points from a structured dataset.
 | keepPointNumbers | boolean                                        | no       | Keep each point's number from the file when it is free in the drawing (default true); the answer lists any renumbered |
 | targetSurface | string                                            | no       | Not implemented: refused if given                                   |
 
+Points typed in this way ask the user in Civil 3D first (see "Who may make points" below). For a point file use
+`import_file`.
+
+#### `import_file`
+
+Imports a point file with Civil 3D's own importer (`CogoPoints.ImportPoints`), as Import Points does by hand. No
+question in Civil 3D: this is how points from a file come in.
+
+| Parameter  | Type   | Required | Description                                                                 |
+| ---------- | ------ | -------- | --------------------------------------------------------------------------- |
+| action     | `"import_file"` | yes | —                                                                        |
+| path       | string | yes      | The point file, inside the import roots (.txt, .csv, .pnt, .xyz, .nez, .prn, .asc, .dat) |
+| fileFormat | string | yes      | A Civil 3D point file format name, e.g. `PNEZD (comma delimited)` (`list_formats`) |
+| pointGroup | string | no       | Put the points in this point group (created when missing)                   |
+
+#### `list_formats`
+
+The drawing's point file format names, for `import_file`.
+
+#### Who may make points
+
+Points from a file come in through `import_file` only. Every other way of making COGO points asks the user in a
+window in Civil 3D first: `create`, `import` with typed-in data, C# run through `civil3d_execute` or a saved script
+that uses the point collection and calls `Add`, and the CREATEPOINTS commands. "Allow" goes ahead; "Don't allow", or
+no answer within 60 seconds, creates nothing (`CIVIL3D.USER_DECLINED`). The AI can't answer the window itself.
+`CIVIL3D_POINT_CREATION=off` refuses them all without asking; `allow` skips the window (unattended test setups only).
+
 #### `delete`
 
 Deletes points by number or range.

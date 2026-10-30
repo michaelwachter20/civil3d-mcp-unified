@@ -55,7 +55,7 @@ public static class PointCommands
 
   /// <summary>Creates a point for each of <c>points</c> ({x, y, z, description}); numbers come from the drawing's next
   /// point number unless <c>startNumber</c> is given, then they run startNumber, startNumber + 1, ...</summary>
-  public static Task<object?> CreateCogoPointsAsync(JsonObject? parameters)
+  public static async Task<object?> CreateCogoPointsAsync(JsonObject? parameters)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
     if (pointsNode == null || pointsNode.Count == 0)
@@ -64,8 +64,12 @@ public static class PointCommands
     }
 
     var startNumber = PluginRuntime.GetOptionalInt(parameters, "startNumber");
+    var first = pointsNode.OfType<JsonObject>().FirstOrDefault();
+    await PointCreationGate.RequireAsync($"{pointsNode.Count} COGO point{(pointsNode.Count == 1 ? "" : "s")}"
+      + (first != null ? $", the first at E {first["x"]}, N {first["y"]}, elevation {first["z"]}" : "")
+      + " (civil3d_point create).");
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    return await CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var createdNumbers = new List<uint>();
       var collection = civilDoc.CogoPoints;
@@ -108,7 +112,7 @@ public static class PointCommands
   /// the drawing's next number, and the answer lists each one renumbered. <c>targetSurface</c> is refused (not
   /// implemented). The whole file is read before anything is created, so a bad line creates no points.
   /// </summary>
-  public static Task<object?> ImportCogoPointsAsync(JsonObject? parameters)
+  public static async Task<object?> ImportCogoPointsAsync(JsonObject? parameters)
   {
     var format = PluginRuntime.GetRequiredString(parameters, "format");
     var data = PluginRuntime.GetRequiredString(parameters, "data");
@@ -121,9 +125,18 @@ public static class PointCommands
         "Importing COGO points directly into a target surface is not implemented. No points were imported.");
     }
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    var points = PointText.Parse(data, format).ToList();
+    if (points.Count == 0)
     {
-      var points = PointText.Parse(data, format).ToList();
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "No points in 'data'.");
+    }
+
+    await PointCreationGate.RequireAsync($"{points.Count} COGO point{(points.Count == 1 ? "" : "s")} typed in by the AI "
+      + $"({format}), the first at E {points[0].X}, N {points[0].Y}, elevation {points[0].Z}"
+      + " (civil3d_point import with data, not a file).");
+
+    return await CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
       var createdNumbers = new List<uint>();
       var renumbered = new List<Dictionary<string, object?>>();
       var usedInFile = new HashSet<uint>();
@@ -155,6 +168,77 @@ public static class PointCommands
         ["targetSurface"] = null,
       };
     });
+  }
+
+  /// <summary>
+  /// Imports a point file with Civil 3D's own importer (CogoPoints.ImportPoints, what Import Points does by hand):
+  /// <c>path</c> (inside the import roots, FileBoundary), <c>format</c> by its name in the drawing's point file
+  /// formats (listPointFileFormats: "PNEZD (comma delimited)"...), and optionally <c>pointGroup</c> to put the points
+  /// in (created when missing). Civil 3D's settings decide point numbers and duplicates, as in its dialog. No
+  /// question is asked: this is the way points from a file are meant to come in (PointCreationGate).
+  /// </summary>
+  public static Task<object?> ImportPointFileAsync(JsonObject? parameters)
+  {
+    var path = FileBoundary.ResolveImportPath(PluginRuntime.GetRequiredString(parameters, "path"),
+      ".txt", ".csv", ".pnt", ".xyz", ".nez", ".prn", ".asc", ".dat");
+    var formatName = PluginRuntime.GetRequiredString(parameters, "format");
+    var groupName = PluginRuntime.GetOptionalString(parameters, "pointGroup");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var formats = PointFileFormatCollection.GetPointFileFormats(database);
+      PointFileFormat format;
+      try
+      {
+        format = formats[formatName];
+      }
+      catch (Exception)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"No point file format named '{formatName}' in this drawing. Its formats: {string.Join("; ", FormatNames(formats))}.");
+      }
+
+      var before = civilDoc.CogoPoints.Count;
+      uint imported;
+      if (!string.IsNullOrWhiteSpace(groupName))
+      {
+        var groupId = civilDoc.PointGroups.Contains(groupName!) ? civilDoc.PointGroups[groupName!] : civilDoc.PointGroups.Add(groupName!);
+        imported = CogoPointCollection.ImportPoints(path, format, groupId);  // static: into the active drawing
+      }
+      else
+      {
+        imported = CogoPointCollection.ImportPoints(path, format);
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["path"] = path,
+        ["format"] = formatName,
+        ["imported"] = imported,
+        ["pointsBefore"] = before,
+        ["pointsAfter"] = civilDoc.CogoPoints.Count,
+        ["pointGroup"] = groupName,
+        ["importer"] = "Civil 3D (CogoPoints.ImportPoints)",
+      };
+    });
+  }
+
+  /// <summary>The drawing's point file format names, for importPointFile's <c>format</c>.</summary>
+  public static Task<object?> ListPointFileFormatsAsync()
+  {
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+      new Dictionary<string, object?> { ["formats"] = FormatNames(PointFileFormatCollection.GetPointFileFormats(database)) });
+  }
+
+  private static List<string> FormatNames(PointFileFormatCollection formats)
+  {
+    var names = new List<string>();
+    for (var i = 0; i < formats.Count; i++)
+    {
+      names.Add(formats[i].Name);
+    }
+
+    return names;
   }
 
   /// <summary>Erases the points with the given <c>pointNumbers</c>; one missing number fails the whole call, so

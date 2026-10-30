@@ -14,6 +14,10 @@ export const SERVER_INSTRUCTIONS = [
     "(they include rules and Civil 3D pitfalls learned on real drawings). Adapt a matching one instead of starting from scratch.",
   "Prefer a dedicated civil3d_* tool when one fits; use code execution for everything else.",
   "Never move, explode or edit COGO points or other survey data unless the user explicitly asks; point labels can be moved independently.",
+  "Points from a file come in only through Civil 3D's own importer: civil3d_point action=import_file (list_formats for the format " +
+    "names), never by reading the file and creating the points yourself. Make points any other way (civil3d_point create or import " +
+    "with data, C# that calls CogoPoints.Add, CREATEPOINTS) only when the user asks for those points; Civil 3D then asks the user in " +
+    "a window first, and a no (or no answer in 60 s) means nothing is created.",
   "Run a read-only check or a dryRun before changing a drawing, and make each change a single undo step.",
   "Knowledge comes in three kinds; keep each where it belongs and always ask the user before saving or changing any of it. " +
     "(1) How to drive Civil 3D: a standing rule from the user becomes a preference (civil3d_preferences action=add); a non-obvious " +

@@ -70,6 +70,8 @@ public static class CommandDispatcher
       "createCogoPoints" => PointCommands.CreateCogoPointsAsync(parameters),
       "listPointGroups" => PointCommands.ListPointGroupsAsync(),
       "importCogoPoints" => PointCommands.ImportCogoPointsAsync(parameters),
+      "importPointFile" => PointCommands.ImportPointFileAsync(parameters),
+      "listPointFileFormats" => PointCommands.ListPointFileFormatsAsync(),
       "deleteCogoPoints" => PointCommands.DeleteCogoPointsAsync(parameters),
       "listAlignments" => AlignmentCommands.ListAlignmentsAsync(),
       "getAlignment" => AlignmentCommands.GetAlignmentAsync(parameters),

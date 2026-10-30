@@ -55,6 +55,9 @@ layout, crew codes and group list in project notes, not here.
   change is the point number of a duplicate, by the offset rule.
 - Use only the files the user says are checked (e.g. the "topo" export), PNEZD comma delimited unless told otherwise.
 - Dry run first and show it (layers, groups, counts, which numbers get offset and by how much); the drawing is live.
+- The real run creates the points itself (`CogoPoints.Add`, to apply the duplicate offsets Civil 3D's importer can't),
+  so Civil 3D asks the user in a window before it runs; tell them to expect it. Without the offsets, use Civil 3D's own
+  importer instead (`civil3d_point` `import_file`).
 
 ## How to run
 1. List the day folder (crew subfolders) and read the checked files; confirm format and crew codes with the user.

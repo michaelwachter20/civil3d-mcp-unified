@@ -49,6 +49,10 @@ Read them: they are mistakes someone already made.
   completely if it throws. Keep runs focused so undo stays meaningful.
 - Never move, explode or edit COGO points, survey figures or other survey data unless the user explicitly asks.
   Point labels can be moved without touching the point.
+- Points from a file come in only through Civil 3D's own importer: `civil3d_point` `import_file` (`list_formats` for
+  the format names). Don't read a point file and create the points yourself. Any other way of making points
+  (`create`, `import` with typed-in data, C# calling `CogoPoints.Add`, `CREATEPOINTS`) is only for points the user
+  asked for, and Civil 3D asks the user in a window first; a no, or no answer in 60 seconds, creates nothing.
 - Ask before deleting objects, overwriting files, or anything that can't be undone with `UNDO`.
 - Don't print or store the licensee name: `ACADVER` contains it. Record the release (e.g. 2027) instead.
 - Long loops must check `CancellationToken`; a tight loop that never does can freeze Civil 3D.

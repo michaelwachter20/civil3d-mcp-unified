@@ -95,6 +95,20 @@ public static class CivilExecution
   /// retries until the command ends (never queuing into command context, which can
   /// hang), and fails with CIVIL3D.HOST_BUSY after the idle wait.
   /// </summary>
+  /// <summary>Runs <paramref name="action"/> on AutoCAD's main thread, outside any command or transaction: where a
+  /// window may be shown (PointCreationGate asks the user there). Runs it in place when already on that thread, or
+  /// when the main thread's context was never captured.</summary>
+  public static Task<T> OnMainThreadAsync<T>(Func<Task<T>> action)
+  {
+    var context = _mainThreadContext;
+    if (context == null || Environment.CurrentManagedThreadId == _mainThreadId)
+    {
+      return action();
+    }
+
+    return PostToMainThreadAsync(context, action);
+  }
+
   public static async Task<T> ExecuteReadOnlyAsync<T>(Func<Task<T>> action)
   {
     return await ExecuteSerializedAsync(async () =>

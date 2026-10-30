@@ -14,5 +14,6 @@
     <Compile Include="..\..\Civil3D-MCP-Plugin\RpcTcpServer.cs" Link="RpcTcpServer.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\PointText.cs" Link="PointText.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\PipeMath.cs" Link="PipeMath.cs" />
+    <Compile Include="..\..\Civil3D-MCP-Plugin\PointCreationRules.cs" Link="PointCreationRules.cs" />
   </ItemGroup>
 </Project>

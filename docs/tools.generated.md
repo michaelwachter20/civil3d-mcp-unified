@@ -123,7 +123,7 @@ Generated from the runtime manifest for civil3d-mcp 2.4.0. Do not edit by hand.
 | `civil3d_sheet_view_create` | plan_production | — | createSheetView | no |
 | `civil3d_sheet_view_set_scale` | plan_production | — | setSheetViewScale | no |
 | `civil3d_health` | plugin | — | getCivil3DHealth | yes |
-| `civil3d_point` | point | list, get, create, list_groups, import, delete, group_create, group_update, group_delete, export, transform | listCogoPoints, getCogoPoint, createCogoPoints, listPointGroups, importCogoPoints, deleteCogoPoints, createPointGroup, updatePointGroup, deletePointGroup, exportCogoPoints, transformCogoPoints | no |
+| `civil3d_point` | point | list, get, create, list_groups, import, import_file, list_formats, delete, group_create, group_update, group_delete, export, transform | listCogoPoints, getCogoPoint, createCogoPoints, listPointGroups, importCogoPoints, importPointFile, listPointFileFormats, deleteCogoPoints, createPointGroup, updatePointGroup, deletePointGroup, exportCogoPoints, transformCogoPoints | no |
 | `civil3d_point_export` | point | — | exportCogoPoints | yes |
 | `civil3d_point_group_create` | point | — | createPointGroup | no |
 | `civil3d_point_group_delete` | point | — | deletePointGroup | no |

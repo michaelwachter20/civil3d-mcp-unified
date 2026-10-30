@@ -2,6 +2,15 @@
 
 ## v2.4.0 — 2026-10-27
 
+- **Points from a file go through Civil 3D's own importer; any other point-making asks you in Civil 3D.**
+  `civil3d_point` `import_file` imports a point file with `CogoPoints.ImportPoints` and a Civil 3D point file format
+  by name (`list_formats`), as Import Points does by hand. Creating points any other way (`create`, `import` with
+  typed-in data, C# or a saved script that adds points, the CREATEPOINTS commands) first opens a window in Civil 3D
+  that only the user can answer (`PointCreationGate`); no answer in 60 s counts as no, so nothing is made after the
+  request has timed out. `CIVIL3D_POINT_CREATION=off` refuses them without asking. The server instructions and
+  `working_safely_in_civil3d` say so; the daily field import skill (which applies duplicate offsets itself) asks
+  once per run.
+
 - **Point import and export: easting and northing were swapped.** `pnezd` read the northing as X; `penz` read the
   elevation as Y and the northing as Z; the export wrote the same way, so files from it were wrong in other programs.
   Now X is the easting and Y the northing in every format, both ways (`PointText`). Numbers are read and written with
