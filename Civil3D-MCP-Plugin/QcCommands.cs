@@ -10,8 +10,8 @@ using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// QC check commands — read-only analysis tools that inspect Civil 3D objects
-/// and return structured findings. Uses reflection for API compatibility.
+/// QC check commands: analysis tools that inspect Civil 3D objects and return structured findings (two of them also
+/// write; see the remarks). Uses reflection for API compatibility.
 /// </summary>
 /// <remarks>
 /// Behind the civil3d_qc tool (src/tools/domains/qcDomain.ts), the drawing-standards actions of civil3d_standards
@@ -559,8 +559,8 @@ public static class QcCommands
   /// Sanity checks on surface <c>name</c> from its general properties: an elevation range over ten times
   /// <c>spikeThreshold</c> (default 10, so 100 units), no points, points but no triangles, a flat surface (range below
   /// <c>flatTriangleThreshold</c>), and every elevation near zero (a likely datum or units problem). The triangle count
-  /// is read from the general properties, while SurfaceCommands reads it from the TIN properties; if
-  /// "surface_no_triangles" appears on a surface that looks fine, compare with civil3d_surface get.
+  /// comes from a TIN surface's TIN properties, as in SurfaceCommands; a grid surface has none, so the no-triangles
+  /// check doesn't apply to it.
   /// </summary>
   public static Task<object?> QcCheckSurfaceAsync(JsonObject? parameters)
   {
@@ -579,7 +579,9 @@ public static class QcCommands
         var minElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MinimumElevation") ?? 0;
         var maxElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MaximumElevation") ?? 0;
         var numberOfPoints = CivilObjectUtils.GetPropertyValue<int?>(generalProperties, "NumberOfPoints") ?? 0;
-        var numberOfTriangles = CivilObjectUtils.GetPropertyValue<int?>(generalProperties, "NumberOfTriangles") ?? 0;
+        // A TIN surface's triangle count is in its TIN properties, not the general ones (which have none, so reading
+        // it there always gave 0). Null for a grid or other surface: the no-triangles check doesn't apply to it.
+        long? numberOfTriangles = surface is TinSurface tin ? Convert.ToInt64(tin.GetTinProperties().NumberOfTriangles) : null;
 
         var elevationRange = maxElevation - minElevation;
         if (elevationRange > spikeThreshold * 10)
@@ -620,7 +622,7 @@ public static class QcCommands
         }
 
         // Check for flat surface (zero elevation range with points present)
-        if (numberOfPoints > 2 && numberOfTriangles > 0 && elevationRange < flatTriangleThreshold)
+        if (numberOfPoints > 2 && (numberOfTriangles ?? 1) > 0 && elevationRange < flatTriangleThreshold)
         {
           findings.Add(new Dictionary<string, object?>
           {
@@ -1135,9 +1137,11 @@ public static class QcCommands
   }
 
   /// <summary>
-  /// Fixes layers to a standard (every layer except 0 and Defpoints): spaces to underscores (<c>fixSpaces</c>, on by
-  /// default), <c>layerPrefix</c> added where missing, names cut to <c>maxNameLength</c> (default 64), and, when given,
-  /// <c>colorIndex</c> and <c>lineweight</c> set on every one of those layers, not only the ones that break a rule.
+  /// Fixes layer names to a standard (every layer except 0, Defpoints and xref layers): spaces to underscores
+  /// (<c>fixSpaces</c>, on by default), <c>layerPrefix</c> added where missing, names cut to <c>maxNameLength</c>
+  /// (default 64). <c>colorIndex</c> and <c>lineweight</c>, when given, are set on the layers that break the
+  /// matching rule of qcCheckDrawingStandards (a color ByLayer or ByBlock, a lineweight ByLayer), or on every layer
+  /// with <c>applyToAllLayers</c>; a layer that already has them isn't listed.
   /// A rename to a name that already exists is skipped and reported. With <c>dryRun</c> it only lists what would
   /// change. Approval-gated on the TypeScript side.
   /// </summary>
@@ -1149,6 +1153,7 @@ public static class QcCommands
     var colorIndex = PluginRuntime.GetOptionalInt(parameters, "colorIndex");
     var lineweight = PluginRuntime.GetOptionalInt(parameters, "lineweight");
     var dryRun = PluginRuntime.GetOptionalBool(parameters, "dryRun") ?? false;
+    var applyToAllLayers = PluginRuntime.GetOptionalBool(parameters, "applyToAllLayers") ?? false;
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -1171,6 +1176,8 @@ public static class QcCommands
           var layer = transaction.GetObject(layerId, dryRun ? OpenMode.ForRead : OpenMode.ForWrite) as LayerTableRecord;
           if (layer == null) continue;
           if (layer.Name == "0" || layer.Name.Equals("Defpoints", StringComparison.OrdinalIgnoreCase)) continue;
+          // An xref's layer ("Base|C-ROAD") belongs to the xref: it can't be renamed here, and changes don't last.
+          if (layer.IsDependent) continue;
 
           var originalName = layer.Name;
           var targetName = originalName;
@@ -1216,7 +1223,11 @@ public static class QcCommands
             }
           }
 
-          if (colorIndex.HasValue)
+          // The rules qcCheckDrawingStandards reports (checkColors, checkLineweights).
+          var colorBreaksRule = layer.Color.IsByLayer || layer.Color.IsByBlock;
+          var lineweightBreaksRule = layer.LineWeight == LineWeight.ByLayer;
+          if (colorIndex.HasValue && (colorBreaksRule || applyToAllLayers)
+              && !(layer.Color.ColorMethod == ColorMethod.ByAci && layer.Color.ColorIndex == colorIndex.Value))
           {
             layerChanges["colorIndex"] = colorIndex.Value;
             if (!dryRun)
@@ -1225,7 +1236,7 @@ public static class QcCommands
             }
           }
 
-          if (lineweight.HasValue)
+          if (lineweight.HasValue && (lineweightBreaksRule || applyToAllLayers) && (int)layer.LineWeight != lineweight.Value)
           {
             layerChanges["lineweight"] = lineweight.Value;
             if (!dryRun)
@@ -1243,6 +1254,7 @@ public static class QcCommands
         return new Dictionary<string, object?>
         {
           ["layerPrefix"] = layerPrefix,
+          ["applyToAllLayers"] = applyToAllLayers,
           ["changedCount"] = changes.Count,
           ["changes"] = changes,
           ["dryRun"] = dryRun,

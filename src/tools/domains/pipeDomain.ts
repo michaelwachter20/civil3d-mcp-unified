@@ -74,6 +74,8 @@ const canonicalPipeInputShape = {
   fittingName: z.string().optional(),
   targetType: z.enum(["surface", "pipe_network"]).optional(),
   targetName: z.string().optional(),
+  minClearance: z.number().optional(),
+  sampleSpacing: z.number().positive().optional(),
   partsList: z.string().optional(),
   referenceSurface: z.string().optional(),
   referenceAlignment: z.string().optional(),
@@ -130,6 +132,8 @@ const PipeCheckInterferenceArgsSchema = z.object({
   networkName: z.string(),
   targetType: z.enum(["surface", "pipe_network"]),
   targetName: z.string(),
+  minClearance: z.number().optional(),
+  sampleSpacing: z.number().positive().optional(),
 });
 const PipeCreateArgsSchema = z.object({
   action: z.literal("create"),
@@ -294,34 +298,65 @@ type PipeNetworkDetail = {
   partsList?: string;
   referenceAlignment?: string;
   referenceSurface?: string;
-  pipes: Array<{ name: string; diameter: number; slope: number; length: number }>;
+  /** The drawing's linear units: "feet", "meters" or "other" (older plugins leave it out). */
+  units?: string;
+  pipes: Array<{
+    name: string;
+    /** Inner diameter, in drawing units. */
+    diameter: number;
+    /** Civil 3D's own slope value; the sizing uses slopePercent, worked out from the pipe's ends, when present. */
+    slope: number;
+    /** Fall over horizontal length, in percent, from the pipe's centerline ends (newer plugins). */
+    slopePercent?: number | null;
+    /** The catalog size the pipe has now ("15 inch Concrete Pipe"), when the plugin reports it. */
+    partSizeName?: string | null;
+    length: number;
+  }>;
 };
 
 type PartsCatalogResponse = {
   partsLists: Array<{ name: string | null; parts: string[] }>;
 };
 
+/** One drawing unit, in each unit a catalog size may be written in. */
+const PER_DRAWING_UNIT: Record<"feet" | "meters", Record<string, number>> = {
+  feet: { in: 12, mm: 304.8, cm: 30.48, m: 0.3048, ft: 1 },
+  meters: { in: 39.37007874, mm: 1000, cm: 100, m: 1, ft: 3.280839895 },
+};
+
 /**
- * A part's diameter, read as the first number in its catalog name ("15 inch Concrete Pipe" -> 15). The catalog only
- * lists names, so this is the only size available; names without a number can't be chosen.
+ * A part's size from its catalog name, in drawing units: the first number, in the unit written after it ("15 inch
+ * Concrete Pipe", '15" RCP', "375 mm PVC", "0.6 m"). With no unit written, inches in a drawing in feet and
+ * millimetres in one in meters, as Civil 3D's catalogs name them. Null when the name has no number or the drawing's
+ * units are neither feet nor meters.
  */
-function parsePartDiameter(partName: string): number | null {
-  const match = partName.match(/(\d+(?:\.\d+)?)/);
+export function partDiameter(partName: string, drawingUnits: string): number | null {
+  if (drawingUnits !== "feet" && drawingUnits !== "meters") return null;
+  const match = partName.match(/(\d+(?:\.\d+)?)\s*(millimet(?:er|re)s?|mm|centimet(?:er|re)s?|cm|inch(?:es)?|in\b|"|''|feet|foot|ft\b|'|met(?:er|re)s?|m\b)?/i);
   if (!match) return null;
   const value = Number(match[1]);
-  return Number.isFinite(value) ? value : null;
+  if (!Number.isFinite(value)) return null;
+  const word = (match[2] ?? "").toLowerCase();
+  const unit = word.startsWith("mil") || word === "mm" ? "mm"
+    : word.startsWith("cent") || word === "cm" ? "cm"
+    : word.startsWith("inch") || word === "in" || word === '"' || word === "''" ? "in"
+    : word.startsWith("fe") || word.startsWith("fo") || word === "ft" || word === "'" ? "ft"
+    : word.startsWith("met") || word === "m" ? "m"
+    : drawingUnits === "feet" ? "in" : "mm";
+  return value / PER_DRAWING_UNIT[drawingUnits][unit];
 }
 
 /**
- * Full-flow capacity of a circular pipe, Manning's equation Q = (1/n) A R^(2/3) S^(1/2) with R = D/4. This is the SI
- * form (no 1.486 factor) and no unit conversion is done, so flow, diameter and the numbers in the part names must be
- * in matching units. The slope is the pipe's slope in percent; a flat pipe counts as a tiny slope, not zero.
+ * Full-flow capacity of a circular pipe, Manning's equation Q = (k/n) A R^(2/3) S^(1/2) with R = D/4: k = 1.486 in
+ * feet (Q in cubic feet per second), 1 in meters (cubic meters per second). The slope is in percent; a flat pipe
+ * counts as a tiny slope, not zero.
  */
-function computeFullFlowCapacity(diameter: number, slopePct: number, manningsN: number): number {
+export function fullFlowCapacity(diameter: number, slopePct: number, manningsN: number, drawingUnits: string): number {
+  const k = drawingUnits === "feet" ? 1.486 : 1;
   const slope = Math.max(Math.abs(slopePct) / 100, 1e-6);
   const area = Math.PI * diameter * diameter / 4;
   const hydraulicRadius = diameter / 4;
-  return (1 / manningsN) * area * Math.pow(hydraulicRadius, 2 / 3) * Math.sqrt(slope);
+  return (k / manningsN) * area * Math.pow(hydraulicRadius, 2 / 3) * Math.sqrt(slope);
 }
 
 /** Full-flow velocity Q / A for a circular pipe of the given diameter. */
@@ -331,14 +366,13 @@ function computeVelocity(flow: number, diameter: number): number {
 }
 
 /** The smallest diameter whose full-flow capacity carries `flow`, by bisection (doubling the upper bound first). */
-function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number): number {
-  let low = 0.01;
-  let high = 100;
-  while (computeFullFlowCapacity(high, slopePct, manningsN) < flow && high < 1_000_000) high *= 2;
+function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number, drawingUnits: string): number {
+  let low = 0.001;
+  let high = 1;
+  while (fullFlowCapacity(high, slopePct, manningsN, drawingUnits) < flow && high < 1_000_000) high *= 2;
   for (let i = 0; i < 60; i++) {
     const mid = (low + high) / 2;
-    const capacity = computeFullFlowCapacity(mid, slopePct, manningsN);
-    if (capacity >= flow) high = mid;
+    if (fullFlowCapacity(mid, slopePct, manningsN, drawingUnits) >= flow) high = mid;
     else low = mid;
   }
   return high;
@@ -346,12 +380,13 @@ function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number
 
 /**
  * Picks the catalog part for one pipe: the smallest part at least `requiredDiameter` whose velocity is inside
- * [velocityMin, velocityMax]; else the smallest large enough; else the largest part. Null only when no part name
- * has a number in it.
+ * [velocityMin, velocityMax]; else the smallest large enough; else the largest part. Null when no part name has a
+ * size that can be read in the drawing's units.
  */
-function chooseBestPart(partNames: string[], requiredDiameter: number, flow: number, velocityMin: number, velocityMax: number) {
+function chooseBestPart(partNames: string[], requiredDiameter: number, flow: number, velocityMin: number,
+  velocityMax: number, drawingUnits: string) {
   const candidates = partNames
-    .map((name) => ({ name, diameter: parsePartDiameter(name) }))
+    .map((name) => ({ name, diameter: partDiameter(name, drawingUnits) }))
     .filter((candidate): candidate is { name: string; diameter: number } => candidate.diameter != null)
     .sort((a, b) => a.diameter - b.diameter);
 
@@ -362,6 +397,58 @@ function chooseBestPart(partNames: string[], requiredDiameter: number, flow: num
   });
 
   return preferred ?? candidates.find((candidate) => candidate.diameter >= requiredDiameter) ?? candidates[candidates.length - 1] ?? null;
+}
+
+/**
+ * size_network's decision for one pipe, without touching the drawing: the recommendation it reports and, when
+ * `applyChanges` and the pipe's part isn't the chosen one already, the part to swap to (the part sets the size; no
+ * separate diameter is sent). Flow is in cubic feet per second in a drawing in feet, cubic meters per second in one
+ * in meters; velocities in feet or meters per second. A drawing in other units, or a pipe with no design flow, is
+ * only reported.
+ */
+export function sizePipe(
+  pipe: PipeNetworkDetail["pipes"][number],
+  partNames: string[],
+  designFlow: number | undefined,
+  options: { manningsN: number; velocityMin: number; velocityMax: number; applyChanges: boolean; drawingUnits: string },
+): { recommendation: Record<string, unknown>; swapTo: string | null } {
+  const base = { pipeName: pipe.name, currentPart: pipe.partSizeName ?? null, currentDiameter: pipe.diameter };
+  if (!designFlow) {
+    return { recommendation: { ...base, status: "skipped", reason: "No design flow was supplied for this pipe." }, swapTo: null };
+  }
+  if (options.drawingUnits !== "feet" && options.drawingUnits !== "meters") {
+    return {
+      recommendation: { ...base, status: "skipped", reason: "The drawing's units aren't feet or meters, so catalog sizes can't be compared with it." },
+      swapTo: null,
+    };
+  }
+  const slopePct = pipe.slopePercent ?? pipe.slope;
+  const requiredDiameter = solveRequiredDiameter(designFlow, slopePct, options.manningsN, options.drawingUnits);
+  const selected = chooseBestPart(partNames, requiredDiameter, designFlow, options.velocityMin, options.velocityMax, options.drawingUnits);
+  if (!selected) {
+    return { recommendation: { ...base, status: "skipped", reason: "No catalog part name has a size that could be read." }, swapTo: null };
+  }
+  // The part the pipe has now, by name when the plugin says it; else by size (a thousandth of a drawing unit).
+  const alreadyThere = pipe.partSizeName
+    ? pipe.partSizeName.trim().toLowerCase() === selected.name.trim().toLowerCase()
+    : Math.abs(selected.diameter - pipe.diameter) < 1e-3;
+  const swapTo = options.applyChanges && !alreadyThere ? selected.name : null;
+  return {
+    recommendation: {
+      ...base,
+      designFlow,
+      slopePercent: Number(slopePct.toFixed(4)),
+      requiredDiameter: Number(requiredDiameter.toFixed(4)),
+      selectedPart: selected.name,
+      selectedDiameter: Number(selected.diameter.toFixed(4)),
+      selectedVelocity: Number(computeVelocity(designFlow, selected.diameter).toFixed(3)),
+      units: options.drawingUnits,
+      changeNeeded: !alreadyThere,
+      applied: swapTo != null,
+      status: "ok",
+    },
+    swapTo,
+  };
 }
 
 /**
@@ -423,6 +510,8 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         networkName: args.networkName,
         targetType: args.targetType,
         targetName: args.targetName,
+        minClearance: args.minClearance,
+        sampleSpacing: args.sampleSpacing,
       })),
     },
     create: {
@@ -534,13 +623,10 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       })),
     },
     // For each pipe in the network: its design flow (perPipeDesignFlows by name, else defaultDesignFlow; pipes with
-    // neither are skipped), the diameter Manning's equation needs at the pipe's slope, and the best catalog part. With
-    // applyChanges each pipe is resized; otherwise it only recommends. (The "part changed" test compares the part's
-    // name with the pipe's own name, so in practice every pipe with a design flow is resized.) Declared
-    // non-retryable because applying is a drawing change, so it goes through approval either way.
-    // Applying sends both the part name and the number parsed from it as newDiameter; the plugin swaps the part, then
-    // resizes to that number as an inner diameter in drawing units. With part names in inches and a drawing in feet that
-    // second step would be wrong, so run without applyChanges first and compare the recommendations.
+    // neither are skipped), the diameter Manning's equation needs at the pipe's slope, and the best catalog part
+    // (sizePipe: catalog sizes read in the drawing's units, Manning's in feet or meters to match). With applyChanges a
+    // pipe whose part isn't that one already is swapped to it; otherwise it only recommends. Declared non-retryable
+    // because applying is a drawing change, so it goes through approval either way.
     size_network: {
       action: "size_network",
       inputSchema: PipeSizeNetworkArgsSchema,
@@ -563,48 +649,24 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         const recommendations: Array<Record<string, unknown>> = [];
         let appliedCount = 0;
 
+        const drawingUnits = network.units ?? "other";
         for (const pipe of network.pipes) {
-          const designFlow = flowMap.get(pipe.name.toLowerCase()) ?? args.defaultDesignFlow;
-          if (!designFlow) {
-            recommendations.push({ pipeName: pipe.name, currentDiameter: pipe.diameter, status: "skipped", reason: "No design flow was supplied for this pipe." });
-            continue;
-          }
-
-          const resolvedDesignFlow = Number(designFlow);
-          const requiredDiameter = solveRequiredDiameter(resolvedDesignFlow, pipe.slope, Number(args.manningsN));
-          const selectedPart = chooseBestPart(parts, requiredDiameter, resolvedDesignFlow, Number(args.targetVelocityMin), Number(args.targetVelocityMax));
-          if (!selectedPart) {
-            recommendations.push({ pipeName: pipe.name, currentDiameter: pipe.diameter, status: "skipped", reason: "No catalog part could be parsed into a numeric diameter." });
-            continue;
-          }
-
-          const selectedVelocity = computeVelocity(resolvedDesignFlow, selectedPart.diameter);
-          const shouldApply = args.applyChanges && (selectedPart.name !== pipe.name || Math.abs(selectedPart.diameter - pipe.diameter) > 1e-6);
-
-          if (shouldApply) {
-            await appClient.sendCommand("resizePipeInNetwork", {
-              networkName: args.networkName,
-              pipeName: pipe.name,
-              newPartName: selectedPart.name,
-              newDiameter: selectedPart.diameter,
-            });
+          const flow = flowMap.get(pipe.name.toLowerCase()) ?? args.defaultDesignFlow;
+          const { recommendation, swapTo } = sizePipe(pipe, parts, flow == null ? undefined : Number(flow), {
+            manningsN: Number(args.manningsN),
+            velocityMin: Number(args.targetVelocityMin),
+            velocityMax: Number(args.targetVelocityMax),
+            applyChanges: Boolean(args.applyChanges),
+            drawingUnits,
+          });
+          if (swapTo) {
+            await appClient.sendCommand("resizePipeInNetwork", { networkName: args.networkName, pipeName: pipe.name, newPartName: swapTo });
             appliedCount++;
           }
-
-          recommendations.push({
-            pipeName: pipe.name,
-            currentDiameter: pipe.diameter,
-            designFlow: resolvedDesignFlow,
-            requiredDiameter: Number(requiredDiameter.toFixed(3)),
-            selectedPart: selectedPart.name,
-            selectedDiameter: selectedPart.diameter,
-            selectedVelocity: Number(selectedVelocity.toFixed(3)),
-            applied: shouldApply,
-            status: "ok",
-          });
+          recommendations.push(recommendation);
         }
 
-        return { networkName: args.networkName, partsList: partsListName, applyChanges: args.applyChanges, appliedCount, recommendations };
+        return { networkName: args.networkName, partsList: partsListName, units: drawingUnits, applyChanges: args.applyChanges, appliedCount, recommendations };
       }),
     },
     // Uses the network's reference alignment and surface unless given. Creates the existing-ground profile (default
@@ -873,6 +935,8 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         structureName: z.string().optional(),
         targetType: z.enum(["surface", "pipe_network"]).optional(),
         targetName: z.string().optional(),
+        minClearance: z.number().optional(),
+        sampleSpacing: z.number().positive().optional(),
       },
       supportedActions: ["list", "get", "get_pipe", "get_structure", "check_interference"],
       resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),

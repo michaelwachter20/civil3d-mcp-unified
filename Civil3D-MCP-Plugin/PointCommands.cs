@@ -103,15 +103,17 @@ public static class PointCommands
 
   /// <summary>
   /// Creates points from <c>data</c>, text with one point per line in <c>format</c> pnezd, penz, xyzd or xyz
-  /// (separated by commas, semicolons, tabs or spaces). Point numbers in the data are not used: new points take the
-  /// drawing's next numbers. <c>targetSurface</c> is refused (not implemented). See ParsePointImport for how the
-  /// columns map to X, Y and Z.
+  /// (PointText.Parse: X is the easting, Y the northing). A point keeps its number from the file when that number is
+  /// free in the drawing (<c>keepPointNumbers</c>, default true); one already taken, or a format without numbers, gets
+  /// the drawing's next number, and the answer lists each one renumbered. <c>targetSurface</c> is refused (not
+  /// implemented). The whole file is read before anything is created, so a bad line creates no points.
   /// </summary>
   public static Task<object?> ImportCogoPointsAsync(JsonObject? parameters)
   {
     var format = PluginRuntime.GetRequiredString(parameters, "format");
     var data = PluginRuntime.GetRequiredString(parameters, "data");
     var targetSurface = PluginRuntime.GetOptionalString(parameters, "targetSurface");
+    var keepPointNumbers = PluginRuntime.GetOptionalBool(parameters, "keepPointNumbers") ?? true;
     if (!string.IsNullOrWhiteSpace(targetSurface))
     {
       throw new JsonRpcDispatchException(
@@ -121,18 +123,35 @@ public static class PointCommands
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      var points = PointText.Parse(data, format).ToList();
       var createdNumbers = new List<uint>();
-      foreach (var parsed in ParsePointImport(data, format))
+      var renumbered = new List<Dictionary<string, object?>>();
+      var usedInFile = new HashSet<uint>();
+      foreach (var parsed in points)
       {
         var objectId = civilDoc.CogoPoints.Add(new Point3d(parsed.X, parsed.Y, parsed.Z), parsed.Description, true);
+        if (keepPointNumbers && parsed.Number is uint wanted)
+        {
+          // Free unless another point of the drawing (or an earlier line of this file) already has it.
+          if (usedInFile.Add(wanted) && !civilDoc.CogoPoints.Contains(wanted))
+          {
+            civilDoc.CogoPoints.SetPointNumber(objectId, wanted);
+          }
+        }
+
         var point = CivilObjectUtils.GetRequiredObject<CogoPoint>(transaction, objectId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
         createdNumbers.Add(point.PointNumber);
+        if (keepPointNumbers && parsed.Number is uint asked && asked != point.PointNumber)
+        {
+          renumbered.Add(new Dictionary<string, object?> { ["inFile"] = asked, ["given"] = point.PointNumber });
+        }
       }
 
       return new Dictionary<string, object?>
       {
         ["imported"] = createdNumbers.Count,
         ["pointNumbers"] = createdNumbers,
+        ["renumbered"] = renumbered,
         ["targetSurface"] = null,
       };
     });
@@ -230,33 +249,5 @@ public static class PointCommands
     }
 
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Point group '{groupName}' was not found.");
-  }
-
-  /// <summary>
-  /// Reads one point per line. Column mapping as written: pnezd takes X from column 2 and Y from column 3, which in a
-  /// PNEZD file are the northing and the easting, so X and Y come out swapped relative to AutoCAD (X = easting); penz
-  /// takes X, Y, Z from columns 2, 4, 3. xyz and xyzd are read in order. Numbers are parsed with the current culture.
-  /// Check one known point before relying on an import.
-  /// </summary>
-  private static IEnumerable<(double X, double Y, double Z, string Description)> ParsePointImport(string data, string format)
-  {
-    foreach (var rawLine in data.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-    {
-      var line = rawLine.Trim();
-      if (line.Length == 0)
-      {
-        continue;
-      }
-
-      var tokens = line.Split(new[] { ',', ';', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-      yield return format switch
-      {
-        "pnezd" when tokens.Length >= 5 => (double.Parse(tokens[1]), double.Parse(tokens[2]), double.Parse(tokens[3]), tokens[4]),
-        "penz" when tokens.Length >= 5 => (double.Parse(tokens[1]), double.Parse(tokens[3]), double.Parse(tokens[2]), tokens[4]),
-        "xyzd" when tokens.Length >= 4 => (double.Parse(tokens[0]), double.Parse(tokens[1]), double.Parse(tokens[2]), tokens[3]),
-        "xyz" when tokens.Length >= 3 => (double.Parse(tokens[0]), double.Parse(tokens[1]), double.Parse(tokens[2]), string.Empty),
-        _ => throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Unsupported point import line for format '{format}': {line}"),
-      };
-    }
   }
 }

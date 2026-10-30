@@ -68,6 +68,7 @@ const canonicalPointInputShape = {
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
   data: z.string().optional(),
   targetSurface: z.string().optional(),
+  keepPointNumbers: z.boolean().optional().describe("import: keep each point's number from the file when it is free in the drawing (default true)"),
   pointNumbers: z.array(z.number().int().positive()).optional(),
   name: z.string().optional(),
   description: z.string().optional(),
@@ -113,6 +114,7 @@ const PointImportArgsSchema = z.object({
   format: z.enum(["pnezd", "penz", "xyzd", "xyz"]),
   data: z.string(),
   targetSurface: z.string().optional(),
+  keepPointNumbers: z.boolean().optional(),
 });
 
 const PointDeleteArgsSchema = z.object({
@@ -241,6 +243,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
           format: args.format,
           data: args.data,
           targetSurface: args.targetSurface,
+          keepPointNumbers: args.keepPointNumbers,
         }),
       ),
     },

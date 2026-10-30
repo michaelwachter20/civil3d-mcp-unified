@@ -23,6 +23,7 @@ public static class PipeHydraulicsCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
+      var units = CivilObjectUtils.LinearUnits(database);
       var pipes = GetPipeData(network, transaction);
       var structures = GetStructureData(network, transaction);
 
@@ -51,15 +52,14 @@ public static class PipeHydraulicsCommands
         var pipe = sortedPipes[i];
         double diameter = pipe.Diameter;
         double length = pipe.Length;
-        double slope = Math.Abs(pipe.Slope) / 100.0; // convert % to decimal
         double area = Math.PI * diameter * diameter / 4.0;
-        double wetPerim = Math.PI * diameter;
         double hydraulicRadius = diameter / 4.0;
-        double qFull = (1.0 / manningsN) * area * Math.Pow(hydraulicRadius, 2.0 / 3.0) * Math.Pow(slope, 0.5);
+        double qFull = PipeMath.FullFlowCapacity(diameter, pipe.Slope, manningsN, units);
 
-        // Head loss in pipe (Manning's based)
-        double headLoss = (manningsN * manningsN * length * (designFlow ?? qFull) * (designFlow ?? qFull))
-                          / (Math.Pow(hydraulicRadius, 4.0 / 3.0) * area * area);
+        // Friction loss along the pipe at the flow (Manning's, in the drawing's units): L (nQ / (k A R^(2/3)))^2.
+        double flow = designFlow ?? qFull;
+        double headLoss = length * Math.Pow(manningsN * flow / (PipeMath.ManningsK(units) * area
+                          * Math.Pow(hydraulicRadius, 2.0 / 3.0)), 2.0);
         headLoss = Math.Max(0, headLoss);
 
         var hglAtUpstream = currentHgl + headLoss;
@@ -90,6 +90,9 @@ public static class PipeHydraulicsCommands
         ["tailwaterElevation"] = Math.Round(hglAtOutlet, 3),
         ["manningsN"] = manningsN,
         ["designFlow"] = designFlow,
+        // The *Cfs / *Fps keys keep their names; their values are in these units (cms and m/s in a drawing in meters).
+        ["units"] = units,
+        ["flowUnit"] = PipeMath.FlowUnit(units),
         ["pipeCount"] = pipes.Count,
         ["surchargedCount"] = nodes.Count(n => (bool)(n["surcharged"] ?? false)),
         ["nodes"] = nodes,
@@ -112,6 +115,7 @@ public static class PipeHydraulicsCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
+      var units = CivilObjectUtils.LinearUnits(database);
       var pipes = GetPipeData(network, transaction);
       var structures = GetStructureData(network, transaction);
 
@@ -121,12 +125,11 @@ public static class PipeHydraulicsCommands
       foreach (var pipe in pipes)
       {
         double diameter = pipe.Diameter;
-        double slope = Math.Abs(pipe.Slope) / 100.0;
         double area = Math.PI * diameter * diameter / 4.0;
         double hydraulicRadius = diameter / 4.0;
-        double qFull = (1.0 / manningsN) * area * Math.Pow(hydraulicRadius, 2.0 / 3.0) * Math.Pow(slope, 0.5);
-        double vFull = qFull / area;
-        double froudeNumber = area > 0 ? vFull / Math.Sqrt(9.81 * hydraulicRadius) : 0;
+        double qFull = PipeMath.FullFlowCapacity(diameter, pipe.Slope, manningsN, units);
+        double vFull = area > 0 ? qFull / area : 0;
+        double froudeNumber = area > 0 ? vFull / Math.Sqrt(PipeMath.Gravity(units) * hydraulicRadius) : 0;
 
         double actualFlow = designFlow ?? qFull;
         double capacityRatio = qFull > 0 ? actualFlow / qFull : 0;
@@ -134,9 +137,9 @@ public static class PipeHydraulicsCommands
 
         var pipeViolations = new List<string>();
         if (pipe.Slope < minSlope) pipeViolations.Add($"slope {pipe.Slope:F3}% < min {minSlope}%");
-        if (velocity < minVelocity) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocity} ft/s");
-        if (velocity > maxVelocity) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocity} ft/s");
-        if (capacityRatio > 1.0) pipeViolations.Add($"flow {actualFlow:F2} exceeds capacity {qFull:F2} CFS");
+        if (velocity < minVelocity) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocity} {PipeMath.VelocityUnit(units)}");
+        if (velocity > maxVelocity) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocity} {PipeMath.VelocityUnit(units)}");
+        if (capacityRatio > 1.0) pipeViolations.Add($"flow {actualFlow:F2} exceeds capacity {qFull:F2} {PipeMath.FlowUnit(units)}");
 
         var pipeResult = new Dictionary<string, object?>
         {
@@ -179,6 +182,10 @@ public static class PipeHydraulicsCommands
       {
         ["networkName"] = networkName,
         ["manningsN"] = manningsN,
+        // The *Cfs / *Fps keys keep their names; their values are in these units (cms and m/s in a drawing in meters).
+        ["units"] = units,
+        ["flowUnit"] = PipeMath.FlowUnit(units),
+        ["velocityUnit"] = PipeMath.VelocityUnit(units),
         ["pipeCount"] = pipes.Count,
         ["passCount"] = results.Count(r => (string)(r["status"] ?? "") == "OK"),
         ["failCount"] = violations.Count,
@@ -294,7 +301,10 @@ public static class PipeHydraulicsCommands
       var invertIn = GetAnyDouble(pipe, "StartInvertElevation", "InvertIn", "StartInnerElevation") ?? startPt?.Z ?? 0.0;
       var invertOut = GetAnyDouble(pipe, "EndInvertElevation", "InvertOut", "EndInnerElevation") ?? endPt?.Z ?? 0.0;
       var length = GetAnyDouble(pipe, "Length3D", "Length2D", "Length") ?? 0.0;
-      var slope = GetAnyDouble(pipe, "Slope", "FlowSlope") ?? (length > 0 ? (invertIn - invertOut) / length * 100 : 0);
+      // In percent from the pipe's ends (PipeMath.SlopePercent): Civil 3D's own Slope value isn't documented as a
+      // percent or a ratio.
+      var slope = (startPt is Point3d a && endPt is Point3d b ? PipeMath.SlopePercent(a.X, a.Y, a.Z, b.X, b.Y, b.Z) : null)
+        ?? GetAnyDouble(pipe, "Slope", "FlowSlope") ?? (length > 0 ? (invertIn - invertOut) / length * 100 : 0);
       var diameter = GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 1.0;
       results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut));
     }

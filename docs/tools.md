@@ -963,27 +963,30 @@ Returns detailed properties of a single structure.
 
 #### `check_interference`
 
-Runs an interference check between a pipe network and other objects.
+Checks a pipe network's pipes against another pipe network (the clearance between pipe outsides) or a surface (the
+cover over each pipe, sampled along it). Pipes only; structures aren't checked.
 
-| Parameter   | Type                               | Required | Description                     |
-| ----------- | ---------------------------------- | -------- | ------------------------------- |
-| action      | `"check_interference"`           | yes      | —                              |
-| networkName | string                             | yes      | Network name                    |
-| targetType  | `"surface"`or `"pipe_network"` | yes      | Type of object to check against |
-| targetName  | string                             | yes      | Name of the target object       |
+| Parameter     | Type                               | Required | Description                                                              |
+| ------------- | ---------------------------------- | -------- | ------------------------------------------------------------------------ |
+| action        | `"check_interference"`           | yes      | —                                                                       |
+| networkName   | string                             | yes      | Network name                                                             |
+| targetType    | `"surface"`or `"pipe_network"` | yes      | Type of object to check against (the same network checks it against itself) |
+| targetName    | string                             | yes      | Name of the target object                                                |
+| minClearance  | number                             | no       | Drawing units: the least clearance between pipes, or the least cover (default 0) |
+| sampleSpacing | number                             | no       | Surface checks: how often to sample along each pipe, drawing units (default 5) |
 
 **Response data:**
 
 ```
 {
+  checked: number,             // pipe pairs, or pipes against the surface
+  samplesOffSurface: number,   // sample points outside the surface (skipped)
+  units: "feet" | "meters" | "other",
   interferences: [
-    {
-      objectA: string,
-      objectB: string,
-      location: { x: number, y: number, z: number },
-      clearance: number,
-      conflictType: "crossing" | "proximity" | "cover_violation"
-    }
+    // against a pipe network:
+    { pipe, otherPipe, otherNetwork, clearance, location: [x, y, z], kind: "overlap" | "too close" },
+    // against a surface:
+    { pipe, surface, cover, location: [x, y, z], kind: "above the surface" | "too little cover" }
   ],
   totalConflicts: number
 }
@@ -1132,9 +1135,10 @@ Imports points from a structured dataset.
 | Parameter     | Type                                              | Required | Description                                                         |
 | ------------- | ------------------------------------------------- | -------- | ------------------------------------------------------------------- |
 | action        | `"import"`                                      | yes      | —                                                                  |
-| format        | `"pnezd"`or `"penz"`or `"xyzd"`or `"xyz"` | yes      | Point data format                                                   |
-| data          | string                                            | yes      | Delimited point data (comma or space separated, one point per line) |
-| targetSurface | string                                            | no       | If provided, adds imported points to this surface                   |
+| format        | `"pnezd"`or `"penz"`or `"xyzd"`or `"xyz"` | yes      | pnezd: number, northing, easting, elevation, description; penz: number, easting, northing, elevation, description; xyz(d): easting, northing, elevation (description) |
+| data          | string                                            | yes      | Delimited point data (commas, semicolons, tabs or spaces; one point per line; a dot for decimals) |
+| keepPointNumbers | boolean                                        | no       | Keep each point's number from the file when it is free in the drawing (default true); the answer lists any renumbered |
+| targetSurface | string                                            | no       | Not implemented: refused if given                                   |
 
 #### `delete`
 
@@ -2699,11 +2703,20 @@ Audits drawing for layer naming, lineweights, colors.
 
 #### `fix_drawing_standards`
 
-Automatically fixes common drawing standard violations.
+Fixes layer names to a standard (spaces, prefix, length) and, when given, sets a color and lineweight on the layers
+that break check_drawing_standards' color rule (ByLayer/ByBlock) or lineweight rule (ByLayer). Skips layers 0,
+Defpoints and xref layers. Use `dryRun` first to see what would change.
 
-| Parameter | Type                 | Required | Description                |
-| --------- | -------------------- | -------- | -------------------------- |
-| action    | `"fix_drawing_standards"` | yes | —                      |
+| Parameter        | Type                      | Required | Description                                              |
+| ---------------- | ------------------------- | -------- | -------------------------------------------------------- |
+| action           | `"fix_drawing_standards"` | yes      | —                                                        |
+| layerPrefix      | string                    | no       | Prefix added to names that lack it                       |
+| fixSpaces        | boolean                   | no       | Spaces to underscores (default true)                     |
+| maxNameLength    | number                    | no       | Names cut to this length (default 64)                    |
+| colorIndex       | number (1-255)            | no       | Color for layers breaking the color rule                 |
+| lineweight       | number                    | no       | Lineweight for layers breaking the lineweight rule       |
+| applyToAllLayers | boolean                   | no       | Set colorIndex / lineweight on every layer instead       |
+| dryRun           | boolean                   | no       | Only list what would change                              |
 
 #### `generate_report`
 
@@ -2780,14 +2793,21 @@ Automates gravity pipe network design.
 
 #### `size_network`
 
-Sizes gravity-network pipes from Manning full-flow capacity.
+Sizes gravity-network pipes from Manning full-flow capacity, in the drawing's units: catalog sizes ("15 inch",
+"375 mm") are converted to them, Manning's uses k = 1.486 in feet and 1 in meters, and each pipe's slope comes from
+its ends. With `applyChanges`, a pipe whose part isn't the chosen one is swapped to it; nothing is changed in a
+drawing whose units aren't feet or meters.
 
-| Parameter   | Type                 | Required | Description                |
-| ----------- | -------------------- | -------- | -------------------------- |
-| action      | `"size_network"`     | yes      | —                           |
-| networkName | string               | yes      | Network name                |
-| designFlow  | number               | yes      | Design flow rate (cfs)      |
-| slope       | number               | yes      | Pipe slope (%)              |
+| Parameter          | Type     | Required | Description                                                    |
+| ------------------ | -------- | -------- | -------------------------------------------------------------- |
+| action             | `"size_network"` | yes | —                                                          |
+| networkName        | string   | yes      | Network name                                                   |
+| partsList          | string   | no       | Parts list (default: the network's)                            |
+| defaultDesignFlow  | number   | no       | Design flow for every pipe: cfs in feet, cubic meters per second in meters |
+| perPipeDesignFlows | array    | no       | `{ pipeName, designFlow }` per pipe                            |
+| manningsN          | number   | no       | Default 0.013                                                  |
+| targetVelocityMin / targetVelocityMax | number | no | Velocity range, drawing units per second (default 2 to 10) |
+| applyChanges       | boolean  | no       | Swap the parts (default false: recommend only)                 |
 
 #### `automate_profile_view`
 

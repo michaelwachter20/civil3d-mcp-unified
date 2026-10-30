@@ -12,5 +12,7 @@
     <Compile Include="..\..\Civil3D-MCP-Plugin\JsonRpcProtocol.cs" Link="JsonRpcProtocol.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\JobRegistry.cs" Link="JobRegistry.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\RpcTcpServer.cs" Link="RpcTcpServer.cs" />
+    <Compile Include="..\..\Civil3D-MCP-Plugin\PointText.cs" Link="PointText.cs" />
+    <Compile Include="..\..\Civil3D-MCP-Plugin\PipeMath.cs" Link="PipeMath.cs" />
   </ItemGroup>
 </Project>

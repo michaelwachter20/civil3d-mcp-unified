@@ -125,15 +125,9 @@ public static class PointGroupCommands
         var point = CivilObjectUtils.GetRequiredObject<CogoPoint>(transaction, objectId, OpenMode.ForRead);
         if (allowedNumbers != null && !allowedNumbers.Contains(point.PointNumber)) continue;
 
-        var line = format switch
-        {
-          "pnezd" => $"{point.PointNumber}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
-          "penz" => $"{point.PointNumber}{delimiter}{point.Location.X}{delimiter}{point.Location.Z}{delimiter}{point.Location.Y}{delimiter}{point.RawDescription}",
-          "xyzd" => $"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
-          "xyz" => $"{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}",
-          "csv" => $"{point.PointNumber}{delimiter}{point.PointName}{delimiter}{point.Location.X}{delimiter}{point.Location.Y}{delimiter}{point.Location.Z}{delimiter}{point.RawDescription}",
-          _ => throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Unsupported export format: {format}"),
-        };
+        // Columns in the order importCogoPoints reads them back (PointText): pnezd is northing then easting.
+        var line = PointText.Format(format, point.PointNumber, point.PointName, point.Location.X, point.Location.Y,
+          point.Location.Z, point.RawDescription, delimiter);
 
         sb.AppendLine(line);
         exportedCount++;

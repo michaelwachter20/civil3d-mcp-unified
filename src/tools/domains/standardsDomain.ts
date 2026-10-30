@@ -62,6 +62,7 @@ const canonicalStandardsInputShape = {
   colorIndex: z.number().optional(),
   lineweight: z.number().optional(),
   dryRun: z.boolean().optional(),
+  applyToAllLayers: z.boolean().optional(),
 };
 
 const LabelListArgsSchema = z.object({
@@ -126,6 +127,7 @@ const QcFixDrawingStandardsArgsSchema = z.object({
   colorIndex: z.number().int().min(1).max(255).optional(),
   lineweight: z.number().int().optional(),
   dryRun: z.boolean().optional(),
+  applyToAllLayers: z.boolean().optional(),
 });
 
 /**
@@ -290,6 +292,7 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
           colorIndex: args.colorIndex ?? null,
           lineweight: args.lineweight ?? null,
           dryRun: args.dryRun ?? false,
+          applyToAllLayers: args.applyToAllLayers ?? false,
         }),
       ),
     },
@@ -444,6 +447,7 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
         colorIndex: z.number().int().min(1).max(255).optional(),
         lineweight: z.number().int().optional(),
         dryRun: z.boolean().optional(),
+        applyToAllLayers: z.boolean().optional(),
       },
       supportedActions: ["fix_drawing_standards"],
       resolveAction: (rawArgs) => ({
@@ -456,6 +460,7 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
           colorIndex: rawArgs.colorIndex,
           lineweight: rawArgs.lineweight,
           dryRun: rawArgs.dryRun,
+          applyToAllLayers: rawArgs.applyToAllLayers,
         },
       }),
     },

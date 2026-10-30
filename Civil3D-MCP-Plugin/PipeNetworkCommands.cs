@@ -77,26 +77,115 @@ public static class PipeNetworkCommands
   }
 
   /// <summary>
-  /// Validates that network <c>networkName</c> and the target (<c>targetType</c> surface or pipe_network,
-  /// <c>targetName</c>) exist, then always answers with no interferences: no clash detection is implemented. Don't
-  /// read the empty list as "no conflicts"; use Civil 3D's interference check for that.
+  /// Checks network <c>networkName</c> against <c>targetName</c> (<c>targetType</c>):
+  /// <list type="bullet">
+  /// <item><c>pipe_network</c>: every pipe of one against every pipe of the other, the clearance between their
+  /// outsides (the 3D distance between centerlines less both outside radii, PipeMath.SegmentDistance). A pair closer
+  /// than <c>minClearance</c> (drawing units, default 0: touching or crossing) is a conflict.</item>
+  /// <item><c>surface</c>: the cover over each pipe (surface elevation less the pipe's outside top), sampled along it
+  /// every <c>sampleSpacing</c> drawing units (default 5; PipeMath.SampleParameters). A pipe with less cover than
+  /// <c>minClearance</c> anywhere (default 0: out of the ground) is a conflict, at its worst sample. Points off the
+  /// surface are skipped and counted.</item>
+  /// </list>
+  /// Pipes only; structures aren't checked. The answer lists each conflict with where it is.
   /// </summary>
   public static Task<object?> CheckPipeNetworkInterferenceAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
     var targetType = PluginRuntime.GetRequiredString(parameters, "targetType");
     var targetName = PluginRuntime.GetRequiredString(parameters, "targetName");
+    var minClearance = PluginRuntime.GetOptionalDouble(parameters, "minClearance") ?? 0.0;
+    var sampleSpacing = PluginRuntime.GetOptionalDouble(parameters, "sampleSpacing") ?? 5.0;
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      _ = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
-      if (string.Equals(targetType, "surface", StringComparison.OrdinalIgnoreCase))
+      var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
+      var pipes = network.GetPipeIds().Cast<ObjectId>()
+        .Select(id => CivilObjectUtils.GetRequiredObject<Pipe>(transaction, id, OpenMode.ForRead)).ToList();
+      var conflicts = new List<Dictionary<string, object?>>();
+      var checkedCount = 0;
+      var offSurface = 0;
+
+      if (string.Equals(targetType, "pipe_network", StringComparison.OrdinalIgnoreCase))
       {
-        _ = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, targetName, OpenMode.ForRead);
+        var other = FindPipeNetworkByName(civilDoc, transaction, targetName, OpenMode.ForRead);
+        var otherPipes = other.GetPipeIds().Cast<ObjectId>()
+          .Select(id => CivilObjectUtils.GetRequiredObject<Pipe>(transaction, id, OpenMode.ForRead)).ToList();
+        var sameNetwork = network.ObjectId == other.ObjectId;
+        for (var i = 0; i < pipes.Count; i++)
+        {
+          for (var j = sameNetwork ? i + 1 : 0; j < otherPipes.Count; j++)
+          {
+            var a = pipes[i];
+            var b = otherPipes[j];
+            // Pipes joined at a structure share an end there; that isn't a clash.
+            if (sameNetwork && SharesStructure(a, b)) continue;
+            checkedCount++;
+            var (distance, onA, onB) = PipeMath.SegmentDistance(
+              (a.StartPoint.X, a.StartPoint.Y, a.StartPoint.Z), (a.EndPoint.X, a.EndPoint.Y, a.EndPoint.Z),
+              (b.StartPoint.X, b.StartPoint.Y, b.StartPoint.Z), (b.EndPoint.X, b.EndPoint.Y, b.EndPoint.Z));
+            var clearance = distance - a.OuterDiameterOrWidth / 2.0 - b.OuterDiameterOrWidth / 2.0;
+            if (clearance < minClearance)
+            {
+              var at = a.StartPoint + (a.EndPoint - a.StartPoint) * onA;
+              conflicts.Add(new Dictionary<string, object?>
+              {
+                ["pipe"] = a.Name,
+                ["otherPipe"] = b.Name,
+                ["otherNetwork"] = other.Name,
+                ["clearance"] = Math.Round(clearance, 4),
+                ["location"] = new[] { Math.Round(at.X, 3), Math.Round(at.Y, 3), Math.Round(at.Z, 3) },
+                ["kind"] = clearance < 0 ? "overlap" : "too close",
+              });
+            }
+          }
+        }
       }
-      else if (string.Equals(targetType, "pipe_network", StringComparison.OrdinalIgnoreCase))
+      else if (string.Equals(targetType, "surface", StringComparison.OrdinalIgnoreCase))
       {
-        _ = FindPipeNetworkByName(civilDoc, transaction, targetName, OpenMode.ForRead);
+        var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, targetName, OpenMode.ForRead);
+        foreach (var pipe in pipes)
+        {
+          checkedCount++;
+          var start = pipe.StartPoint;
+          var end = pipe.EndPoint;
+          var horizontal = Math.Sqrt((end.X - start.X) * (end.X - start.X) + (end.Y - start.Y) * (end.Y - start.Y));
+          double? worst = null;
+          Point3d worstAt = start;
+          foreach (var t in PipeMath.SampleParameters(horizontal, sampleSpacing))
+          {
+            var at = start + (end - start) * t;
+            double ground;
+            try
+            {
+              ground = surface.FindElevationAtXY(at.X, at.Y);
+            }
+            catch (Autodesk.Civil.PointNotOnEntityException)
+            {
+              offSurface++;
+              continue;
+            }
+
+            var cover = ground - (at.Z + pipe.OuterDiameterOrWidth / 2.0);
+            if (worst == null || cover < worst)
+            {
+              worst = cover;
+              worstAt = at;
+            }
+          }
+
+          if (worst is double least && least < minClearance)
+          {
+            conflicts.Add(new Dictionary<string, object?>
+            {
+              ["pipe"] = pipe.Name,
+              ["surface"] = targetName,
+              ["cover"] = Math.Round(least, 4),
+              ["location"] = new[] { Math.Round(worstAt.X, 3), Math.Round(worstAt.Y, 3), Math.Round(worstAt.Z, 3) },
+              ["kind"] = least < 0 ? "above the surface" : "too little cover",
+            });
+          }
+        }
       }
       else
       {
@@ -105,10 +194,25 @@ public static class PipeNetworkCommands
 
       return new Dictionary<string, object?>
       {
-        ["interferences"] = Array.Empty<object>(),
-        ["totalConflicts"] = 0,
+        ["networkName"] = networkName,
+        ["targetType"] = targetType,
+        ["targetName"] = targetName,
+        ["minClearance"] = minClearance,
+        ["units"] = CivilObjectUtils.LinearUnits(database),
+        ["checked"] = checkedCount,
+        ["samplesOffSurface"] = offSurface,
+        ["interferences"] = conflicts,
+        ["totalConflicts"] = conflicts.Count,
+        ["note"] = "Pipes only (outside diameters); structures aren't checked.",
       };
     });
+  }
+
+  /// <summary>True when two pipes of one network meet at a structure (an end of each at the same structure).</summary>
+  private static bool SharesStructure(Pipe a, Pipe b)
+  {
+    var ends = new[] { a.StartStructureId, a.EndStructureId }.Where(id => !id.IsNull);
+    return ends.Any(id => id == b.StartStructureId || id == b.EndStructureId);
   }
 
   /// <summary>
@@ -443,6 +547,7 @@ public static class PipeNetworkCommands
       ["style"] = network.StyleName,
       ["referenceSurface"] = ResolveObjectName(transaction, network.ReferenceSurfaceId),
       ["referenceAlignment"] = ResolveObjectName(transaction, network.ReferenceAlignmentId),
+      ["units"] = CivilObjectUtils.LinearUnits(network.Database),
       ["pipes"] = pipes,
       ["structures"] = structures,
     };
@@ -459,6 +564,10 @@ public static class PipeNetworkCommands
       ["length"] = pipe.Length3D,
       ["diameter"] = pipe.InnerDiameterOrWidth,
       ["slope"] = pipe.Slope,
+      // In percent from the pipe's ends (PipeMath.SlopePercent), what the sizing uses.
+      ["slopePercent"] = PipeMath.SlopePercent(pipe.StartPoint.X, pipe.StartPoint.Y, pipe.StartPoint.Z,
+        pipe.EndPoint.X, pipe.EndPoint.Y, pipe.EndPoint.Z),
+      ["partSizeName"] = pipe.PartSizeName,
       ["material"] = pipe.Material,
       ["centerlineStartElevation"] = pipe.StartPoint.Z,
       ["centerlineEndElevation"] = pipe.EndPoint.Z,

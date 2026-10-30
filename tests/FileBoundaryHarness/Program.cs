@@ -222,7 +222,53 @@ try
     utf8Server.Stop();
   }
 
-  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, and UTF-8 request checks passed.");
+  // Point text (importCogoPoints / exportCogoPoints): X is the easting, Y the northing, in every format.
+  var pnezd = PointText.Parse("101,5000.25,2000.5,100.1,EP 12\n\n102;5001;2001;101", "pnezd").ToList();
+  Assert(pnezd.Count == 2 && pnezd[0] == new PointText.ParsedPoint(101, 2000.5, 5000.25, 100.1, "EP 12")
+         && pnezd[1].Description == "" && pnezd[1].Number == 102,
+    "pnezd: northing then easting, the number kept, a description with a space kept whole.");
+  var penz = PointText.Parse("7 2000.5 5000.25 100.1", "penz").Single();
+  Assert(penz.X == 2000.5 && penz.Y == 5000.25 && penz.Z == 100.1, "penz: easting, northing, elevation.");
+  var xyz = PointText.Parse("2000.5\t5000.25\t100.1", "xyz").Single();
+  Assert(xyz.Number == null && xyz.X == 2000.5 && xyz.Y == 5000.25, "xyz has no point numbers.");
+  ExpectCode("CIVIL3D.INVALID_INPUT", () => PointText.Parse("1,5000,2000,abc", "pnezd").ToList());
+  ExpectCode("CIVIL3D.INVALID_INPUT", () => PointText.Parse("1,5000,2000", "pnezd").ToList());
+  var previousCulture = System.Globalization.CultureInfo.CurrentCulture;
+  System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+  try
+  {
+    var line = PointText.Format("pnezd", 101, null, 2000.5, 5000.25, 100.1, "EP 12", ",");
+    Assert(line == "101,5000.25,2000.5,100.1,EP 12", $"pnezd export is northing then easting with dot decimals: {line}");
+    var back = PointText.Parse(line, "pnezd").Single();
+    Assert(back.X == 2000.5 && back.Y == 5000.25, "A point exported and imported again keeps its easting and northing.");
+    Assert(PointText.Format("penz", 7, null, 2000.5, 5000.25, 100.1, "", ",") == "7,2000.5,5000.25,100.1,",
+      "penz export is easting, northing, elevation.");
+  }
+  finally
+  {
+    System.Globalization.CultureInfo.CurrentCulture = previousCulture;
+  }
+
+  // Pipe arithmetic (PipeMath): slope from the ends, Manning's in feet and meters, clearances between pipes.
+  Assert(Math.Abs(PipeMath.SlopePercent(0, 0, 100, 300, 400, 95)!.Value - 1.0) < 1e-9,
+    "A pipe falling 5 over 500 horizontally slopes 1%.");
+  Assert(PipeMath.SlopePercent(1, 1, 10, 1, 1, 5) == null, "A vertical pipe has no slope.");
+  // 12-inch (1 ft) pipe at 1%, n = 0.013: about 3.56 cfs full; 0.3 m pipe at 1%: about 0.0966 cms.
+  Assert(Math.Abs(PipeMath.FullFlowCapacity(1.0, 1.0, 0.013, "feet") - 3.564) < 0.01,
+    $"Manning's in feet: {PipeMath.FullFlowCapacity(1.0, 1.0, 0.013, "feet")}");
+  Assert(Math.Abs(PipeMath.FullFlowCapacity(0.3, 1.0, 0.013, "meters") - 0.0966) < 0.001,
+    $"Manning's in meters: {PipeMath.FullFlowCapacity(0.3, 1.0, 0.013, "meters")}");
+  var crossing = PipeMath.SegmentDistance((0, 0, 100), (10, 0, 100), (5, -5, 101), (5, 5, 101));
+  Assert(Math.Abs(crossing.Distance - 1.0) < 1e-9 && Math.Abs(crossing.OnFirst - 0.5) < 1e-9,
+    "Two pipes crossing 1 apart vertically, at the middle of the first.");
+  var apart = PipeMath.SegmentDistance((0, 0, 0), (10, 0, 0), (20, 3, 0), (30, 3, 0));
+  Assert(Math.Abs(apart.Distance - Math.Sqrt(100 + 9)) < 1e-9, "End to end: from the end of one to the start of the other.");
+  var parallel = PipeMath.SegmentDistance((0, 0, 0), (10, 0, 0), (2, 4, 0), (8, 4, 0));
+  Assert(Math.Abs(parallel.Distance - 4.0) < 1e-9, "Two parallel pipes 4 apart.");
+  var samples = PipeMath.SampleParameters(12, 5);
+  Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
+
+  Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text and pipe arithmetic checks passed.");
 }
 finally
 {
