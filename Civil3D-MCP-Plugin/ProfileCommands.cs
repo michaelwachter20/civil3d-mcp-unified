@@ -106,13 +106,16 @@ public static class ProfileCommands
     });
   }
 
+  // The most samples one sampleProfileElevations call returns.
+  private const int MaxProfileSamples = 100_000;
+
   /// <summary>
   /// Elevation and grade every <c>interval</c> from <c>startStation</c> to <c>endStation</c> (default: the profile's
   /// own range). The end station is included only when it falls on the interval. Used by civil3d_profile's
   /// <c>sample_elevations</c> and <c>report</c> actions. Read only.
   /// </summary>
-  // NOTE: nothing here or in profileDomain.ts's sample_elevations schema refuses an interval of zero or less, which
-  // would make the loop below run forever on the AutoCAD main thread, growing the samples list until memory runs out.
+  // An interval of zero or less would make the loop below run forever on the AutoCAD main thread, so it is refused
+  // (here and in profileDomain.ts's schema), and so is one giving more than MaxProfileSamples samples.
   public static Task<object?> SampleProfileElevationsAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -120,6 +123,10 @@ public static class ProfileCommands
     var interval = PluginRuntime.GetRequiredDouble(parameters, "interval");
     var startStation = PluginRuntime.GetOptionalDouble(parameters, "startStation");
     var endStation = PluginRuntime.GetOptionalDouble(parameters, "endStation");
+    if (!(interval > 0) || double.IsInfinity(interval))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'interval' must be a positive number (got {interval}).");
+    }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -127,6 +134,12 @@ public static class ProfileCommands
       var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForRead);
       var from = startStation ?? profile.StartingStation;
       var to = endStation ?? profile.EndingStation;
+      if ((to - from) / interval > MaxProfileSamples)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"An interval of {interval} gives more than {MaxProfileSamples:N0} samples from {from} to {to}; use a larger one.");
+      }
+
       var samples = new List<Dictionary<string, object?>>();
 
       for (var station = from; station <= to; station += interval)

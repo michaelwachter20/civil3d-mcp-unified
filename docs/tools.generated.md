@@ -81,11 +81,11 @@ Generated from the runtime manifest for civil3d-mcp 2.4.0. Do not edit by hand.
 | `civil3d_stm` | hydrology | list_ssa_capabilities, export_stm, import_stm, open_storm_sanitary_analysis | listSsaCapabilities, exportStm, importStm, openStormSanitaryAnalysis | no |
 | `civil3d_time_of_concentration` | hydrology | list_tc_methods, calculate_tc, generate_hydrograph | listTcMethods, calculateTimeOfConcentration, generateHydrograph | yes |
 | `civil3d_job` | job | start, status, cancel | startJob, getJobStatus, cancelJob | no |
-| `civil3d_parcel` | parcel | list_sites, list, get, create, edit, lot_line_adjust, report | listParcelSites, listParcels, getParcel, createParcel, editParcel, adjustParcelLotLine, reportParcels | no |
+| `civil3d_parcel` | parcel | list_sites, list, get, create, edit, lot_line_adjust, report, export_report | listParcelSites, listParcels, getParcel, createParcel, editParcel, adjustParcelLotLine, reportParcels | no |
 | `civil3d_parcel_create` | parcel | — | createParcel | no |
 | `civil3d_parcel_edit` | parcel | — | editParcel | no |
 | `civil3d_parcel_lot_line_adjust` | parcel | — | adjustParcelLotLine | no |
-| `civil3d_parcel_report` | parcel | — | reportParcels | yes |
+| `civil3d_parcel_report` | parcel | report, export_report | reportParcels | no |
 | `civil3d_pipe` | pipe | list, get, get_pipe, get_structure, check_interference, create, add_pipe, add_structure, catalog_list, calculate_hgl, hydraulic_analysis, get_structure_properties, size_network, automate_profile_view, list_pressure_networks, get_pressure_network, create_pressure_network, delete_pressure_network, assign_pressure_parts_list, set_pressure_cover, validate_pressure_network, export_pressure_network, connect_pressure_networks, add_pressure_pipe, get_pressure_pipe_properties, resize_pressure_pipe, add_pressure_fitting, get_pressure_fitting_properties, add_pressure_appurtenance | listPipeNetworks, getPipeNetwork, getPipe, getStructure, checkPipeNetworkInterference, createPipeNetwork, addPipeToNetwork, addStructureToNetwork, listPipePartsCatalog, calculatePipeNetworkHgl, analyzePipeNetworkHydraulics, getPipeStructureProperties, resizePipeInNetwork, listProfiles, createProfileFromSurface, profileViewCreate, listPressureNetworks, getPressureNetworkInfo, createPressureNetwork, deletePressureNetwork, assignPressurePartsList, setPressureNetworkCover, validatePressureNetwork, exportPressureNetwork, connectPressureNetworks, addPressurePipe, getPressurePipeProperties, resizePressurePipe, addPressureFitting, getPressureFittingProperties, addPressureAppurtenance | no |
 | `civil3d_pipe_catalog` | pipe | — | listPipePartsCatalog | yes |
 | `civil3d_pipe_hydraulic_analysis` | pipe | — | analyzePipeNetworkHydraulics | yes |

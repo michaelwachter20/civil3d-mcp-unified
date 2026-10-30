@@ -65,6 +65,7 @@ const canonicalParcelInputShape = {
     "edit",
     "lot_line_adjust",
     "report",
+    "export_report",
   ]),
   siteName: z.string().optional(),
   parcelName: z.string().optional(),
@@ -144,6 +145,16 @@ const ParcelLotLineAdjustArgsSchema = z.object({
  * the site. With `outputPath` the rows are also written to a .csv inside the export roots (FileBoundary.cs; an
  * existing file only with `overwrite`). `units` converts the area from square feet: sqft, acres, sqm or ha.
  */
+const ParcelExportReportArgsSchema = z.object({
+  action: z.literal("export_report"),
+  siteName: z.string(),
+  parcelNames: z.array(z.string()).optional(),
+  outputPath: z.string(),
+  overwrite: z.boolean().optional(),
+  includeCoordinates: z.boolean().optional(),
+  units: z.enum(["sqft", "acres", "sqm", "ha"]).optional(),
+});
+
 const ParcelReportArgsSchema = z.object({
   action: z.literal("report"),
   siteName: z.string(),
@@ -261,9 +272,8 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // NOTE: with `outputPath` this writes a CSV file, yet it is declared query/analyze/generate and safeForRetry, so
-    // approvalPolicy.ts asks no approval for the write (FileBoundary.cs still refuses paths outside the export roots
-    // and overwriting without `overwrite`). Its area conversion (ConvertArea) also assumes the drawing is in feet.
+    // Read only; writing the CSV is export_report (approval first). NOTE: its area conversion (ConvertArea) assumes the
+    // drawing is in feet.
     report: {
       action: "report",
       inputSchema: ParcelReportArgsSchema,
@@ -272,11 +282,37 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["reportParcels"],
+      // Read only: the report comes back in the answer. Writing it to a file is export_report, which needs approval.
+      execute: async (args) => {
+        if (args.outputPath) {
+          throw new Error("report only reads; to write the report to a file use action export_report (it needs the user's approval).");
+        }
+        return await withApplicationConnection(
+          async (appClient) => await appClient.sendCommand("reportParcels", {
+            siteName: args.siteName,
+            parcelNames: args.parcelNames ?? null,
+            outputPath: null,
+            overwrite: false,
+            includeCoordinates: args.includeCoordinates ?? false,
+            units: args.units ?? "sqft",
+          }),
+        );
+      },
+    },
+    // The parcel report written to a CSV file (inside the export roots): a file is written, so approval first.
+    export_report: {
+      action: "export_report",
+      inputSchema: ParcelExportReportArgsSchema,
+      responseSchema: GenericParcelResponseSchema,
+      capabilities: ["export"],
+      requiresActiveDrawing: true,
+      safeForRetry: false,
+      pluginMethods: ["reportParcels"],
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("reportParcels", {
           siteName: args.siteName,
           parcelNames: args.parcelNames ?? null,
-          outputPath: args.outputPath ?? null,
+          outputPath: args.outputPath,
           overwrite: args.overwrite ?? false,
           includeCoordinates: args.includeCoordinates ?? false,
           units: args.units ?? "sqft",
@@ -290,7 +326,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Parcel",
       description: "Reads, creates, edits, adjusts, and reports Civil 3D parcel and site data through a single domain tool.",
       inputShape: canonicalParcelInputShape,
-      supportedActions: ["list_sites", "list", "get", "create", "edit", "lot_line_adjust", "report"],
+      supportedActions: ["list_sites", "list", "get", "create", "edit", "lot_line_adjust", "report", "export_report"],
       resolveAction: (rawArgs) => ({
         action: String(rawArgs.action ?? ""),
         args: rawArgs,
@@ -384,11 +420,11 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         includeCoordinates: z.boolean().optional(),
         units: z.enum(["sqft", "acres", "sqm", "ha"]).optional(),
       },
-      supportedActions: ["report"],
+      supportedActions: ["report", "export_report"],
       resolveAction: (rawArgs) => ({
-        action: "report",
+        action: rawArgs.outputPath ? "export_report" : "report",
         args: {
-          action: "report",
+          action: rawArgs.outputPath ? "export_report" : "report",
           siteName: rawArgs.siteName,
           parcelNames: rawArgs.parcelNames,
           outputPath: rawArgs.outputPath,

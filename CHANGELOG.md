@@ -11,6 +11,12 @@
   `working_safely_in_civil3d` say so; the daily field import skill (which applies duplicate offsets itself) asks
   once per run.
 
+- **Guards on actions that could do harm by mistake.** `civil3d_point` `transform` with no `pointNumbers` or
+  `groupName` used to move every point in the drawing; that now takes `allPoints: true`. The parcel report only reads;
+  writing it to a CSV is the new `civil3d_parcel` `export_report`, which needs approval like any export, and so does
+  `civil3d_qc` `generate_report`, which writes a file. Profile sampling (`sample_elevations`) refuses an interval of
+  zero or less, which made the plugin loop forever and freeze Civil 3D, and any interval giving over 100,000 samples.
+
 - **Point import and export: easting and northing were swapped.** `pnezd` read the northing as X; `penz` read the
   elevation as Y and the northing as Z; the export wrote the same way, so files from it were wrong in other programs.
   Now X is the easting and Y the northing in every format, both ways (`PointText`). Numbers are read and written with

@@ -217,13 +217,13 @@ export const QC_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // NOTE: this writes a file, but its capabilities (query, analyze, generate) include none of approvalPolicy.ts's
-    // mutating ones and its name matches no approval word, so it runs without an approval token.
+    // Writes a text file (inside the export roots), so it is declared "export" and needs the user's approval.
     generate_report: {
       action: "generate_report",
       inputSchema: QcReportArgsSchema,
       responseSchema: GenericQcResponseSchema,
-      capabilities: ["query", "analyze", "generate"],
+      // Writes a file: "export" makes it need the user's approval, as every other file-writing action does.
+      capabilities: ["query", "analyze", "generate", "export"],
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["qcReportGenerate"],

@@ -128,7 +128,7 @@ const ProfileSampleElevationsArgsSchema = z.object({
   action: z.literal("sample_elevations"),
   alignmentName: z.string(),
   profileName: z.string(),
-  interval: z.number(),
+  interval: z.number().positive(),
   startStation: z.number().optional(),
   endStation: z.number().optional(),
 });

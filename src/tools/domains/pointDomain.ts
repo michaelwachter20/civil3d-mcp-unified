@@ -55,11 +55,12 @@ const PointGroupsResponseSchema = z.object({
 
 /**
  * Which points `transform` moves: the listed numbers, else the members of the point group. With neither, the plugin
- * moves every point in the drawing.
+ * moves every point in the drawing, so the action asks for allPoints: true then.
  */
 const PointTransformSelectionShape = {
   pointNumbers: z.array(z.number().int().positive()).optional(),
   groupName: z.string().optional(),
+  allPoints: z.boolean().optional().describe("transform: true to move every point in the drawing (needed when no pointNumbers or groupName is given)"),
 };
 
 /**
@@ -90,6 +91,7 @@ const canonicalPointInputShape = {
   startNumber: z.number().optional(),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
   data: z.string().optional(),
+  allPoints: z.boolean().optional().describe("transform: true to move every point in the drawing"),
   path: z.string().optional().describe("import_file: the point file, inside the import roots"),
   fileFormat: z.string().optional().describe("import_file: a Civil 3D point file format name, e.g. \"PNEZD (comma delimited)\" (list_formats)"),
   pointGroup: z.string().optional().describe("import_file: put the imported points in this point group (created when missing)"),
@@ -412,8 +414,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // NOTE: with neither pointNumbers nor groupName, TransformCogoPointsAsync moves every point in the drawing; nothing
-    // here or in the plugin asks for an explicit "all", although points are usually survey data.
+    // The plugin moves every point in the drawing when given no pointNumbers or groupName, so that needs allPoints: true.
     transform: {
       action: "transform",
       inputSchema: PointTransformArgsSchema,
@@ -422,7 +423,14 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["transformCogoPoints"],
-      execute: async (args) => await withApplicationConnection(
+      // Without pointNumbers or groupName the plugin moves every point in the drawing; that has to be asked for
+      // in so many words (allPoints: true), so a forgotten selection can't move all the survey data.
+      execute: async (args) => {
+        const named = Array.isArray(args.pointNumbers) && args.pointNumbers.length > 0;
+        if (!named && !args.groupName && args.allPoints !== true) {
+          throw new Error("Name the points to move (pointNumbers or groupName), or pass allPoints: true to move every point in the drawing.");
+        }
+        return await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("transformCogoPoints", {
           pointNumbers: args.pointNumbers ?? null,
           groupName: args.groupName ?? null,
@@ -432,7 +440,8 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
           rotateRadians: args.rotateRadians ?? 0,
           scaleFactor: args.scaleFactor ?? 1.0,
         }),
-      ),
+        );
+      },
     },
   },
   exposures: [
@@ -576,6 +585,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
           action: "transform",
           pointNumbers: rawArgs.pointNumbers,
           groupName: rawArgs.groupName,
+          allPoints: rawArgs.allPoints,
           translateX: rawArgs.translateX,
           translateY: rawArgs.translateY,
           translateZ: rawArgs.translateZ,
