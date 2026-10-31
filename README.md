@@ -296,6 +296,16 @@ command line:
 - Calls known to **crash Civil 3D** are refused before the script runs, in every mode, with a pointer to the safe
   helper. Today that's `SampleLineGroup.GetSectionSources()`, which updates the group and crashes Civil 3D
   (`eNotOpenForWrite`) on a group opened for read; use `SectionSources` / `SetSectionSources`.
+- **Points come in through Civil 3D's own importer.** `civil3d_point action=import_file` imports a point file with
+  a Civil 3D point file format (`list_formats`), as Import Points does by hand. Any other way of making points
+  (`create`, `import` with typed-in data, C# or a saved script that adds points, the CREATEPOINTS commands) first
+  opens a window in Civil 3D that only you can answer; no answer in 60 seconds counts as no.
+  `CIVIL3D_POINT_CREATION=off` refuses them without asking.
+- **A misspelled style, layer or site name is refused**, with the names the drawing has, instead of quietly using the
+  first style or the current layer.
+- **Easy mistakes are guarded.** `civil3d_point action=transform` with no point numbers or group needs
+  `allPoints: true`, and writing a report to a file (`civil3d_parcel action=export_report`, `civil3d_qc
+  action=generate_report`) needs approval like any export.
 - Scripts time out after 110 seconds (`CIVIL3D_SCRIPT_TIMEOUT_SECONDS`). For
   cancellation to work, long loops must check `CancellationToken`. A tight loop
   that never checks it can't be interrupted and will freeze Civil 3D.
@@ -529,7 +539,7 @@ names for actions already available through a canonical domain tool.
 
 | Surface | Exposed tools | How to call an operation |
 |---|---:|---|
-| Default MCP client | 42 | Call a canonical domain tool and provide `action`. |
+| Default MCP client | 43 | Call a canonical domain tool and provide `action`. |
 | MCP client with aliases enabled | 200+ | Use either canonical tools or specialized alias names. |
 | HTTP `/execute` and orchestration | 200+ | All registered routes remain internally callable in either mode. |
 
@@ -1277,7 +1287,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 42-tool surface. |
+| `CIVIL3D_ENABLE_TOOL_ALIASES` | `false` | Set to `true` before the MCP server starts to expose all specialized aliases instead of the compact 43-tool surface. |
 | `CIVIL3D_APPROVAL_MODE` | enforced | Set to `disabled` only in an isolated disposable test environment; production should retain parameter-bound approvals. |
 | `CIVIL3D_SKILLS_DIR` | bundled `skills/` | Optional folder of replacement built-in `*.skill.md` C# templates for `civil3d_skills`. |
 | `PROJECT_KNOWLEDGE_DIR` | `Documents\Project Knowledge` | The suite's shared folder: `practices.json` and `projects\<job>.db` (one project database per job), shared with Project Analyzer and TBC MCP, plus Civil 3D MCP's own `civil3d\` folder. Keep it on a local disk. When it isn't set and `Documents\Project Knowledge` doesn't exist, an existing earlier folder (`Documents\Civil3DMcp-KnowledgeBase`, then `Documents\Civil3DMcp`) is used as it is. |
@@ -1295,6 +1305,7 @@ The Node MCP server reads the following variables at startup. All are optional; 
 | `CIVIL3D_SCRIPT_UNDO_GROUP` | `true` | Wraps each write run in `UNDO BEGIN/END` so a single undo reverts it. |
 | `CIVIL3D_READ_CONTEXT` | `application` | Read-only requests run outside command context so they don't add empty `EXECUTEFUNCTION` undo steps. Set to `command` to restore the old behavior. Reads fall back to command context while a command is active. |
 | `CIVIL3D_FOLLOW_VIEW` | `true` | After any MCP write (fixed tools or scripts), pans the model-space view to show what changed, zooming out only if it doesn't fit. Toggle at runtime with `C3DMCPFOLLOW`. |
+| `CIVIL3D_POINT_CREATION` | `ask` | How points made any way other than `import_file` are handled: `ask` opens a window in Civil 3D that only the user can answer, `off` refuses them, `allow` skips the window (unattended test setups only). |
 | `CIVIL3D_SCRIPT_SANDBOX` | enforced | `disabled` skips the host-protection patterns (processes, network, reflection...). Read-only rules for `civil3d_query` always apply. |
 
 ### Local Autodesk help search
@@ -1381,7 +1392,7 @@ failure cannot remain silent.
 | `GET` | `/health/plugin` | Native plugin health and drawing telemetry. |
 | `GET` | `/health/queue` | Host queue and background-job health. |
 | `GET` | `/health/version` | Package, MCP SDK, and Node dependency versions without probing Civil 3D. |
-| `GET` | `/tools` | Full internal route catalog (219 names), independent of compact MCP exposure. |
+| `GET` | `/tools` | Full internal route catalog (217 names), independent of compact MCP exposure. |
 | `POST` | `/execute` | `{ "tool": "<name>", "parameters": { ... } }` — invokes any registered tool or legacy alias. |
 
 ### Example: enable the shared-secret token
@@ -1455,7 +1466,7 @@ use the default loopback endpoint.
 - Use the corresponding list tool first (e.g. `civil3d_alignment` → `list` action)
 
 **"I cannot see a specialized alias in my MCP client"**
-- This is expected with the recommended compact 42-tool surface
+- This is expected with the recommended compact 43-tool surface
 - Call the canonical domain tool with its `action`, or set `CIVIL3D_ENABLE_TOOL_ALIASES=true` in the MCP server configuration
 - Restart the MCP client connection after changing the environment; changing an unrelated terminal does not update an already-running client-managed server
 - Use `civil3d://catalog/tools` or [tools.generated.md](./docs/tools.generated.md) to map aliases to canonical actions
