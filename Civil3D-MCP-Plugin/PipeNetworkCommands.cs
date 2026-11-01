@@ -543,6 +543,15 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Structure '{structureName}' was not found in network '{CivilObjectUtils.GetName(network)}'.");
   }
 
+  /// <summary>The pipe networks that take this surface as their reference.</summary>
+  internal static List<string> NetworksOnSurface(object civilDoc, Transaction transaction, ObjectId surfaceId)
+  {
+    return EnumeratePipeNetworks(civilDoc, transaction, OpenMode.ForRead)
+      .Where(network => Reference(() => network.ReferenceSurfaceId) == surfaceId)
+      .Select(network => network.Name)
+      .ToList();
+  }
+
   /// <summary>A network's reference surface or alignment; Civil 3D throws on these when none was ever set.</summary>
   private static ObjectId Reference(Func<ObjectId> read)
   {

@@ -31,7 +31,15 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
 - **The sandbox reads what a script compiles to,** so `using F = System.IO.File;` can't step around it. Every skill's
   template now compiles.
 
-- **Still refused, because Civil 3D's API has no way:** grading groups, parcel creation.
+- **More tools that do what they say:** `add_spiral` builds a spiral-curve-spiral between two tangents (it now takes
+  their indexes, the radius and the lengths), `widen_transition` an offset alignment that widens between two stations,
+  `set_grade` moves the PVI down station, and `sheet_publish_pdf` plots layouts and answers once the file exists.
+
+- **Pipe hydraulics at the real depth:** velocity and Froude number come from the part-full depth, not the full area, so a
+  lightly loaded pipe no longer fails a minimum velocity it meets. `minCoverDepth` is checked. Surface delete refuses a
+  surface in use, and `get` lists what uses it. A new viewport looks at the drawing, not the origin.
+
+- **Still refused, because Civil 3D's API has no way:** grading groups, parcel creation, running a watershed analysis.
 
 - **New scripts no longer eat Civil 3D's memory.** Every new C# script kept about 460 MB until a day's testing reached 19
   GB and ran a 7 GB computer out of memory. Half was the loaded assemblies read again because each script changed their

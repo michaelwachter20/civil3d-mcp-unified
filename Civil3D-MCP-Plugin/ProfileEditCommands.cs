@@ -129,10 +129,51 @@ public static class ProfileEditCommands
     var entityIndex = (int)(PluginRuntime.GetRequiredDouble(parameters, "entityIndex"));
     var grade = PluginRuntime.GetRequiredDouble(parameters, "grade");
 
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Cannot set grade {grade} on profile entity {entityIndex} in '{profileName}': ProfileTangent.Grade is read-only in the Civil 3D .NET API. " +
-      "Edit the adjoining PVIs instead.");
+    if (Math.Abs(grade) > 1)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Grade is a fraction, as get shows it: 2% is 0.02, not {grade}.");
+    }
+
+    // A tangent's grade can't be set directly (Civil 3D keeps it read-only): it comes from the PVIs at its ends, so the
+    // PVI up station stays and the one down station moves. The next tangent's grade changes with it.
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
+      var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForWrite);
+      var entities = profile.Entities.Cast<ProfileEntity>().ToList();
+      if (entityIndex < 0 || entityIndex >= entities.Count)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Entity index {entityIndex} is out of range: profile '{profile.Name}' has {entities.Count} entities.");
+      }
+
+      if (entities[entityIndex] is not ProfileTangent tangent)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Entity {entityIndex} of profile '{profile.Name}' is a curve: a grade belongs to a tangent.");
+      }
+
+      var pvis = profile.PVIs.Cast<ProfilePVI>().OrderBy(pvi => pvi.RawStation).ToList();
+      var before = pvis.LastOrDefault(pvi => pvi.RawStation <= tangent.StartStation + 0.001);
+      var after = pvis.FirstOrDefault(pvi => pvi.RawStation >= tangent.EndStation - 0.001);
+      if (before == null || after == null)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"No PVIs found at the ends of entity {entityIndex} of profile '{profile.Name}'.");
+      }
+
+      var previousElevation = after.Elevation;
+      var elevation = before.Elevation + grade * (after.RawStation - before.RawStation);
+      after.Elevation = elevation;
+      return new Dictionary<string, object?>
+      {
+        ["alignmentName"] = alignment.Name,
+        ["profileName"] = profile.Name,
+        ["entityIndex"] = entityIndex,
+        ["grade"] = grade,
+        ["pviStation"] = after.RawStation,
+        ["previousElevation"] = previousElevation,
+        ["elevation"] = elevation,
+        ["success"] = true,
+      };
+    });
   }
 
   // ─── profileGetElevation ──────────────────────────────────────────────────

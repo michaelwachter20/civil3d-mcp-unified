@@ -321,6 +321,15 @@ try
   Assert(run.Count == 11 && run[^1] == 1250, "1000 to 1262.5 every 25 stops at 1250.");
   Assert(StationMath.IntervalStations(0, 100, 0).Count == 0 && StationMath.IntervalStations(100, 0, 10).Count == 0,
     "No stations for a zero interval or an end before the start.");
+  // Half full carries half the flow at full velocity, the textbook check on the part-full curve.
+  var halfFull = PipeMath.PartFull(0.5);
+  Assert(Math.Abs(halfFull.DepthRatio - 0.5) < 0.005 && Math.Abs(halfFull.AreaRatio - 0.5) < 0.01 && Math.Abs(halfFull.TopWidthRatio - 1) < 0.01,
+    $"Half the flow runs about half full: y/D {halfFull.DepthRatio}.");
+  var tenth = PipeMath.PartFullFlow(1, 10, 2, "feet");
+  var fullVelocity = 10 / (Math.PI * 2 * 2 / 4);
+  Assert(tenth.Velocity > 0.55 * fullVelocity && tenth.Velocity < 0.7 * fullVelocity && tenth.DepthRatio > 0.2 && tenth.DepthRatio < 0.25,
+    $"A tenth of capacity runs near 0.6 of full velocity: {tenth.Velocity / fullVelocity}.");
+  Assert(PipeMath.PartFull(1.2).DepthRatio == 1 && PipeMath.PartFullFlow(12, 10, 2, "feet").Froude == 0, "Over capacity counts as full.");
   var cultureBefore = System.Globalization.CultureInfo.CurrentCulture;
   try
   {

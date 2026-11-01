@@ -109,10 +109,45 @@ public static class SurfaceCommands
         },
         ["units"] = CivilObjectUtils.LinearUnits(database),
         ["isReference"] = surface.IsReferenceObject,
-        ["dependentAlignments"] = new List<string>(),
-        ["dependentCorridors"] = new List<string>(),
+        ["dependentAlignments"] = Dependents(civilDoc, transaction, surface.ObjectId).Alignments,
+        ["dependentCorridors"] = Dependents(civilDoc, transaction, surface.ObjectId).Corridors,
       };
     });
+  }
+
+  /// <summary>
+  /// What uses a surface: alignments with a profile sampled from it, corridors with a target on it, pipe networks with
+  /// it as their reference.
+  /// </summary>
+  private static (List<string> Alignments, List<string> Corridors, List<string> Networks) Dependents(
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, ObjectId surfaceId)
+  {
+    var alignments = new List<string>();
+    foreach (ObjectId alignmentId in civilDoc.GetAlignmentIds())
+    {
+      var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignmentId, OpenMode.ForRead);
+      // Only a surface profile has a source: asking a layout profile for one throws.
+      if (alignment.GetProfileIds().Cast<ObjectId>()
+        .Select(id => CivilObjectUtils.GetRequiredObject<Profile>(transaction, id, OpenMode.ForRead))
+        .Any(profile => profile.ProfileType == ProfileType.EG && profile.DataSourceId == surfaceId))
+      {
+        alignments.Add(alignment.Name);
+      }
+    }
+
+    var corridors = new List<string>();
+    foreach (ObjectId corridorId in civilDoc.CorridorCollection)
+    {
+      var corridor = CivilObjectUtils.GetRequiredObject<Corridor>(transaction, corridorId, OpenMode.ForRead);
+      var targets = corridor.Baselines.SelectMany(baseline => baseline.BaselineRegions).SelectMany(region => region.GetTargets());
+      if (targets.Any(target => target.TargetIds.Contains(surfaceId)))
+      {
+        corridors.Add(corridor.Name);
+      }
+    }
+
+    var networks = PipeNetworkCommands.NetworksOnSurface(civilDoc, transaction, surfaceId);
+    return (alignments, corridors, networks);
   }
 
   /// <summary>Whether a surface has no points: its statistics and extents throw then ("no point or triangle").</summary>
@@ -282,6 +317,13 @@ public static class SurfaceCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForWrite);
+      var (alignments, corridors, networks) = Dependents(civilDoc, transaction, surface.ObjectId);
+      var users = alignments.Select(item => $"alignment {item}").Concat(corridors.Select(item => $"corridor {item}")).Concat(networks.Select(item => $"pipe network {item}")).ToList();
+      if (users.Count > 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Surface '{surface.Name}' is used by {string.Join(", ", users)}. Change those first.");
+      }
+
       surface.Erase();
       return new Dictionary<string, object?>
       {
@@ -842,7 +884,7 @@ public static class SurfaceCommands
         ["mergeAdjacentWatersheds"] = mergeAdjacent,
         ["watershedsAdded"] = watershedsAdded,
         ["watershedCount"] = watershedCount,
-        ["status"] = watershedsAdded ? "Watershed analysis added successfully" : "Watershed analysis may require manual configuration in Civil 3D",
+        ["status"] = watershedsAdded ? "Watershed analysis added successfully" : "Civil 3D's API can't run a watershed analysis: nothing was added. Run it on the Analysis tab of Surface Properties; trace_flow_path follows the water from a point.",
       };
     });
   }

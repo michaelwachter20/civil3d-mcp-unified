@@ -256,6 +256,19 @@ public static class PlanProductionCommands
       transaction.AddNewlyCreatedDBObject(viewport, true);
       viewport.On = true;
 
+      // A new viewport looks at the origin, which shows nothing on a job in state plane coordinates: aim it at the
+      // drawing. With no scale asked for, the whole of it fits.
+      if (CivilObjectUtils.ModelExtents(database, transaction) is Extents3d model)
+      {
+        var modelWidth = model.MaxPoint.X - model.MinPoint.X;
+        var modelHeight = model.MaxPoint.Y - model.MinPoint.Y;
+        viewport.ViewCenter = new Point2d(model.MinPoint.X + modelWidth / 2, model.MinPoint.Y + modelHeight / 2);
+        if (!scale.HasValue)
+        {
+          viewport.ViewHeight = Math.Max(modelHeight, modelWidth * height / width) * 1.05;
+        }
+      }
+
       // If a named view is requested, set it on the viewport
       if (!string.IsNullOrWhiteSpace(viewName))
       {
@@ -310,13 +323,26 @@ public static class PlanProductionCommands
     if (layoutNamesNode == null || layoutNamesNode.Count == 0)
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Parameter 'layoutNames' must be a non-empty array.");
 
-    _ = FileBoundary.ResolveExportPath(
+    var layoutNames = layoutNamesNode.Select(node => node?.GetValue<string>() ?? string.Empty).ToList();
+    var outputPath = FileBoundary.ResolveExportPath(
       PluginRuntime.GetRequiredString(parameters, "outputPath"),
       PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false,
       ".pdf");
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "PDF publishing requires a complete AutoCAD PlotEngine transaction and completion verification. The previous asynchronous PUBLISH fallback could report success before output existed, so no publish was started.");
+    var paperSize = PluginRuntime.GetOptionalString(parameters, "paperSize");
+    var plotStyleTable = PluginRuntime.GetOptionalString(parameters, "plotStyleTable");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var size = PdfPublisher.Publish(doc, transaction, layoutNames, outputPath, paperSize, plotStyleTable);
+      return new Dictionary<string, object?>
+      {
+        ["outputPath"] = outputPath,
+        ["sheetsPublished"] = layoutNames.Count,
+        ["layouts"] = layoutNames,
+        ["sizeBytes"] = size,
+        ["published"] = true,
+      };
+    });
   }
 
   // -------------------------------------------------------------------------

@@ -404,8 +404,7 @@ In order. Reviewed 2026-11-01, after the first live day. Details and every test 
 1. **Tests that need a person at Civil 3D:** the point windows, undo after a person's command, a drawing someone else
    holds, a parcel drawn by hand, view following.
 2. **What Civil 3D's API can't do:** decide for each whether to stop advertising it: grading groups, parcel `create`,
-   `add_spiral`, `widen_transition`, `set_grade`, `sheet_set_create`, `sheet_publish_pdf`. Also still open: `watershed_add`
-   adds nothing, surface delete doesn't check what depends on it.
+   `watershed_add`, `sheet_set_create`, `sheet_set_export`.
 3. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
 4. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
    file's old id stay with the old id; OneDrive placeholders may be refused by `FileBoundary` (suspected).

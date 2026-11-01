@@ -137,16 +137,17 @@ public static class PipeHydraulicsCommands
         double hydraulicRadius = diameter / 4.0;
         double qFull = PipeMath.FullFlowCapacity(diameter, pipe.Slope, manningsN, units);
         double vFull = area > 0 ? qFull / area : 0;
-        double froudeNumber = area > 0 ? vFull / Math.Sqrt(PipeMath.Gravity(units) * hydraulicRadius) : 0;
 
         double actualFlow = designFlow ?? qFull;
         double capacityRatio = qFull > 0 ? actualFlow / qFull : 0;
-        double velocity = area > 0 ? actualFlow / area : 0;
+        // At the depth this flow actually runs: Q over the full area understates it, badly in a lightly loaded pipe.
+        var (velocity, froudeNumber, depthRatio) = PipeMath.PartFullFlow(actualFlow, qFull, diameter, units);
 
         var pipeViolations = new List<string>();
         if (pipe.Slope < minSlope) pipeViolations.Add($"slope {pipe.Slope:F3}% < min {minSlope}%");
-        if (velocity < minVelocity) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocity} {PipeMath.VelocityUnit(units)}");
-        if (velocity > maxVelocity) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocity} {PipeMath.VelocityUnit(units)}");
+        if (pipe.Cover is double cover && cover < minCoverLimit) pipeViolations.Add($"cover {cover:F2} < min {minCoverLimit:0.##} {units}");
+        if (velocity < minVelocityLimit) pipeViolations.Add($"velocity {velocity:F2} < min {minVelocityLimit:0.##} {PipeMath.VelocityUnit(units)}");
+        if (velocity > maxVelocityLimit) pipeViolations.Add($"velocity {velocity:F2} > max {maxVelocityLimit:0.##} {PipeMath.VelocityUnit(units)}");
         if (capacityRatio > 1.0) pipeViolations.Add($"flow {actualFlow:F2} exceeds capacity {qFull:F2} {PipeMath.FlowUnit(units)}");
 
         var pipeResult = new Dictionary<string, object?>
@@ -161,7 +162,9 @@ public static class PipeHydraulicsCommands
           ["designFlowCfs"] = Math.Round(actualFlow, 3),
           ["capacityRatio"] = Math.Round(capacityRatio, 3),
           ["velocityFps"] = Math.Round(velocity, 3),
+          ["depthRatio"] = Math.Round(depthRatio, 3),
           ["froudeNumber"] = Math.Round(froudeNumber, 3),
+          ["cover"] = pipe.Cover is double known ? Math.Round(known, 3) : null,
           ["status"] = pipeViolations.Count > 0 ? "FAIL" : "OK",
           ["violations"] = pipeViolations,
         };
@@ -217,9 +220,10 @@ public static class PipeHydraulicsCommands
       var structure = FindStructureByName(network, transaction, structureName);
 
       var rimElevation = GetAnyDouble(structure, "RimElevation", "SurfaceElevation", "Elevation") ?? 0.0;
-      var sumpDepth = GetAnyDouble(structure, "SumpDepth") ?? 0.0;
-      var sumpElevation = GetAnyDouble(structure, "SumpElevation") ?? (rimElevation - sumpDepth);
+      var sumpElevation = GetAnyDouble(structure, "SumpElevation") ?? rimElevation;
+      // What add_structure's sumpDepth sets; Civil 3D's own SumpDepth is below the lowest pipe, and 0 here.
       var depth = rimElevation - sumpElevation;
+      var sumpDepth = depth;
 
       // Get connected pipes and their inverts
       var connectedPipes = new List<Dictionary<string, object?>>();
@@ -256,7 +260,7 @@ public static class PipeHydraulicsCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
-  private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut);
+  private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut, double? Cover = null);
   private sealed record StructureInfo(string Name, double RimElevation, double SumpElevation, List<string> ConnectedPipes);
 
   private static DBObject FindPipeNetworkByName(object civilDoc, Transaction transaction, string name)
@@ -294,6 +298,21 @@ public static class PipeHydraulicsCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Structure '{structureName}' was not found.");
   }
 
+  /// <summary>A pipe's least cover, or null with no reference surface: Civil 3D gives 0 then, not a real depth.</summary>
+  private static double? CoverOf(DBObject pipe)
+  {
+    try
+    {
+      return pipe is Pipe civilPipe && !civilPipe.RefSurfaceId.IsNull
+        ? Math.Min(civilPipe.CoverOfStartPoint, civilPipe.CoverOfEndpoint)
+        : null;
+    }
+    catch (Exception exception) when (exception.GetType().Name == "CivilException")
+    {
+      return null;
+    }
+  }
+
   /// <summary>A pipe's start invert: its end points are on the centerline, half the inner height above the invert.</summary>
   private static double InvertIn(Pipe pipe) => pipe.StartPoint.Z - pipe.InnerHeight / 2;
 
@@ -326,7 +345,7 @@ public static class PipeHydraulicsCommands
       var slope = (startPt is Point3d a && endPt is Point3d b ? PipeMath.SlopePercent(a.X, a.Y, a.Z, b.X, b.Y, b.Z) : null)
         ?? GetAnyDouble(pipe, "Slope", "FlowSlope") ?? (length > 0 ? (invertIn - invertOut) / length * 100 : 0);
       var diameter = GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 1.0;
-      results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut));
+      results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut, CoverOf(pipe)));
     }
     return results;
   }

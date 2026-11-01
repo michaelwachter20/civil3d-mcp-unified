@@ -67,7 +67,7 @@ internal static class ViewFollower
     var modelSpaceId = SymbolUtilityServices.GetBlockModelSpaceId(database);
     Extents3d? extents = null;
     using var transaction = database.TransactionManager.StartOpenCloseTransaction();
-    foreach (var id in ids)
+    foreach (var id in ids.Where(id => !CivilObjectUtils.IsHiddenAtOrigin(id)))
     {
       if (id.IsNull || id.IsErased || !id.IsValid || id.Database != database)
       {

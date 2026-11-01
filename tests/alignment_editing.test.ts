@@ -21,11 +21,11 @@ const AlignmentAddCurveSchema = z.object({
 const AlignmentAddSpiralSchema = z.object({
   alignmentName: z.string(),
   spiralType: z.enum(["clothoid", "cubic", "biquadratic"]).optional().default("clothoid"),
-  startX: z.number(),
-  startY: z.number(),
-  startRadius: z.number(),
-  endRadius: z.number(),
+  fromEntityIndex: z.number().int().min(0),
+  toEntityIndex: z.number().int().min(0),
+  radius: z.number().positive(),
   length: z.number().positive(),
+  lengthOut: z.number().positive().optional(),
 });
 
 const AlignmentDeleteEntitySchema = z.object({
@@ -177,10 +177,9 @@ describe("civil3d_alignment_add_spiral input schema", () => {
   it("defaults spiralType to clothoid", () => {
     const result = AlignmentAddSpiralSchema.parse({
       alignmentName: "Road",
-      startX: 1000,
-      startY: 2000,
-      startRadius: 0,
-      endRadius: 300,
+      fromEntityIndex: 0,
+      toEntityIndex: 1,
+      radius: 200,
       length: 80,
     });
     expect(result.spiralType).toBe("clothoid");
@@ -191,10 +190,9 @@ describe("civil3d_alignment_add_spiral input schema", () => {
       AlignmentAddSpiralSchema.safeParse({
         alignmentName: "Road",
         spiralType: "cubic",
-        startX: 1000,
-        startY: 2000,
-        startRadius: 0,
-        endRadius: 300,
+        fromEntityIndex: 0,
+        toEntityIndex: 1,
+        radius: 200,
         length: 80,
       }).success,
     ).toBe(true);
@@ -205,10 +203,9 @@ describe("civil3d_alignment_add_spiral input schema", () => {
       AlignmentAddSpiralSchema.safeParse({
         alignmentName: "Road",
         spiralType: "bloch",
-        startX: 1000,
-        startY: 2000,
-        startRadius: 0,
-        endRadius: 300,
+        fromEntityIndex: 0,
+        toEntityIndex: 1,
+        radius: 200,
         length: 80,
       }).success,
     ).toBe(false);
@@ -218,10 +215,9 @@ describe("civil3d_alignment_add_spiral input schema", () => {
     expect(
       AlignmentAddSpiralSchema.safeParse({
         alignmentName: "Road",
-        startX: 1000,
-        startY: 2000,
-        startRadius: 0,
-        endRadius: 300,
+        fromEntityIndex: 0,
+        toEntityIndex: 1,
+        radius: 200,
         length: 0,
       }).success,
     ).toBe(false);

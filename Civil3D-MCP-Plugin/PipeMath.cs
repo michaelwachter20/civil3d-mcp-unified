@@ -26,6 +26,66 @@ public static class PipeMath
     return horizontal < 1e-9 ? null : (startZ - endZ) / horizontal * 100.0;
   }
 
+  /// <summary>
+  /// A round pipe running part full: the depth ratio y/D at which Manning's equation carries <paramref name="flowRatio"/>
+  /// of the full-pipe flow, with the area and top width there as fractions of the full area and of D. A pipe carrying
+  /// little flow is shallow and faster than Q over the full area: at a tenth of capacity it runs at about 0.6 of full
+  /// velocity, not a tenth. At or above capacity it counts as full.
+  /// </summary>
+  public static (double DepthRatio, double AreaRatio, double TopWidthRatio) PartFull(double flowRatio)
+  {
+    if (flowRatio >= 1)
+    {
+      return (1, 1, 0);
+    }
+
+    if (flowRatio <= 0)
+    {
+      return (0, 0, 0);
+    }
+
+    // Flow rises with depth up to about 0.94 of D, so the first root below that is the normal depth.
+    double low = 0, high = 0.938;
+    for (var step = 0; step < 60; step++)
+    {
+      var middle = (low + high) / 2;
+      if (FlowRatioAtDepth(middle) < flowRatio) low = middle; else high = middle;
+    }
+
+    var depth = (low + high) / 2;
+    var angle = 2 * Math.Acos(1 - 2 * depth);
+    return (depth, (angle - Math.Sin(angle)) / (2 * Math.PI), Math.Sin(angle / 2));
+  }
+
+  private static double FlowRatioAtDepth(double depthRatio)
+  {
+    var angle = 2 * Math.Acos(1 - 2 * depthRatio);
+    var areaRatio = (angle - Math.Sin(angle)) / (2 * Math.PI);
+    var radiusRatio = 1 - Math.Sin(angle) / angle;
+    return areaRatio * Math.Pow(radiusRatio, 2.0 / 3.0);
+  }
+
+  /// <summary>Velocity and Froude number at a design flow, from the part-full depth (hydraulic depth = area / top width).</summary>
+  public static (double Velocity, double Froude, double DepthRatio) PartFullFlow(double flow, double fullFlow, double diameter, string linearUnits)
+  {
+    var fullArea = Math.PI * diameter * diameter / 4;
+    if (fullArea <= 0 || fullFlow <= 0)
+    {
+      return (0, 0, 0);
+    }
+
+    var (depthRatio, areaRatio, topWidthRatio) = PartFull(flow / fullFlow);
+    if (areaRatio <= 0)
+    {
+      return (0, 0, 0);
+    }
+
+    var velocity = flow / (fullArea * areaRatio);
+    // Full, a closed pipe has no free surface, so it has no Froude number to speak of.
+    var froude = topWidthRatio > 0 ? velocity / Math.Sqrt(Gravity(linearUnits) * fullArea * areaRatio / (diameter * topWidthRatio)) : 0;
+    return (velocity, froude, depthRatio);
+  }
+
   /// <summary>Manning's unit factor: 1.486 in feet, 1 in meters.</summary>
   public static double ManningsK(string linearUnits) => linearUnits == "feet" ? 1.486 : 1.0;
 

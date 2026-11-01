@@ -63,20 +63,55 @@ public static class AlignmentEditCommands
 
   // ─── alignmentAddSpiral ───────────────────────────────────────────────────
 
+  /// <summary>
+  /// A spiral-curve-spiral between two tangents of alignment <c>alignmentName</c>, the road layout's usual transition:
+  /// <c>fromEntityIndex</c> and <c>toEntityIndex</c> are the tangents (the index alignment get shows), <c>radius</c> the
+  /// curve, <c>length</c> the spiral in and <c>lengthOut</c> the spiral out (default the same). Two tangents with a
+  /// curve between them are refused by Civil 3D: delete_entity the curve first.
+  /// </summary>
   public static Task<object?> AddSpiralAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
-    var spiralType = PluginRuntime.GetOptionalString(parameters, "spiralType") ?? "clothoid";
-    var startX = PluginRuntime.GetRequiredDouble(parameters, "startX");
-    var startY = PluginRuntime.GetRequiredDouble(parameters, "startY");
-    var startRadius = PluginRuntime.GetRequiredDouble(parameters, "startRadius");
-    var endRadius = PluginRuntime.GetRequiredDouble(parameters, "endRadius");
+    var spiralName = PluginRuntime.GetOptionalString(parameters, "spiralType") ?? "clothoid";
+    var fromIndex = (int)PluginRuntime.GetRequiredDouble(parameters, "fromEntityIndex");
+    var toIndex = (int)PluginRuntime.GetRequiredDouble(parameters, "toEntityIndex");
+    var radius = PluginRuntime.GetRequiredDouble(parameters, "radius");
     var length = PluginRuntime.GetRequiredDouble(parameters, "length");
+    var lengthOut = PluginRuntime.GetOptionalDouble(parameters, "lengthOut") ?? length;
+    var spiralType = spiralName.ToLowerInvariant() switch
+    {
+      "clothoid" => Autodesk.Civil.SpiralType.Clothoid,
+      "cubic" => Autodesk.Civil.SpiralType.CubicParabola,
+      "biquadratic" => Autodesk.Civil.SpiralType.BiQuadratic,
+      _ => throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"spiralType must be clothoid, cubic or biquadratic, not '{spiralName}'."),
+    };
 
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Cannot add {spiralType} spiral '{alignmentName}' from ({startX}, {startY}) with radii {startRadius}/{endRadius} and length {length}: " +
-      "the Civil 3D AddFixedSpiral overloads require a previous entity id and additional geometric constraints not present in this tool schema. No spiral was created.");
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var found = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
+      var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, found.ObjectId, OpenMode.ForWrite);
+      var entities = alignment.Entities.Cast<AlignmentEntity>().ToList();
+      foreach (var index in new[] { fromIndex, toIndex })
+      {
+        if (index < 0 || index >= entities.Count)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Entity index {index} is out of range: alignment '{alignment.Name}' has {entities.Count} entities.");
+        }
+      }
+
+      var spiral = alignment.Entities.AddFreeSCS(entities[fromIndex].EntityId, entities[toIndex].EntityId, length, lengthOut, Autodesk.Civil.DatabaseServices.SpiralParamType.Length, radius, false, spiralType);
+      return new Dictionary<string, object?>
+      {
+        ["alignmentName"] = alignment.Name,
+        ["spiralType"] = spiralName,
+        ["radius"] = radius,
+        ["lengthIn"] = length,
+        ["lengthOut"] = lengthOut,
+        ["entityIndex"] = alignment.Entities.Cast<AlignmentEntity>().ToList().FindIndex(entity => entity.EntityId == spiral.EntityId),
+        ["newLength"] = alignment.Length,
+        ["success"] = true,
+      };
+    });
   }
 
   // ─── alignmentDeleteEntity ────────────────────────────────────────────────
@@ -217,19 +252,13 @@ public static class AlignmentEditCommands
     {
       var baseAlignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
 
-      // Build a variable-offset alignment using AlignmentOffsetOptions if available,
-      // or fall back to creating a simple offset and noting limitations.
-      var layerId = LookupUtils.GetLayerId(database, transaction, null);
+      // An offset alignment at the start offset, widened to the end offset between the two stations. Left of the
+      // parent is a negative offset; Civil 3D's widening takes the distance, on the side the alignment already is.
+      var signedOffset = string.Equals(side, "left", StringComparison.OrdinalIgnoreCase) ? -Math.Abs(startOffset) : Math.Abs(startOffset);
       var styleId = LookupUtils.GetAlignmentStyleId(civilDoc, transaction, null);
-      var labelSetId = LookupUtils.GetAlignmentLabelSetId(civilDoc, transaction, null);
-      var siteId = LookupUtils.GetSiteId(civilDoc, transaction, null);
-
-      // Attempt variable offset via Alignment.CreateOffsetAlignment with OffsetOptions
-      var offsetAlignmentId = TryCreateWidenTransition(
-        civilDoc, transaction, database,
-        baseAlignment, offsetName, side,
-        startStation, endStation, startOffset, endOffset,
-        siteId, layerId, styleId, labelSetId);
+      var offsetAlignmentId = Alignment.CreateOffsetAlignment(offsetName, baseAlignment.ObjectId, signedOffset, styleId);
+      CivilObjectUtils.GetRequiredObject<Alignment>(transaction, offsetAlignmentId, OpenMode.ForWrite)
+        .OffsetAlignmentInfo.AddWidening(startStation, endStation, Math.Abs(endOffset));
 
       var resultAlignment = CivilObjectUtils.GetRequiredObject<Alignment>(
         transaction, offsetAlignmentId, OpenMode.ForRead);
@@ -250,25 +279,4 @@ public static class AlignmentEditCommands
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────
-
-  private static ObjectId TryCreateWidenTransition(
-    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
-    Transaction transaction,
-    Database database,
-    Alignment baseAlignment,
-    string offsetName,
-    string side,
-    double startStation,
-    double endStation,
-    double startOffset,
-    double endOffset,
-    ObjectId siteId,
-    ObjectId layerId,
-    ObjectId styleId,
-    ObjectId labelSetId)
-  {
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Civil 3D does not expose Alignment.CreateWideningAlignment in the managed API. No constant-offset substitute was created.");
-  }
 }

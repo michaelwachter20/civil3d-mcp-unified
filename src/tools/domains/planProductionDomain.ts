@@ -9,11 +9,11 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * definitions into validated, approval-checked MCP tools. Every action forwards to one plugin method; nothing runs in
  * Node.
  *
- * Several plugin methods refuse by design and change nothing: `createSheetSet`, `createPlanProfileSheet`,
- * `publishSheetPdf` and `exportSheetSet` check their arguments (and the output path, through FileBoundary) and then
- * throw CIVIL3D.API_ERROR, because there is no documented managed API (or no way yet to verify the PDF was written).
- * The working actions are the reads, `sheet_add`, `sheet_set_title_block`, `plan_profile_sheet_update_alignment` and
- * the viewport actions. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`, so it refuses too.)
+ * Several plugin methods refuse by design and change nothing: `createSheetSet`, `createPlanProfileSheet` and
+ * `exportSheetSet` check their arguments (and the output path, through FileBoundary) and then throw CIVIL3D.API_ERROR,
+ * because there is no documented managed API. The working actions are the reads, `sheet_add`, `sheet_set_title_block`,
+ * `plan_profile_sheet_update_alignment`, the viewport actions and `sheet_publish_pdf`, which plots layouts with the plot
+ * engine and answers once the file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.)
  */
 
 /** One sheet in a sheet set, as the list and info answers give it. */
@@ -376,8 +376,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // sheet_publish_pdf and sheet_set_export: the plugin checks the output path (FileBoundary: export roots, .pdf,
-    // no overwrite without `overwrite: true`) and then refuses with CIVIL3D.API_ERROR; no file is written.
+    // The plugin checks the output path (FileBoundary: export roots, .pdf, no overwrite without `overwrite: true`).
+    // sheet_publish_pdf then plots; sheet_set_export refuses with CIVIL3D.API_ERROR and writes nothing.
     sheet_publish_pdf: {
       action: "sheet_publish_pdf",
       inputSchema: SheetPublishPdfArgsSchema,

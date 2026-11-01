@@ -21,6 +21,30 @@ public static class CivilObjectUtils
   }
 
   /// <summary>
+  /// Whether an object is the kind Civil 3D keeps at the origin whatever the drawing's coordinates: a pipe's connectors.
+  /// Counted in extents they pull a view from state plane coordinates back to 0,0, so nothing shows.
+  /// </summary>
+  public static bool IsHiddenAtOrigin(ObjectId id) => id.ObjectClass.Name.Contains("Connector", StringComparison.Ordinal);
+
+  /// <summary>Model space's extents from its objects, or null when it's empty. Database.Extmin isn't current during a write.</summary>
+  public static Extents3d? ModelExtents(Database database, Transaction transaction)
+  {
+    Extents3d? all = null;
+    var modelSpace = GetRequiredObject<BlockTableRecord>(transaction, SymbolUtilityServices.GetBlockModelSpaceId(database), OpenMode.ForRead);
+    foreach (ObjectId id in modelSpace)
+    {
+      if (!IsHiddenAtOrigin(id) && transaction.GetObject(id, OpenMode.ForRead) is Autodesk.AutoCAD.DatabaseServices.Entity { Bounds: { } bounds })
+      {
+        var grown = all ?? bounds;
+        grown.AddExtents(bounds);
+        all = grown;
+      }
+    }
+
+    return all;
+  }
+
+  /// <summary>
   /// An alignment entity's length. Not every kind of entity has a Length to read, and 0 made QC call sound tangents
   /// zero-length, so the stations it spans answer when it doesn't.
   /// </summary>

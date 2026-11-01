@@ -176,10 +176,8 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 
 | Still open | Why |
 |---|---|
-| Grading groups, parcel `create` | Civil 3D's API has no call for them; the tools say so |
-| `add_spiral`, `widen_transition`, `set_grade`, `sheet_set_create`, `sheet_publish_pdf`, survey writes | Refused, plainly |
-| `watershed_add` | Says when nothing was added; no working call found yet |
-| Surface delete | Doesn't check what depends on the surface |
+| Grading groups, parcel `create`, `watershed_add` | Civil 3D's API has no call for them; the tools say so |
+| `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
 | Parcel report vertices, `lot_line_adjust` | Need a parcel drawn by hand; not run |
 | Point windows (2.9 to 2.12), undo after a person's command (2.24), a person-held lock (3.27), view following | Need someone at Civil 3D |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
