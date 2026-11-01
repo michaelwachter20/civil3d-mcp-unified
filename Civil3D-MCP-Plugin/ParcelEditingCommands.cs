@@ -111,6 +111,11 @@ public static class ParcelEditingCommands
   // createParcel
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Makes parcels from an entity or a list of corners. It adds parcel lines to the site (ParcelCom), and Civil 3D forms
+  /// a parcel wherever they close a loop, so a line across an existing parcel splits it in two. The new parcels are the
+  /// ones that weren't there before. All of it is one undo step, and lines that formed no parcel are taken out again.
+  /// </summary>
   public static Task<object?> CreateParcelAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
@@ -118,55 +123,115 @@ public static class ParcelEditingCommands
     var sourceHandle = PluginRuntime.GetOptionalString(parameters, "sourceHandle");
     var style = PluginRuntime.GetOptionalString(parameters, "style");
     var areaLabelStyle = PluginRuntime.GetOptionalString(parameters, "areaLabelStyle");
-    var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
+    var corners = CornersOf(PluginRuntime.GetParameter(parameters, "points") as JsonArray);
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    if (string.IsNullOrWhiteSpace(sourceHandle) && corners.Count < 3)
     {
-      var site = FindSiteByName(civilDoc, transaction, siteName);
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        "createParcel requires either a sourceHandle (entity handle) or a points array with ≥3 vertices.");
+    }
 
-      ObjectId newParcelId = ObjectId.Null;
+    return CivilExecution.WithDocumentLockAsync<object?>((doc, civilDoc) =>
+    {
+      var database = doc.Database;
+      HashSet<ObjectId> before;
+      object? sourceEntity = null;
+      using (var transaction = database.TransactionManager.StartOpenCloseTransaction())
+      {
+        before = EnumerateParcelIds(FindSiteByName(civilDoc, transaction, siteName), transaction).ToHashSet();
+        if (!string.IsNullOrWhiteSpace(sourceHandle))
+        {
+          if (!database.TryGetObjectId(new Handle(Convert.ToInt64(sourceHandle, 16)), out var entityId) || entityId.IsNull)
+          {
+            throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Entity with handle '{sourceHandle}' was not found.");
+          }
 
-      if (!string.IsNullOrWhiteSpace(sourceHandle))
-      {
-        // Create from existing entity handle
-        var handle = new Handle(Convert.ToInt64(sourceHandle, 16));
-        if (!database.TryGetObjectId(handle, out var entityId) || entityId.IsNull)
-          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
-            $"Entity with handle '{sourceHandle}' was not found.");
-
-        newParcelId = CreateParcelFromEntity(site, entityId, parcelName, transaction);
-      }
-      else if (pointsNode != null && pointsNode.Count >= 3)
-      {
-        // Create from vertex list
-        newParcelId = CreateParcelFromPoints(site, pointsNode, parcelName, database, transaction);
-      }
-      else
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
-          "createParcel requires either a sourceHandle (entity handle) or a points array with ≥3 vertices.");
+          sourceEntity = transaction.GetObject(entityId, OpenMode.ForRead).AcadObject;
+        }
       }
 
-      if (newParcelId.IsNull)
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Parcel was not created. Check that the boundary is closed and forms a valid area.");
-
-      var parcel = CivilObjectUtils.GetRequiredObject<Parcel>(transaction, newParcelId, OpenMode.ForWrite);
-
-      // Apply optional properties
-      if (!string.IsNullOrWhiteSpace(parcelName)) CivilObjectUtils.TrySetName(parcel, parcelName);
-      if (!string.IsNullOrWhiteSpace(style)) ApplyStyleToParcel(parcel, style, civilDoc, transaction);
-      if (!string.IsNullOrWhiteSpace(areaLabelStyle)) ApplyLabelStyleToParcel(parcel, areaLabelStyle, civilDoc, transaction);
-
-      return new Dictionary<string, object?>
+      var segments = ParcelCom.FindSite(siteName).ParcelSegments;
+      var added = new List<dynamic>();
+      dynamic document = Autodesk.AutoCAD.ApplicationServices.DocumentExtension.GetAcadDocument(doc);
+      document.StartUndoMark();
+      try
       {
-        ["siteName"] = siteName,
-        ["name"] = parcel.Name,
-        ["handle"] = CivilObjectUtils.GetHandle(parcel),
-        ["area"] = parcel.Area,
-        ["perimeter"] = GetParcelPerimeter(parcel),
-        ["created"] = true,
-      };
+        if (sourceEntity != null)
+        {
+          added.Add(segments.AddFromEntity((dynamic)sourceEntity, false));
+        }
+        else
+        {
+          for (var index = 0; index < corners.Count; index++)
+          {
+            var (from, to) = (corners[index], corners[(index + 1) % corners.Count]);
+            added.Add(segments.AddLine(from.X, from.Y, to.X, to.Y));
+          }
+        }
+
+        using var transaction = database.TransactionManager.StartTransaction();
+        var site = FindSiteByName(civilDoc, transaction, siteName);
+        var created = EnumerateParcelIds(site, transaction).Where(id => !before.Contains(id)).ToList();
+        if (created.Count == 0)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+            "Parcel was not created: these lines close no area. Check that the boundary is closed and forms a valid area.");
+        }
+
+        var rows = new List<Dictionary<string, object?>>();
+        foreach (var id in created)
+        {
+          var parcel = CivilObjectUtils.GetRequiredObject<Parcel>(transaction, id, OpenMode.ForWrite);
+          if (!string.IsNullOrWhiteSpace(style)) ApplyStyleToParcel(parcel, style, civilDoc, transaction);
+          if (!string.IsNullOrWhiteSpace(areaLabelStyle)) ApplyLabelStyleToParcel(parcel, areaLabelStyle, civilDoc, transaction);
+          if (created.Count == 1 && !string.IsNullOrWhiteSpace(parcelName)) CivilObjectUtils.TrySetName(parcel, parcelName);
+          rows.Add(new Dictionary<string, object?>
+          {
+            ["name"] = parcel.Name,
+            ["handle"] = CivilObjectUtils.GetHandle(parcel),
+            ["area"] = parcel.Area,
+            ["perimeter"] = GetParcelPerimeter(parcel),
+          });
+        }
+
+        transaction.Commit();
+        return new Dictionary<string, object?>
+        {
+          ["siteName"] = siteName,
+          ["created"] = true,
+          ["parcelCount"] = rows.Count,
+          ["parcels"] = rows,
+        };
+      }
+      catch
+      {
+        for (var index = added.Count - 1; index >= 0; index--)
+        {
+          added[index].Delete();
+        }
+
+        throw;
+      }
+      finally
+      {
+        document.EndUndoMark();
+      }
     });
+  }
+
+  /// <summary>Corners from [x, y] pairs, without repeats: a list that ends where it began has no extra closing corner.</summary>
+  private static List<Point2d> CornersOf(JsonArray? pointsNode)
+  {
+    var corners = new List<Point2d>();
+    foreach (var node in pointsNode ?? [])
+    {
+      if (node is not JsonArray pair || pair.Count < 2) continue;
+      var corner = new Point2d(pair[0]?.GetValue<double>() ?? 0, pair[1]?.GetValue<double>() ?? 0);
+      if (corners.Count == 0 || !corners[^1].IsEqualTo(corner)) corners.Add(corner);
+    }
+
+    if (corners.Count > 1 && corners[0].IsEqualTo(corners[^1])) corners.RemoveAt(corners.Count - 1);
+    return corners;
   }
 
   // -------------------------------------------------------------------------
@@ -210,44 +275,16 @@ public static class ParcelEditingCommands
   // adjustParcelLotLine
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Neither Civil 3D's .NET API nor COM can slide a lot line to an area: it called methods that don't exist and said
+  /// "attempted" with nothing changed. The arguments stay so a caller learns this rather than a schema error.
+  /// </summary>
   public static Task<object?> AdjustParcelLotLineAsync(JsonObject? parameters)
   {
-    var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
     var parcelName = PluginRuntime.GetRequiredString(parameters, "parcelName");
-    var targetAreaSqFt = PluginRuntime.GetRequiredDouble(parameters, "targetAreaSqFt");
-    var lotLineHandle = PluginRuntime.GetOptionalString(parameters, "lotLineHandle");
-    var tolerance = PluginRuntime.GetOptionalDouble(parameters, "tolerance") ?? 1.0;
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var site = FindSiteByName(civilDoc, transaction, siteName);
-      var parcel = FindParcelByName(site, transaction, parcelName, OpenMode.ForRead);
-
-      // Try Civil 3D lot line slide API
-      var result = CivilObjectUtils.InvokeMethod(parcel, "AdjustLotLine",
-        targetAreaSqFt, tolerance, lotLineHandle);
-
-      if (result == null)
-      {
-        result = CivilObjectUtils.InvokeMethod(parcel, "SlideAngle",
-          targetAreaSqFt, tolerance);
-      }
-
-      var actualArea = parcel.Area;
-      var converged = Math.Abs(actualArea - TargetAreaToDrawingUnits(targetAreaSqFt, doc)) < tolerance;
-
-      return new Dictionary<string, object?>
-      {
-        ["siteName"] = siteName,
-        ["parcelName"] = parcelName,
-        ["targetAreaSqFt"] = targetAreaSqFt,
-        ["actualArea"] = actualArea,
-        ["converged"] = converged,
-        ["message"] = converged
-          ? $"Lot line adjusted. Parcel area is now {actualArea:F2} drawing units²."
-          : "Lot line adjustment attempted. Verify the result in Civil 3D.",
-      };
-    });
+    throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+      $"Nothing was changed: Civil 3D has no API for sliding a lot line, so '{parcelName}' can't be sized from here. " +
+      "Use Parcel Layout Tools (Slide Line) in Civil 3D.");
   }
 
   // -------------------------------------------------------------------------
@@ -358,63 +395,6 @@ public static class ParcelEditingCommands
     return points;
   }
 
-  private static ObjectId CreateParcelFromEntity(Site site, ObjectId entityId, string? name, Transaction transaction)
-  {
-    // Try Parcel.Create(siteId, entityId) or site.Parcels.Add(entityId)
-    var parcelsCollection = GetNamedMember(site, "Parcels") ?? GetNamedMember(site, "ParcelCollection");
-    var result = CivilObjectUtils.InvokeMethod(site, "CreateParcelFromEntity", entityId, name ?? "")
-      ?? CivilObjectUtils.InvokeMethod(parcelsCollection, "Add", entityId);
-
-    if (result is ObjectId id && !id.IsNull) return id;
-
-    // Try static Parcel.Create
-    var parcelType = FindType("Autodesk.Civil.DatabaseServices.Parcel");
-    if (parcelType != null)
-    {
-      var createResult = CivilObjectUtils.InvokeStaticMethod(parcelType, "Create",
-        site.ObjectId, entityId, name ?? "");
-      if (createResult is ObjectId oid && !oid.IsNull) return oid;
-    }
-
-    return ObjectId.Null;
-  }
-
-  private static ObjectId CreateParcelFromPoints(Site site, JsonArray pointsNode, string? name,
-    Database database, Transaction transaction)
-  {
-    var pts = new List<Point2d>();
-    foreach (var node in pointsNode)
-    {
-      if (node is JsonArray arr && arr.Count >= 2)
-        pts.Add(new Point2d(arr[0]?.GetValue<double>() ?? 0, arr[1]?.GetValue<double>() ?? 0));
-    }
-    // Close the polygon
-    if (pts.Count > 0 && pts[0] != pts[^1])
-      pts.Add(pts[0]);
-
-    // Create a temporary polyline and convert to parcel
-    var pline = new Polyline();
-    for (var index = 0; index < pts.Count; index++)
-    {
-      pline.AddVertexAt(index, pts[index], 0, 0, 0);
-    }
-
-    pline.Closed = true;
-
-    var modelSpaceId = CivilObjectUtils.GetModelSpaceBlockId(database, transaction);
-    var btr = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, modelSpaceId, OpenMode.ForWrite);
-    var tmpId = btr.AppendEntity(pline);
-    transaction.AddNewlyCreatedDBObject(pline, true);
-
-    var parcelId = CreateParcelFromEntity(site, tmpId, name, transaction);
-
-    // Erase the temporary polyline if parcel was created from it
-    if (!parcelId.IsNull)
-      pline.Erase(true);
-
-    return parcelId;
-  }
-
   private static void ApplyStyleToParcel(Parcel parcel, string styleName,
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction)
   {
@@ -521,12 +501,6 @@ public static class ParcelEditingCommands
     };
   }
 
-  private static double TargetAreaToDrawingUnits(double sqFt, Autodesk.AutoCAD.ApplicationServices.Document doc)
-  {
-    // Drawing units are usually sq ft already for US drawings
-    return sqFt;
-  }
-
   private static string WriteCsv(
     string outputPath,
     List<Dictionary<string, object?>> rows,
@@ -545,10 +519,5 @@ public static class ParcelEditingCommands
 
     return FileBoundary.WriteAllTextAtomic(
       outputPath, csv.ToString(), System.Text.Encoding.UTF8, overwrite, ".csv");
-  }
-
-  private static Type? FindType(string typeName)
-  {
-    return Civil3DCompatibility.FindLoadedType(typeName);
   }
 }

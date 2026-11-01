@@ -49,7 +49,7 @@ Shared setup, made once with the tools below: 12 points numbered 1-12 with descr
 | 2.8 | `import_file` of `negative and huge.csv`, `no descriptions.csv`, `with header.csv`, `empty.csv` | Clear result each; no crash |
 | 2.9 | `create` one point; the person chooses **Allow** | Point made |
 | 2.10 | Same; the person chooses **Don't allow** | Nothing made; `CIVIL3D.USER_DECLINED` |
-| 2.11 | Same; nobody answers for 60 s | Nothing made, and nothing appears later |
+| 2.11 | Same; nobody answers for 50 s | Nothing made, and nothing appears later |
 | 2.12 | `civil3d_execute` calling `CogoPoints.Add`, then `acad_command` CREATEPOINTS | The same window each time |
 | 2.13 | `transform` with no numbers or group | Refused; asks for `allPoints: true` |
 | 2.14 | `transform scaleFactor: 0` | Refused by the schema |
@@ -156,7 +156,7 @@ Shared setup, made once with the tools below: 12 points numbered 1-12 with descr
 | Sections | `create_sample_lines interval=50`, `view_create`, `view_export` | End station included; misspelled surface; stations 100.001 and 100.004; width 0; beyond the end |
 | Pipes | `catalog_list` against `civil3d_query`, `create`, `add_structure` rim 102.5, `add_pipe`, `calculate_hgl`, `hydraulic_analysis`, `get_structure_properties` | Metric drawing; no rim; a reversed pipe |
 | Grading | `feature_line_create`, list it, again on a layout tab, `group_list` after making a group by hand | Misspelled layer; no Z |
-| Parcels (make one by hand) | `list_sites`, `list`, `get`, `report includeCoordinates`, `create` with 4 points | No site; 3 collinear points |
+| Parcels | `list_sites`, `list`, `get`, `report includeCoordinates`, `create` with 4 points, from a polyline, and from a line across a parcel, undo | No site; 3 collinear points; an open line leaves no parcel line behind |
 | Labels and styles | `label_list_styles` for surface, pipe, structure; `label_add` surface spot, alignment station, pipe plan; `style_list` | A valid style, a misspelled one, a frozen target layer |
 | QC | `check_alignment`, `check_profile maxGrade=0.06` then `6`, `check_pipe_network minCover=3` against known cover, `generate_report`, [D] `fix_drawing_standards` dry run then real, with an xref layer present | `maxNameLength=0` |
 | Quantity | `surface_volume` with and without `region`, `pipe_network_lengths groupBySize`, `export_to_csv` with each flag alone | Existing file; `overwrite`; a comma in a name; pipe sizes read in inches or mm |
@@ -176,10 +176,9 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 
 | Still open | Why |
 |---|---|
-| Grading groups, parcel `create`, `watershed_add` | Civil 3D's API has no call for them; the tools say so |
+| Grading groups, `watershed_add`, `lot_line_adjust` | Civil 3D's .NET API has no call for them; the tools say so. COM may reach the first two, not yet tried |
 | `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
-| Parcel report vertices, `lot_line_adjust` | Need a parcel drawn by hand; not run |
-| Point windows (2.9 to 2.12), undo after a person's command (2.24), a person-held lock (3.27), view following | Need someone at Civil 3D |
+| A drawing held by a real second user (3.27) | Passed on a held copy with a made-up `.dwl`, not with two people |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
 
 Civil 3D facts learned, worth knowing before testing again:

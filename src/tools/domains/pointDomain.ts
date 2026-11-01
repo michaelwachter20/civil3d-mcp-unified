@@ -451,7 +451,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_point",
       displayName: "Civil 3D Point",
-      description: "Reads, creates, imports, transforms, exports, and deletes Civil 3D COGO points and point groups through a single domain tool. Points from a file: always import_file (Civil 3D's own importer; list_formats gives the format names). create, and import with typed-in data, ask the user in Civil 3D first (a window they answer, a no after 60 s) and are only for points the user asked for, never survey data.",
+      description: "Reads, creates, imports, transforms, exports, and deletes Civil 3D COGO points and point groups through a single domain tool. Points from a file: always import_file (Civil 3D's own importer; list_formats gives the format names). create, and import with typed-in data, ask the user in Civil 3D first (a window they answer, a no after 50 s) and are only for points the user asked for, never survey data.",
       inputShape: canonicalPointInputShape,
       supportedActions: ["list", "get", "create", "list_groups", "import", "import_file", "list_formats", "delete", "group_create", "group_update", "group_delete", "export", "transform"],
       resolveAction: (rawArgs) => ({

@@ -11,6 +11,13 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
   scale and corridor region add, region delete and targets didn't work.
 
+- **Parcels can be made:** `create` works, through Civil 3D's COM interface, since the .NET API has no call for it. It
+  takes corners, a polyline, or a line across a parcel to split it. It's one undo step, and lines that close no area
+  are taken out again. `lot_line_adjust` said "attempted" with nothing changed; it now says Civil 3D has no API for it.
+
+- **The point window closes after 50 seconds, not 60:** an unanswered window lost the race with the client's own
+  60-second limit, and the AI saw a bare "Request timed out" rather than the refusal.
+
 - **`stopping_distance_check` checked nothing:** it looked for "curve" in a class name, and Civil 3D's are
   `ProfileParabolaSymmetric` and `ProfileCircular`, so every profile came back compliant. It also read mph as km/h, held
   sags to the crest limit and worked K 100 times too small. A speed with no units now follows the drawing.
@@ -90,7 +97,7 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   `civil3d_point` `import_file` imports a point file with `CogoPoints.ImportPoints` and a Civil 3D point file format
   by name (`list_formats`), as Import Points does by hand. Creating points any other way (`create`, `import` with
   typed-in data, C# or a saved script that adds points, the CREATEPOINTS commands) first opens a window in Civil 3D
-  that only the user can answer (`PointCreationGate`); no answer in 60 s counts as no, so nothing is made after the
+  that only the user can answer (`PointCreationGate`); no answer in 50 s counts as no, so nothing is made after the
   request has timed out. `CIVIL3D_POINT_CREATION=off` refuses them without asking. The server instructions and
   `working_safely_in_civil3d` say so; the daily field import skill (which applies duplicate offsets itself) asks
   once per run.

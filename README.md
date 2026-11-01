@@ -299,7 +299,7 @@ command line:
 - **Points come in through Civil 3D's own importer.** `civil3d_point action=import_file` imports a point file with
   a Civil 3D point file format (`list_formats`), as Import Points does by hand. Any other way of making points
   (`create`, `import` with typed-in data, C# or a saved script that adds points, the CREATEPOINTS commands) first
-  opens a window in Civil 3D that only you can answer; no answer in 60 seconds counts as no.
+  opens a window in Civil 3D that only you can answer; no answer in 50 seconds counts as no.
   `CIVIL3D_POINT_CREATION=off` refuses them without asking.
 - **A misspelled style, layer or site name is refused**, with the names the drawing has, instead of quietly using the
   first style or the current layer.

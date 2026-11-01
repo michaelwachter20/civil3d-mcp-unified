@@ -10,8 +10,9 @@ namespace Civil3DMcpPlugin;
 /// (<c>importPointFile</c>, CogoPoints.ImportPoints), which needs no question. Any other way of making COGO points
 /// (the <c>createCogoPoints</c> and text <c>importCogoPoints</c> actions, a script that calls CogoPoints.Add, the
 /// CREATEPOINTS commands) first opens a window in Civil 3D asking the user, which the AI can't answer for them (unlike
-/// the approval token, which it requests itself). Unanswered for <see cref="TimeoutSeconds"/>, it counts as no, so a
-/// request never waits past the server's command timeout (120 s) and nothing is made later behind its back.
+/// the approval token, which it requests itself). Unanswered for <see cref="TimeoutSeconds"/>, it counts as no, so
+/// the refusal gets back before an MCP client gives up on the call (60 s is a common limit, and a race with it ends
+/// in a bare "Request timed out") and nothing is made later behind its back.
 /// <para>
 /// CIVIL3D_POINT_CREATION sets the policy: <c>ask</c> (the default), <c>off</c> (always refused, no window) or
 /// <c>allow</c> (no window: for unattended test setups only).
@@ -19,7 +20,7 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class PointCreationGate
 {
-  public const int TimeoutSeconds = 60;
+  public const int TimeoutSeconds = 50;
 
   /// <summary>True when <paramref name="code"/> (a script) makes COGO points (PointCreationRules).</summary>
   public static bool ScriptAddsPoints(string code) => PointCreationRules.ScriptAddsPoints(code);
@@ -43,7 +44,7 @@ public static class PointCreationGate
     if (policy == "off")
     {
       throw new JsonRpcDispatchException("CIVIL3D.POINT_CREATION_OFF",
-        $"Making points this way is turned off (CIVIL3D_POINT_CREATION=off): {what}. Bring points in from a file with " +
+        $"Making points this way is turned off (CIVIL3D_POINT_CREATION=off): {what.TrimEnd('.')}. Bring points in from a file with " +
         "civil3d_point action import_file (Civil 3D's own importer).");
     }
 
@@ -51,7 +52,7 @@ public static class PointCreationGate
     if (!allowed)
     {
       throw new JsonRpcDispatchException("CIVIL3D.USER_DECLINED",
-        $"The user didn't allow it in Civil 3D (said no, or didn't answer within {TimeoutSeconds} s): {what}. Nothing " +
+        $"The user didn't allow it in Civil 3D (said no, or didn't answer within {TimeoutSeconds} s): {what.TrimEnd('.')}. Nothing " +
         "was created. For points from a file use civil3d_point action import_file (Civil 3D's own importer).");
     }
   }

@@ -17,7 +17,7 @@ export const SERVER_INSTRUCTIONS = [
   "Points from a file come in only through Civil 3D's own importer: civil3d_point action=import_file (list_formats for the format " +
     "names), never by reading the file and creating the points yourself. Make points any other way (civil3d_point create or import " +
     "with data, C# that calls CogoPoints.Add, CREATEPOINTS) only when the user asks for those points; Civil 3D then asks the user in " +
-    "a window first, and a no (or no answer in 60 s) means nothing is created.",
+    "a window first, and a no (or no answer in 50 s) means nothing is created.",
   "Run a read-only check or a dryRun before changing a drawing, and make each change a single undo step.",
   "Knowledge comes in three kinds; keep each where it belongs and always ask the user before saving or changing any of it. " +
     "(1) How to drive Civil 3D: a standing rule from the user becomes a preference (civil3d_preferences action=add); a non-obvious " +

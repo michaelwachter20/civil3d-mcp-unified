@@ -401,10 +401,9 @@ Status: Complete in automated tests. Not live-tested in Civil 3D.
 In order. Reviewed 2026-11-01, after the first live day. Details and every test are in
 [docs/LIVE-TEST-PLAN.md](docs/LIVE-TEST-PLAN.md); part 5 has the results.
 
-1. **Tests that need a person at Civil 3D:** the point windows, undo after a person's command, a drawing someone else
-   holds, a parcel drawn by hand, view following.
-2. **What Civil 3D's API can't do:** decide for each whether to stop advertising it: grading groups, parcel `create`,
-   `watershed_add`, `sheet_set_create`, `sheet_set_export`.
-3. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
-4. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
+1. **What Civil 3D's .NET API can't do:** parcels turned out to be possible through COM (`ParcelCom`), so try the same
+   for grading groups, `watershed_add`, `sheet_set_create` and `sheet_set_export` before deciding to stop advertising
+   them. `lot_line_adjust` has no route: it says so.
+2. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
+3. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
    file's old id stay with the old id; OneDrive placeholders may be refused by `FileBoundary` (suspected).

@@ -360,6 +360,25 @@ public static class CivilExecution
     return ExecuteInCommandContextAsync(Run);
   }
 
+  /// <summary>
+  /// A write through COM, which opens objects itself and can find them already open in a transaction: under the
+  /// document lock with none, so the action starts its own only where it needs one.
+  /// </summary>
+  public static Task<T> WithDocumentLockAsync<T>(Func<Document, CivilDocument, T> action)
+  {
+    Task<T> Run()
+    {
+      var (doc, civilDoc) = GetVerifiedActiveDocuments();
+      using var documentLock = doc.LockDocument();
+      using var changes = ViewFollower.Track(doc.Database);
+      var result = action(doc, civilDoc);
+      ViewFollower.Follow(doc, changes);
+      return Task.FromResult(result);
+    }
+
+    return ExecuteInCommandContextAsync(Run);
+  }
+
   private static async Task<T> ExecuteSerializedAsync<T>(Func<Task<T>> action)
   {
     var cancellationToken = PluginRuntime.GetCurrentRequestCancellationToken();
