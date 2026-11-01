@@ -89,12 +89,12 @@ describe("where Civil 3D MCP meets the job's database", () => {
   it("says when a file moved or is gone", async () => {
     sql((db) => {
       const add = db.prepare("INSERT INTO files (id, root_id, depth, path, name, ext, kind, status) VALUES (?, ?, 0, ?, ?, '.dwg', 'cad', 'done')");
-      add.run("old", "old", "Drawings\\C-104.dwg", "C-104.dwg");
-      add.run("lost", "lost", "Drawings\\C-105.dwg", "C-105.dwg");
+      add.run("old", "old", "Moved\\Z-104.dwg", "Z-104.dwg");
+      add.run("lost", "lost", "Moved\\Z-105.dwg", "Z-105.dwg");
       db.exec("INSERT INTO props(file_id, key, value) VALUES ('old', 'moved_to', 'Issued\\C-104.dwg'), ('lost', 'gone', '2026-03-01')");
     });
-    expect(await projectFileDetails("Drawings\\C-104.dwg", ELM)).toMatchObject({ movedTo: "Issued\\C-104.dwg", exists: false });
-    expect(await projectFileDetails("Drawings\\C-105.dwg", ELM)).toMatchObject({ gone: true, exists: false });
+    expect(await projectFileDetails("Moved\\Z-104.dwg", ELM)).toMatchObject({ movedTo: "Issued\\C-104.dwg", exists: false });
+    expect(await projectFileDetails("Moved\\Z-105.dwg", ELM)).toMatchObject({ gone: true, exists: false });
   });
 
   it("a path that means two files says so", async () => {

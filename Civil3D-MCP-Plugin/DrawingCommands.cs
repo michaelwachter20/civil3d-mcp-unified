@@ -143,6 +143,12 @@ public static class DrawingCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var saveAs = PluginRuntime.GetOptionalString(parameters, "saveAs");
+      // A drawing never saved reports its template as its file name: saving there would overwrite the template.
+      if (string.IsNullOrWhiteSpace(saveAs) && !doc.IsNamedDrawing)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "This drawing has never been saved: give saveAs.");
+      }
+
       var targetPath = string.IsNullOrWhiteSpace(saveAs) ? database.Filename : saveAs;
       if (string.IsNullOrWhiteSpace(targetPath))
       {
@@ -383,13 +389,13 @@ public static class DrawingCommands
     });
   }
 
-  /// <summary>Redoes <c>steps</c> (default 1) undone steps by queuing <c>REDO n</c> on the command line, like undo.</summary>
+  /// <summary>Redoes <c>steps</c> (default 1) undone steps by queuing <c>MREDO n</c> on the command line, like undo: REDO itself takes no count.</summary>
   public static Task<object?> RedoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      doc.SendStringToExecute($"_.REDO {steps} ", true, false, false);
+      doc.SendStringToExecute($"_.MREDO {steps} ", true, false, false);
       return new Dictionary<string, object?>
       {
         ["steps"] = steps,

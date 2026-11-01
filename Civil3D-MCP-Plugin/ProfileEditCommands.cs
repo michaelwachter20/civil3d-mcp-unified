@@ -158,9 +158,10 @@ public static class ProfileEditCommands
           $"Profile '{profileName}' does not expose an Entities collection.");
       }
 
-      // AASHTO minimum K values table (metric km/h → K_sag, K_crest)
-      // Source: AASHTO Green Book 2011 Table 3-36 / 3-37
-      var kTable = BuildAashtoKTable();
+      // K is length per percent of grade change, so the table follows the drawing's units: feet and mph, or metres
+      // and km/h. Both are stopping sight distance values (AASHTO Green Book 2011, Exhibits 3-72 and 3-75).
+      var metric = database.Insunits == UnitsValue.Meters;
+      var kTable = metric ? BuildAashtoKTableMetric() : BuildAashtoKTableImperial();
       var (kSagMin, kCrestMin) = LookupKValues(kTable, designSpeed);
 
       var results = new List<Dictionary<string, object?>>();
@@ -181,7 +182,8 @@ public static class ProfileEditCommands
           ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "StartGrade") ?? 0;
         var gradeOut = CivilObjectUtils.GetPropertyValue<double?>(entity, "GradeOut")
           ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "EndGrade") ?? 0;
-        var algebraicDiff = Math.Abs(gradeOut - gradeIn);
+        // Civil 3D gives grades as ratios (0.02 = 2%); K is per percent.
+        var algebraicDiff = Math.Abs(gradeOut - gradeIn) * 100;
         var kValue = algebraicDiff > 1e-10 ? curveLength / algebraicDiff : double.PositiveInfinity;
 
         var isSag = gradeOut > gradeIn;
@@ -209,6 +211,7 @@ public static class ProfileEditCommands
         ["alignmentName"] = alignment.Name,
         ["profileName"] = profile.Name,
         ["designSpeed"] = designSpeed,
+        ["designSpeedUnits"] = metric ? "km/h" : "mph",
         ["kSagMinimum"] = kSagMin,
         ["kCrestMinimum"] = kCrestMin,
         ["curves"] = results,
@@ -332,6 +335,10 @@ public static class ProfileEditCommands
       $"Profile view '{name}' was not found in model space.");
   }
 
+  /// <summary>
+  /// The PVI at a station, within <see cref="PviTolerance"/> drawing units. Further off is an error, not the nearest
+  /// one: "delete the PVI at 500" must not delete the one at 1000.
+  /// </summary>
   private static ProfilePVI? FindPviNearStation(ProfilePVICollection pvis, double targetStation)
   {
     ProfilePVI? closest = null;
@@ -347,27 +354,52 @@ public static class ProfileEditCommands
       }
     }
 
+    if (closest != null && minDist > PviTolerance)
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.OBJECT_NOT_FOUND",
+        $"No PVI at station {targetStation}: the nearest is at {closest.RawStation}.");
+    }
+
     return closest;
   }
 
-  /// <summary>
-  /// AASHTO minimum K values (metric, km/h).
-  /// Returns (K_sag_min, K_crest_min).
-  /// Source: AASHTO A Policy on Geometric Design of Highways and Streets, 2011.
-  /// </summary>
-  private static List<(double speed, double kSag, double kCrest)> BuildAashtoKTable() =>
+  private const double PviTolerance = 1.0;
+
+  /// <summary>AASHTO minimum K for stopping sight distance, metric: (km/h, sag, crest), K in metres per percent.</summary>
+  private static List<(double speed, double kSag, double kCrest)> BuildAashtoKTableMetric() =>
   [
-    (30, 3, 1),
-    (40, 7, 2),
-    (50, 9, 4),
-    (60, 11, 6),
-    (70, 14, 10),
-    (80, 19, 17),
-    (90, 24, 29),
-    (100, 30, 44),
-    (110, 37, 60),
-    (120, 46, 84),
-    (130, 57, 114),
+    (20, 3, 1),
+    (30, 6, 2),
+    (40, 9, 4),
+    (50, 13, 7),
+    (60, 18, 11),
+    (70, 23, 17),
+    (80, 30, 26),
+    (90, 38, 39),
+    (100, 45, 52),
+    (110, 55, 74),
+    (120, 63, 95),
+    (130, 73, 124),
+  ];
+
+  /// <summary>AASHTO minimum K for stopping sight distance, US customary: (mph, sag, crest), K in feet per percent.</summary>
+  private static List<(double speed, double kSag, double kCrest)> BuildAashtoKTableImperial() =>
+  [
+    (15, 10, 3),
+    (20, 17, 7),
+    (25, 26, 12),
+    (30, 37, 19),
+    (35, 49, 29),
+    (40, 64, 44),
+    (45, 79, 61),
+    (50, 96, 84),
+    (55, 115, 114),
+    (60, 136, 151),
+    (65, 157, 193),
+    (70, 181, 247),
+    (75, 206, 312),
+    (80, 231, 384),
   ];
 
   private static (double kSag, double kCrest) LookupKValues(

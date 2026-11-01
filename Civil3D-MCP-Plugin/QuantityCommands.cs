@@ -94,9 +94,9 @@ public static class QuantityCommands
         // Build breakdown key
         var key = "All";
         if (groupBySize && groupByMaterial)
-          key = $"{material} Ø{diameter:F0}mm";
+          key = $"{material} {PipeSize(diameter, database)}";
         else if (groupBySize)
-          key = $"Ø{diameter:F0}mm";
+          key = PipeSize(diameter, database);
         else if (groupByMaterial)
           key = material;
 
@@ -158,9 +158,9 @@ public static class QuantityCommands
 
         var key = "All";
         if (groupBySize && groupByMaterial)
-          key = $"{material} Ø{diameter:F0}mm";
+          key = $"{material} {PipeSize(diameter, database)}";
         else if (groupBySize)
-          key = $"Ø{diameter:F0}mm";
+          key = PipeSize(diameter, database);
         else if (groupByMaterial)
           key = material;
 
@@ -347,6 +347,20 @@ public static class QuantityCommands
     });
   }
 
+  /// <summary>
+  /// A pipe's size for a report. Civil 3D gives it in drawing units, so 0.45 m must read Ø450mm and 1.5 ft Ø18in; with
+  /// no decimals in those units they were Ø0mm and Ø2mm.
+  /// </summary>
+  private static string PipeSize(double diameter, Database database)
+  {
+    var units = CivilObjectUtils.LinearUnits(database);
+    return units.Contains("meter", StringComparison.OrdinalIgnoreCase)
+      ? $"Ø{diameter * 1000:0.#}mm"
+      : units.Contains("feet", StringComparison.OrdinalIgnoreCase) || units.Contains("foot", StringComparison.OrdinalIgnoreCase)
+        ? $"Ø{diameter * 12:0.#}in"
+        : $"Ø{diameter:0.###} {units}";
+  }
+
   // -------------------------------------------------------------------------
   // qtyExportToCsv
   // -------------------------------------------------------------------------
@@ -355,8 +369,11 @@ public static class QuantityCommands
   {
     var outputPath = PluginRuntime.GetRequiredString(parameters, "outputPath");
     var overwrite = PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false;
-    var includeAlignments = PluginRuntime.GetOptionalBool(parameters, "includeAlignments") ?? true;
-    var includeSurfaces = PluginRuntime.GetOptionalBool(parameters, "includeSurfaces") ?? false;
+    // The tool's names first (includeAlignmentLengths, includeSurfaceVolumes); the plugin's own older names still work.
+    var includeAlignments = PluginRuntime.GetOptionalBool(parameters, "includeAlignmentLengths")
+      ?? PluginRuntime.GetOptionalBool(parameters, "includeAlignments") ?? true;
+    var includeSurfaces = PluginRuntime.GetOptionalBool(parameters, "includeSurfaceVolumes")
+      ?? PluginRuntime.GetOptionalBool(parameters, "includeSurfaces") ?? false;
     var includePipeNetworks = PluginRuntime.GetOptionalBool(parameters, "includePipeNetworks") ?? false;
     var includeParcelAreas = PluginRuntime.GetOptionalBool(parameters, "includeParcelAreas") ?? false;
     var includePointGroups = PluginRuntime.GetOptionalBool(parameters, "includePointGroups") ?? false;

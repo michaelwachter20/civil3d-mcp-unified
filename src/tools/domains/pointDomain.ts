@@ -88,7 +88,7 @@ const canonicalPointInputShape = {
   offset: z.number().optional(),
   pointNumber: z.number().optional(),
   points: z.array(PointCreateSchema).optional(),
-  startNumber: z.number().optional(),
+  startNumber: z.number().int().positive().optional(),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
   data: z.string().optional(),
   allPoints: z.boolean().optional().describe("transform: true to move every point in the drawing"),
@@ -108,7 +108,7 @@ const canonicalPointInputShape = {
   translateY: z.number().optional(),
   translateZ: z.number().optional(),
   rotateRadians: z.number().optional(),
-  scaleFactor: z.number().optional(),
+  scaleFactor: z.number().positive().optional(),
   easting: z.number().optional(),
   northing: z.number().optional(),
   elevation: z.number().optional(),
@@ -130,7 +130,7 @@ const PointGetArgsSchema = z.object({
 const PointCreateArgsSchema = z.object({
   action: z.literal("create"),
   points: z.array(PointCreateSchema).min(1),
-  startNumber: z.number().optional(),
+  startNumber: z.number().int().positive().optional(),
 });
 
 const PointListGroupsArgsSchema = z.object({
@@ -216,7 +216,7 @@ const PointTransformArgsSchema = z.object({
   translateY: z.number().optional(),
   translateZ: z.number().optional(),
   rotateRadians: z.number().optional(),
-  scaleFactor: z.number().optional(),
+  scaleFactor: z.number().positive().optional(),
 });
 
 /**

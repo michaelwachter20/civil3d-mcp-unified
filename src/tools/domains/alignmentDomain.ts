@@ -303,7 +303,8 @@ function buildStationSequence(startStation: number, endStation: number, interval
   }
 
   if (stations.length === 0 || stations[stations.length - 1] !== endStation) {
-    stations.push(Number(endStation.toFixed(6)));
+    // Rounding up could land past the alignment's end, which the plugin refuses.
+    stations.push(Math.min(Number(endStation.toFixed(6)), endStation));
   }
 
   return stations;

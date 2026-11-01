@@ -29,7 +29,7 @@ const ParcelSummarySchema = z.object({
   handle: z.string(),
   number: z.number(),
   area: z.number(),
-  perimeter: z.number(),
+  perimeter: z.number().nullable(),
   style: z.string(),
 });
 
@@ -48,7 +48,7 @@ const ParcelDetailResponseSchema = z.object({
   handle: z.string().optional(),
   number: z.number().optional(),
   area: z.number().optional(),
-  perimeter: z.number().optional(),
+  perimeter: z.number().nullable().optional(),
   style: z.string().optional(),
 }).passthrough();
 
