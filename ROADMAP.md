@@ -411,15 +411,11 @@ Status: Complete in automated tests. The first two items below are still to be t
 
 In order. Reviewed 2026-10-31, against the code and 2.4.0.
 
-1. **Crash on SAVEAS ([issue #3](https://github.com/michaelwachter20/civil3d-mcp-unified/issues/3)).** A user reports
-   Civil 3D 2027 crashing in `acdb26.dll` on SAVEAS with the plugin loaded (2.2.4), even with the AI connection off. It
-   didn't reproduce here, and the issue is waiting for their minidumps. First place to look: what stays hooked with the
-   connection off (`CommandLineMonitor` attaches to every document's command events).
-2. **Try 2.4.0 in Civil 3D** (needs a person at Civil 3D):
+1. **Try 2.4.0 in Civil 3D** (needs a person at Civil 3D):
    - `import_file`, and the window that asks before making points;
    - the `open` action, including a drawing someone else has open;
    - the misspelled-name refusal.
-3. **Results that are wrong or incomplete.** Each is marked `NOTE` in the code. Fix them with Civil 3D open, because the
+2. **Results that are wrong or incomplete.** Each is marked `NOTE` in the code. Fix them with Civil 3D open, because the
    answer depends on how Civil 3D behaves:
    - lot-line adjust probably never moves anything (`parcelDomain.ts`);
    - section data always comes back with no surfaces (`SectionCommands.cs`);
@@ -428,6 +424,6 @@ In order. Reviewed 2026-10-31, against the code and 2.4.0.
    - plan production falls back to the first viewport and sets the sheet's alignment by guessing property names
      (`planProductionDomain.ts`);
    - the corridor volume check makes a temporary surface during a read (`CorridorCommands.cs`, `corridorDomain.ts`).
-4. **Phase C:** the live suites and the upstream fixed tools on 2027.
-5. **Phase D:** the runaway-script guard, then the skill templates.
-6. **Phase E:** the plugin workflow's trigger and the action versions.
+3. **Phase C:** the live suites and the upstream fixed tools on 2027.
+4. **Phase D:** the runaway-script guard, then the skill templates.
+5. **Phase E:** the plugin workflow's trigger and the action versions.
