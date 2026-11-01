@@ -37,9 +37,23 @@ export const REFERENCE_ONLY =
   "dimensions, quantities or text as data to edit or import into a drawing: take them from the current source file the user names, and " +
   "if they haven't named one, ask which file is current.";
 
+/**
+ * Project Analyzer replaces the connection tables when it rebuilds them, so while it does, or after a rebuild that was
+ * stopped, people, checks, stories and versions can be missing or partly there. An empty answer then must not read as
+ * "there are none". Started later than the last complete build means one of those.
+ */
+function rebuildingNote(db: DatabaseSync): string {
+  const started = metaValue(db, "intel_started");
+  const built = metaValue(db, "insights_built");
+  return started && (!built || started > built)
+    ? "PROJECT ANALYZER IS REBUILDING THIS JOB'S CONNECTIONS, or a rebuild was stopped: people, checks, stories and " +
+      "versions may be missing or incomplete until it finishes, so 'none found' can't be trusted yet. "
+    : "";
+}
+
 /** REFERENCE_ONLY with the date of the last Project Analyzer run (meta last_run_finished), if there was one. */
 export function referenceOnly(db: DatabaseSync): string {
-  return REFERENCE_ONLY.replace("{date}", metaValue(db, "last_run_finished")?.slice(0, 10) || "the last time a tool wrote to it");
+  return rebuildingNote(db) + REFERENCE_ONLY.replace("{date}", metaValue(db, "last_run_finished")?.slice(0, 10) || "the last time a tool wrote to it");
 }
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -118,9 +132,16 @@ async function resolveProject(name: string | undefined): Promise<{ job: Job; dra
   const drawing = await activeDrawingPath();
   const job = projectForDrawing(drawing);
   if (!job) {
+    // A database that can't be read has no folders to match, so a damaged job looks like no job: say so, or the AI
+    // links the drawing to a new, empty one.
+    const unreadable = jobIndex().jobs.filter((candidate) => candidate.problem && candidate.roots.length === 0);
     throw knowledgeError(
       "CIVIL3D.OBJECT_NOT_FOUND",
       `The active drawing${drawing ? ` (${baseName(drawing)})` : ""} isn't in a known project folder. ` +
+      (unreadable.length
+        ? `The database of ${unreadable.map((candidate) => `'${candidate.name}'`).join(", ")} can't be read, so this may be that job: ` +
+          `${unreadable[0].problem} Tell the user before linking anything. `
+        : "") +
       "Ask the user which job it is, then use action=link (project, optional folder; default: the active drawing's folder).",
     );
   }
@@ -308,11 +329,18 @@ export async function readUserKnowledge(file: string, name?: string, options: { 
 
 /** Creates the project database if needed and links a folder to it (default: the active drawing's folder). */
 export async function linkProjectFolder(name: string, folder?: string) {
-  const target = folder ?? (await activeDrawingPath().then((drawing) => (drawing ? directoryOf(drawing) : undefined)));
-  if (!target) throw knowledgeError("CIVIL3D.INVALID_INPUT", "No folder given and the active drawing's folder isn't known.");
+  const drawing = folder ? undefined : await activeDrawingPath();
+  // A drawing never saved has no folder: its name alone would resolve to the server's working folder.
+  const target = folder ?? (drawing && path.win32.isAbsolute(drawing) ? directoryOf(drawing) : undefined);
+  if (!target) throw knowledgeError("CIVIL3D.INVALID_INPUT", "No folder given and the active drawing has no folder yet (save it first, or give folder).");
   const existing = jobByName(name);
   const file = existing?.file ?? databaseFileFor(name);
   const normalized = normalizePath(target);
+  // One folder, one job: a second job on the same folder would take its drawings from the first.
+  const owner = jobIndex().jobs.find((job) => job.file !== existing?.file && job.roots.some((root) => root.key === pathKey(normalized)));
+  if (owner) {
+    throw knowledgeError("CIVIL3D.INVALID_INPUT", `That folder already belongs to the job '${owner.name}'. Use project='${owner.name}', or ask the user which job it is.`);
+  }
   const result = await withProjectDb(file, ({ db }) => immediate(db, () => {
     const roots = [metaValue(db, "source_root"), ...(db.prepare("SELECT path FROM folders").all() as Array<{ path: string }>).map((row) => row.path)]
       .filter((root): root is string => !!root);
@@ -369,7 +397,8 @@ export async function addProjectNote(note: string, name?: string, options: NoteO
   const { job, drawing } = await resolveProject(name);
   const source = await noteSource(job, drawing, options.source === "user");
   return withProjectDb(job.file, ({ db }) => immediate(db, () => {
-    const duplicate = (db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE ${CURRENT} AND lower(f.fact) = lower(?) ORDER BY f.tool = ? DESC`).all(text, TOOL) as unknown as FactRow[])[0];
+    // A statement that was superseded isn't "already recorded": saying it again is news.
+    const duplicate = (db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE ${CURRENT} AND ${NOT_SUPERSEDED} AND lower(f.fact) = lower(?) ORDER BY f.tool = ? DESC`).all(text, TOOL) as unknown as FactRow[])[0];
     if (duplicate) {
       const sources = parseJson<Array<{ file?: string; path?: string }>>(duplicate.sources, []);
       if (duplicate.tool === TOOL && !sources.some((existing) => existing.file === source.file && existing.path === source.path)) {
@@ -429,6 +458,12 @@ export async function removeProjectNote(id: string, name?: string) {
 // ---------------------------------------------------------------- reading what the suite knows
 
 /** Busy and damage always reach the caller (withProjectDb waits, or says how to restore); other errors are the caller's. */
+/** Facts for a list that keeps the older ones (search, newest): each one replaced by a newer fact says so. */
+function markSuperseded(db: DatabaseSync, where: string, ...params: Array<string | number | null>) {
+  const replaced = new Set(all<{ supersedes: string }>(db, "SELECT supersedes FROM facts WHERE supersedes IS NOT NULL AND retired IS NULL").map((row) => row.supersedes));
+  return facts(db, where, ...params).map((fact) => (replaced.has(fact.id) ? { ...fact, superseded: true } : fact));
+}
+
 function passOnDamage(error: unknown) {
   if (isBusy(error) || isCorrupt(error)) throw error;
 }
@@ -488,7 +523,7 @@ export async function projectOverview(name?: string) {
       folders: job.roots.map((root) => ({ path: root.path, tool: root.tool })),
       files: { total: statuses.reduce((sum, row) => sum + row.n, 0), byStatus: Object.fromEntries(statuses.map((row) => [row.status, row.n])) },
       keyFacts: facts(db, `${CURRENT} AND f.key = 1 AND ${NOT_SUPERSEDED} ORDER BY f.added, f.id`),
-      newestFacts: facts(db, `${CURRENT} ORDER BY f.added DESC, CAST(SUBSTR(f.id, 6) AS INTEGER) DESC LIMIT 10`),
+      newestFacts: markSuperseded(db, `${CURRENT} ORDER BY f.added DESC, CAST(SUBSTR(f.id, 6) AS INTEGER) DESC LIMIT 10`),
       openQuestions: all<{ id: string; question: string; tool: string }>(db, "SELECT id, question, tool FROM questions WHERE status = 'open' ORDER BY added, id"),
       rules: all<{ id: string; rule: string; tool: string }>(db, "SELECT id, rule, tool FROM rules WHERE retired IS NULL ORDER BY added, id"),
       highChecks: all<{ id: string; kind: string; title: string; detail: string | null }>(db, "SELECT id, kind, title, detail FROM intel_checks WHERE severity = 'high' ORDER BY id"),
@@ -582,7 +617,7 @@ export async function searchProject(query: string, name?: string, limit = 20) {
     }
     const direct = searchUnreadDocuments(userKnowledgeStatus(db, job).entries, tokens, max);
     const like = tokens.map(() => "lower(f.fact || ' ' || f.topics) LIKE ?").join(" AND ");
-    const matching = facts(db, `${CURRENT} AND ${like} ORDER BY f.key DESC, f.added DESC LIMIT 50`, ...tokens.map((token) => `%${token}%`));
+    const matching = markSuperseded(db, `${CURRENT} AND ${like} ORDER BY f.key DESC, f.added DESC LIMIT 50`, ...tokens.map((token) => `%${token}%`));
     const anyKnowledge = direct.hits.length > 0 || hits.some((hit) => hit.userKnowledge);
     return {
       project: job.name, referenceOnly: referenceOnly(db), query, facts: matching, hits: [...hits, ...direct.hits],
@@ -605,7 +640,10 @@ interface FileRow {
 function findFile(db: DatabaseSync, file: string): FileRow {
   const columns = "id, path, name, kind, size, status, duplicate_of, summary, doc_date, author, error, chars, parent_id";
   // A path on this computer (in the job folder or one of its other folders) is looked up as the database stores it.
-  const wanted = (path.win32.isAbsolute(file) ? storedPath(db, file) : undefined) ?? file.replace(/\//g, "\\");
+  // Inside an archive the stored path keeps its forward slashes: only the part before '::' is a Windows path.
+  const [outer, ...inside] = file.split("::");
+  const asStored = [outer.replace(/\//g, "\\"), ...inside].join("::");
+  const wanted = (path.win32.isAbsolute(file) ? storedPath(db, file) : undefined) ?? asStored;
   const byId = db.prepare(`SELECT ${columns} FROM files WHERE id = ?`).get(file) as unknown as FileRow | undefined;
   if (byId) return byId;
   // `= ? COLLATE NOCASE` so files_path_nocase answers it.
@@ -639,10 +677,14 @@ export async function projectFileDetails(file: string, name?: string) {
       db, "SELECT file_id, kind, raw, status FROM refs WHERE target_id = ? OR target_path = ? COLLATE NOCASE", row.id, row.path);
     const paths = filePaths(db, refsTo.map((ref) => ref.file_id));
     const place = row.path.includes("::") ? undefined : onDisk(db, row.path);
+    const state = Object.fromEntries(all<{ key: string; value: string }>(db, "SELECT key, value FROM props WHERE file_id = ? AND key IN ('gone', 'moved_to')", row.id)
+      .map((prop) => [prop.key, prop.value]));
     return {
       project: job.name, referenceOnly: referenceOnly(db),
       file: Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)),
-      ...(place ? { onDisk: place } : {}),
+      ...(place ? { onDisk: place, exists: existsSync(place) } : {}),
+      ...(state.moved_to ? { movedTo: state.moved_to, hint: `This file moved: its content is now ${state.moved_to}. What's shown here is what was known at its old place.` }
+        : state.gone ? { gone: true, hint: "This file is no longer in the job folder: what's shown here is what it said when it was last read." } : {}),
       props: Object.fromEntries(all<{ key: string; value: string }>(db, "SELECT key, value FROM props WHERE file_id = ? ORDER BY key", row.id).map((prop) => [prop.key, prop.value])),
       ...(summary ? { summary: { ...summary, points: parseJson(summary.points, []), people: parseJson(summary.people, []) } } : {}),
       refsFrom: all<Record<string, unknown>>(db, "SELECT kind, raw, location, status, target_path, expected_path FROM refs WHERE file_id = ?", row.id),
@@ -771,8 +813,19 @@ export async function locatePath(written: string, name?: string) {
     if (refs.length > 0) {
       const ref = refs.find((candidate) => candidate.target_path) ?? refs[0];
       const target = inCopy(ref.target_path);
+      // A relative path written in two folders can mean two different files: never answer with just the first.
+      const targets = [...new Set(refs.map((candidate) => candidate.target_path).filter((value): value is string => !!value))];
       return {
         project: job.name, referenceOnly: referenceOnly(db), written, method: "refs", status: ref.status,
+        ...(targets.length > 1 ? {
+          status: "ambiguous",
+          targets: targets.map((relative) => {
+            const paths = filePaths(db, refs.filter((candidate) => candidate.target_path === relative).map((candidate) => candidate.file_id));
+            const full = inCopy(relative);
+            return { relative, path: full, exists: !!full && existsSync(full), writtenIn: [...paths.values()] };
+          }),
+          hint: "This path means different files depending on which file wrote it: use writtenIn to pick, or ask the user.",
+        } : {}),
         ...(ref.target_path ? { relative: ref.target_path, path: target, exists: !!target && existsSync(target) } : {}),
         ...(ref.expected_path ? { expected: ref.expected_path } : {}),
         ...(ref.candidates ? { candidates: parseJson<string[]>(ref.candidates, []) } : {}),

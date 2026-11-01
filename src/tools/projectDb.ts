@@ -688,7 +688,7 @@ export function storedPath(db: DatabaseSync, absolute: string): string | undefin
     ...jobFolders(db).map((folder) => ({ prefix: `${FOLDER_PREFIX}${folder.name}>\\`, path: folder.path }))];
   for (const folder of folders) {
     const root = pathKey(folder.path);
-    if (key.startsWith(`${root}\\`)) return folder.prefix + path.win32.normalize(absolute).slice(path.win32.normalize(folder.path).replace(/\\+$/, "").length + 1);
+    if (key.startsWith(root.endsWith("\\") ? root : `${root}\\`)) return folder.prefix + path.win32.normalize(absolute).slice(path.win32.normalize(folder.path).replace(/\\+$/, "").length + 1);
   }
   return undefined;
 }

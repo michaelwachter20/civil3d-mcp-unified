@@ -114,7 +114,8 @@ describe("the latest version of a file, and civil3d_drawing open", () => {
     expect(calls).toEqual([["openDrawing", { path: join(job, "Packages\\2026-02\\C-101 GRADING rev1.dwg"), readOnly: false }]]);
     expect(result).toMatchObject({ opened: join(job, "Packages\\2026-02\\C-101 GRADING rev1.dwg"), older: [{ path: "Packages\\2026-01\\C-101 GRADING.dwg" }] });
     const headings = await openDrawingByName({ name: "C-200", project: ELM });
-    expect(headings).toMatchObject({ folders: 2 });
+    expect(headings).toMatchObject({ opened: null, reason: "this name is in several folders" });
+    expect(calls).toHaveLength(1);   // asked before opening
     expect(String(headings.hint)).toContain("different areas");
   });
 

@@ -309,6 +309,13 @@ public static class DrawingCommands
         }
       }
 
+      // A full path is exact: Phase 1\C-104.dwg and Phase 2\C-104.dwg share a name, not a file.
+      var exact = matches.Where(document => string.Equals(document.Name, wanted, StringComparison.OrdinalIgnoreCase)).ToList();
+      if (exact.Count == 1)
+      {
+        matches = exact;
+      }
+
       if (matches.Count != 1)
       {
         var open = string.Join(", ", ReferenceDrawing.ListOpen().Select(info => info.Name));
