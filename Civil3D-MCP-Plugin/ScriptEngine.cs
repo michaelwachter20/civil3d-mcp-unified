@@ -227,8 +227,17 @@ internal static class ScriptEngine
 
   private static CompiledScript CompileCore(string code, string hash)
   {
-    var script = CSharpScript.Create<object>(code, BuildOptions(), typeof(ScriptContext));
+    // Every loop checks the token, so the timeout can stop a tight one (ScriptLoopGuard). If that doesn't compile (a
+    // variable of the script named CancellationToken), the script runs as written, without the guard.
+    var options = BuildOptions();
+    var script = CSharpScript.Create<object>(ScriptLoopGuard.AddChecks(code), options, typeof(ScriptContext));
     var diagnostics = script.Compile();
+    if (diagnostics.Any(diagnostic => diagnostic.Severity == RoslynSeverity.Error))
+    {
+      script = CSharpScript.Create<object>(code, options, typeof(ScriptContext));
+      diagnostics = script.Compile();
+    }
+
     var errors = diagnostics.Where(diagnostic => diagnostic.Severity == RoslynSeverity.Error).ToList();
     if (errors.Count > 0)
     {

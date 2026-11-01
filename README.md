@@ -306,9 +306,10 @@ command line:
 - **Easy mistakes are guarded.** `civil3d_point action=transform` with no point numbers or group needs
   `allPoints: true`, and writing a report to a file (`civil3d_parcel action=export_report`, `civil3d_qc
   action=generate_report`) needs approval like any export.
-- Scripts time out after 110 seconds (`CIVIL3D_SCRIPT_TIMEOUT_SECONDS`). For
-  cancellation to work, long loops must check `CancellationToken`. A tight loop
-  that never checks it can't be interrupted and will freeze Civil 3D.
+- Scripts time out after 110 seconds (`CIVIL3D_SCRIPT_TIMEOUT_SECONDS`). Every
+  loop in a script checks `CancellationToken` by itself, so the timeout stops a
+  tight one. It can't stop recursion, one long call into Civil 3D, or a loop in
+  a class the script declares; those can still freeze Civil 3D.
 
 ---
 

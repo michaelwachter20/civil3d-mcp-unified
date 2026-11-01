@@ -15,6 +15,52 @@ Environment.SetEnvironmentVariable("CIVIL3D_EXPORT_ROOTS", allowedRoot);
 
 try
 {
+  // Every loop a script can see gets a cancellation check, without adding a line, so the timeout can stop a tight loop
+  // and errors keep the script's own line numbers.
+  const string LoopCheck = "CancellationToken.ThrowIfCancellationRequested();";
+  static int Checks(string code) => code.Split(LoopCheck).Length - 1;
+  Assert(Checks(ScriptLoopGuard.AddChecks("while (true) { }")) == 1, "A while loop got no check.");
+  Assert(Checks(ScriptLoopGuard.AddChecks("do { } while (true);")) == 1, "A do loop got no check.");
+  Assert(Checks(ScriptLoopGuard.AddChecks("foreach (var x in new[] { 1 }) { }")) == 1, "A foreach loop got no check.");
+  Assert(ScriptLoopGuard.AddChecks("for (var i = 0; i < 3; i++) i += 0;")
+    == "for (var i = 0; i < 3; i++) { " + LoopCheck + " i += 0; }", "A one-line loop body wasn't wrapped.");
+  Assert(Checks(ScriptLoopGuard.AddChecks("while (true) for (;;) while (true);")) == 3, "Nested one-line loops were missed.");
+  var linesKept = ScriptLoopGuard.AddChecks("var i = 0;\nwhile (i < 3)\n{\n  i++;\n}\nreturn i;");
+  Assert(linesKept.Split('\n').Length == 6, "The guard changed the script's line numbers.");
+  foreach (var untouched in new[]
+  {
+    "return 1;",
+    "var words = \"while (true) { }\"; // for (;;) { }\nreturn words;",
+    "class Helper { public void F() { while (true) { } } }",
+    "System.Action run = static () => { while (true) { } };",
+    "while (true) {",
+  })
+  {
+    Assert(ScriptLoopGuard.AddChecks(untouched) == untouched, $"The guard changed: {untouched}");
+  }
+
+  // What it's for: a script that would never end stops when its token is cancelled, as the timeout does in Civil 3D.
+  foreach (var endless in new[]
+  {
+    "while (true) { }",
+    "for (;;) ;",
+    "var n = 0; do { n++; } while (n >= 0 || n < 0);",
+    "System.Action spin = () => { while (true) { } }; spin();",
+    "return await System.Threading.Tasks.Task.Run(() => { while (true) { } return 1; });",
+  })
+  {
+    using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+    var scriptRun = Task.Run(() => Microsoft.CodeAnalysis.CSharp.Scripting.CSharpScript.RunAsync(
+      ScriptLoopGuard.AddChecks(endless), globals: new ScriptGlobals(stop.Token), globalsType: typeof(ScriptGlobals)));
+    if (await Task.WhenAny(scriptRun, Task.Delay(TimeSpan.FromSeconds(20))) != scriptRun)
+    {
+      throw new InvalidOperationException($"The loop guard didn't stop: {endless}");
+    }
+
+    Assert(scriptRun.IsCanceled || scriptRun.Exception?.GetBaseException() is OperationCanceledException,
+      $"The loop guard ended '{endless}' with {scriptRun.Exception?.GetBaseException().GetType().Name ?? "no exception"}.");
+  }
+
   var nestedOutput = Path.Combine(allowedRoot, "reports", "quantities.csv");
   var canonical = FileBoundary.ResolveExportPath(nestedOutput, overwrite: false, ".csv");
   Assert(canonical == Path.GetFullPath(nestedOutput), "Allowed output was not canonicalized.");
@@ -334,4 +380,10 @@ static int GetFreeTcpPort()
   var port = ((IPEndPoint)listener.LocalEndpoint).Port;
   listener.Stop();
   return port;
+}
+
+/// <summary>The one global the loop guard needs, as ScriptContext gives it to a real script.</summary>
+public sealed class ScriptGlobals(CancellationToken cancellationToken)
+{
+  public CancellationToken CancellationToken { get; } = cancellationToken;
 }
