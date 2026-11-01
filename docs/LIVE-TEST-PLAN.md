@@ -181,14 +181,16 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 | `watershed_add` | Says when nothing was added; no working call found yet |
 | Surface delete | Doesn't check what depends on the surface |
 | Parcel report vertices, `lot_line_adjust` | Need a parcel drawn by hand; not run |
-| Point windows (2.9 to 2.12), undo after a person's command (2.24), a person-held lock (3.27) | Need someone at Civil 3D |
-| Parts 3.20 to 3.44 with the drawing open, metric drawing, several drawings, view following | Not run yet |
+| Point windows (2.9 to 2.12), undo after a person's command (2.24), a person-held lock (3.27), view following | Need someone at Civil 3D |
+| A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
 
 Civil 3D facts learned, worth knowing before testing again:
 
 - It starts on a blank Drawing1, not the last drawing: check the active drawing before any write.
 - AI Connection is off at every start.
 - A new script costs nothing after the first (about 450 MB, once). Read `memoryUsageMb` from `civil3d_health` as you go.
+- A script run between undo and redo empties the redo list.
+- A command left at its prompt doesn't block: reads answer, and the next write ends it. (The plan expected HOST_BUSY.)
 
 ## 6. The test job
 
