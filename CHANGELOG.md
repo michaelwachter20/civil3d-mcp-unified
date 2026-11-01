@@ -5,6 +5,12 @@
 From a review of the code against Project Analyzer and Civil 3D's own API list. Nothing here has been tried in Civil 3D
 yet: docs/LIVE-TEST-PLAN.md is the plan for that.
 
+- **New scripts no longer eat Civil 3D's memory.** Every new C# script kept about 460 MB until a day's testing reached 19
+  GB and ran a 7 GB computer out of memory. Half was the loaded assemblies read again because each script changed their
+  count; half was 532 assemblies Roslyn found on its own and read again for every compile. Each is now read once (24 new
+  scripts added 31 MB after the first), compiling takes about 0.1 s instead of 2 s, and at most 16 compiled scripts are
+  kept. Found and proven live in Civil 3D 2027.
+
 - **A script's timeout now stops a tight loop.** Every loop in a script checks the cancellation token by itself
   (`ScriptLoopGuard`), so `while (true) { }` ends at the timeout instead of freezing Civil 3D. Recursion, one long call
   into Civil 3D and loops in a class the script declares aren't covered.

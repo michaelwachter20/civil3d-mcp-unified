@@ -428,9 +428,6 @@ internal static class Civil3DCompatibility
       .ToArray();
   }
 
-  /// <summary>Number of assemblies currently loaded (cheap cache-invalidation signal).</summary>
-  public static int GetLoadedAssemblyCount() => AppDomain.CurrentDomain.GetAssemblies().Length;
-
   /// <summary>
   /// Some third-party assemblies loaded into Civil 3D carry malformed InternalsVisibleTo attributes;
   /// Roslyn throws a NullReferenceException on them while binding ANY script. Skip those (logged).

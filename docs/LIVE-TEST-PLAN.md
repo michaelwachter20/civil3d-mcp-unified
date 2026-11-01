@@ -81,6 +81,7 @@ Shared setup, made once with the tools below: 12 points numbered 1-12 with descr
 | 2.35 | `civil3d_script action=compile` on every skill's template | All compile (skills moved to `Args` without Civil 3D) |
 | 2.36 | Run `create_tin_surface`, `create_polyline`, `station_offset`, `surface_volume` with `args` | Work from their arguments |
 | 2.37 | Sandbox: `Process.Start`, file delete, reflection | Blocked |
+| 2.38 | 24 scripts never run before, reading `memoryUsageMb` from `civil3d_health` after each | About 450 MB for the first (read once), then flat |
 
 ## 3. Civil 3D MCP with the job's database
 

@@ -35,12 +35,18 @@ internal sealed record ScriptRunResult(
 internal static class ScriptEngine
 {
   public const string ScriptFileName = "script.csx";
-  private const int MaxCacheEntries = 256;
+  // A compiled script keeps native memory alive until it leaves this cache, and compiling again takes about a second.
+  private const int MaxCacheEntries = 16;
 
   private static readonly ConcurrentDictionary<string, Lazy<CompiledScript>> Cache = new(StringComparer.Ordinal);
   private static readonly object ReferenceLock = new();
   private static IReadOnlyList<RoslynReference>? _references;
-  private static int _referenceAssemblyCount;
+  private static int _referenceFileCount;
+
+  /// <summary>Each assembly file is read once: a null entry is one that can't be a reference (not usable, or unreadable).</summary>
+  private static readonly Dictionary<string, RoslynReference?> ReferenceByPath = new(StringComparer.OrdinalIgnoreCase);
+
+  private static readonly ScriptReferenceResolver ReferenceResolver = new(ScriptOptions.Default.MetadataResolver);
 
   internal static readonly string[] Imports =
   {
@@ -91,6 +97,8 @@ internal static class ScriptEngine
     if (Cache.Count >= MaxCacheEntries)
     {
       Cache.Clear();
+      // Roslyn's native copies are freed by finalizers, and the GC can't see their size, so it wouldn't run for them.
+      GC.Collect();
     }
 
     var entry = Cache.GetOrAdd(hash, key => new Lazy<CompiledScript>(() => CompileCore(code, key), LazyThreadSafetyMode.ExecutionAndPublication));
@@ -253,6 +261,7 @@ internal static class ScriptEngine
       .Select(FormatDiagnostic)
       .ToList();
 
+    PluginLog.Info("Script", $"Compiled {hash[..12]}: {ReferenceResolver.ResolvedCount} assemblies found beyond the loaded ones, private memory {System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64 / 1048576} MB.");
     return new CompiledScript(hash, script, warnings);
   }
 
@@ -260,6 +269,7 @@ internal static class ScriptEngine
   {
     return ScriptOptions.Default
       .WithReferences(GetReferences())
+      .WithMetadataResolver(ReferenceResolver)
       .WithImports(Imports)
       .WithAllowUnsafe(false)
       // Release: Debug-mode script IL crashed the .NET 10 runtime twice inside Civil 3D 2027
@@ -275,35 +285,51 @@ internal static class ScriptEngine
   {
     lock (ReferenceLock)
     {
-      var count = Civil3DCompatibility.GetLoadedAssemblyCount();
-      if (_references != null && count == _referenceAssemblyCount)
+      // Counted by files on disk, not loaded assemblies: every script loads one more assembly of its own, from memory.
+      // Counting those read all of Civil 3D's assemblies again for each new script, about 460 MB that the cached
+      // script then kept alive, until a day's scripts had taken 19 GB and the computer ran out of memory.
+      var locations = Civil3DCompatibility.GetLoadedAssemblyLocations();
+      if (_references != null && locations.Length == _referenceFileCount)
       {
         return _references;
       }
 
       // One reference per simple assembly name avoids duplicate-type errors
       // when two versions of a dependency are loaded side by side.
-      _references = Civil3DCompatibility.GetLoadedAssemblyLocations()
+      _references = locations
         .GroupBy(location => Path.GetFileNameWithoutExtension(location), StringComparer.OrdinalIgnoreCase)
-        .Select(group => group.First())
-        .Where(Civil3DCompatibility.IsUsableScriptReference)
-        .Select(location =>
-        {
-          try
-          {
-            return (RoslynReference?)RoslynReference.CreateFromFile(location);
-          }
-          catch (System.Exception)
-          {
-            return null;
-          }
-        })
+        .Select(group => ReferenceFor(group.First()))
         .Where(reference => reference != null)
         .Cast<RoslynReference>()
         .ToList();
-      _referenceAssemblyCount = count;
+      _referenceFileCount = locations.Length;
       return _references;
     }
+  }
+
+  /// <summary>The reference for one assembly file, read once however many times the list is rebuilt (the caller holds ReferenceLock).</summary>
+  private static RoslynReference? ReferenceFor(string location)
+  {
+    if (ReferenceByPath.TryGetValue(location, out var known))
+    {
+      return known;
+    }
+
+    RoslynReference? reference = null;
+    if (Civil3DCompatibility.IsUsableScriptReference(location))
+    {
+      try
+      {
+        reference = RoslynReference.CreateFromFile(location);
+      }
+      catch (System.Exception)
+      {
+        // Left out of the list, as an unusable assembly is.
+      }
+    }
+
+    ReferenceByPath[location] = reference;
+    return reference;
   }
 
   private static async Task<bool> TryRunUndoAsync(Document document, string option)
