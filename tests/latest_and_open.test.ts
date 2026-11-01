@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,6 +80,8 @@ describe("the latest version of a file, and civil3d_drawing open", () => {
   });
 
   it("keys names the way the analyzer does", () => {
+    expect(new Set(["C-104 Rev B.dwg", "C-104_rev2.dwg", "C-104.dwg"].map(seriesKey))).toEqual(new Set(["c 104"]));
+    expect(seriesKey("Reverse curve.dwg")).toBe("reverse curve");
     expect(seriesKey("C-101 GRADING rev1.dwg")).toBe("c 101 grading");
     expect(seriesKey("all points 20250301 current (2).dwg")).toBe("all points");
   });
@@ -103,6 +105,7 @@ describe("the latest version of a file, and civil3d_drawing open", () => {
 
   it("an open drawing comes first: it becomes the active tab, and a newer one on the drive is mentioned", async () => {
     open = [{ name: "C-101 GRADING.dwg", path: join(job, "Packages\\2026-01\\C-101 GRADING.dwg"), active: false }];
+    utimesSync(open[0].path, new Date("2026-01-10"), new Date("2026-01-10"));   // the newer version was saved after it
     const result = await openDrawingByName({ name: "C-101 GRADING", project: ELM });
     expect(result.reason).toContain("already open");
     expect(calls).toEqual([["activateDrawing", { name: join(job, "Packages\\2026-01\\C-101 GRADING.dwg") }]]);

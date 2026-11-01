@@ -963,7 +963,7 @@ export async function projectChanges(name?: string, options: ChangesOptions = {}
 // Contract: intel_series (project-analyzer's analyzer/series.py). A series is the files on the drive of one kind whose
 // names are the same once dates, "rev N", "current", "copy" and the like are taken out; the latest is the one modified
 // last. The key below is drawing_history.series_key without the title block, so lookups match the analyzer's.
-const SERIES_REMOVE = /\b(?:\d{8}|\d{6}|\d{2}[-_ ]\d{2}[-_ ]\d{2,4}|current|copy|backup|bak|old|new|test|void|draft|final|rev(?:ision)?\s*\d*|v\d+|to)\b|\(\d+\)/gi;
+const SERIES_REMOVE = /(?<![a-z0-9])(?:\d{8}|\d{6}|\d{2}[-_ ]\d{2}[-_ ]\d{2,4}|current|copy|backup|bak|old|new|test|void|draft|final|rev(?:ision)?[\s_.-]*(?:\d+|[a-z])?|v\d+|to)(?![a-z0-9])|\(\d+\)/gi;
 
 /** 'C-101 rev2 (2).dwg' -> 'c 101'; the analyzer's series key of a file name. */
 export function seriesKey(fileName: string): string {
