@@ -165,10 +165,12 @@ public static class WorkflowCommands
 
     return WorkflowResult(
       "data_shortcut_publish_sync",
-      $"Published and synchronized data shortcut '{shortcutName}'.",
+      dryRun
+        ? $"Dry run: nothing was published for '{shortcutName}'."
+        : $"Started publishing data shortcut '{shortcutName}'.",
       new List<Dictionary<string, object?>>
       {
-        WorkflowStep("Publish data shortcut", "project.data_shortcut_create", "completed", publishResult),
+        WorkflowStep("Publish data shortcut", "project.data_shortcut_create", dryRun ? "skipped" : "completed", publishResult),
         WorkflowStep("Synchronize published shortcut", "project.data_shortcut_sync", "completed", syncResult),
       },
       new Dictionary<string, object?>
@@ -176,7 +178,8 @@ public static class WorkflowCommands
         ["publish"] = publishResult,
         ["sync"] = syncResult,
         ["shortcutName"] = shortcutName,
-      });
+      },
+      dryRun ? null : [WaitsOnWindow]);
   }
 
   /// <summary>References shortcut <c>shortcutName</c> of <c>shortcutType</c> from <c>projectFolder</c> into this
@@ -189,7 +192,7 @@ public static class WorkflowCommands
     var layer = PluginRuntime.GetOptionalString(parameters, "layer");
     var dryRun = PluginRuntime.GetOptionalBool(parameters, "dryRun") ?? false;
 
-    var referenceResult = await RequireDictionary(
+    var referenceResult = dryRun ? new Dictionary<string, object?> { ["dryRun"] = true, ["status"] = "skipped" } : await RequireDictionary(
       DataShortcutCommands.ReferenceDataShortcutAsync(new JsonObject
       {
         ["projectFolder"] = projectFolder,
@@ -209,17 +212,20 @@ public static class WorkflowCommands
 
     return WorkflowResult(
       "data_shortcut_reference_sync",
-      $"Referenced and synchronized data shortcut '{shortcutName}'.",
+      dryRun
+        ? $"Dry run: nothing was referenced for '{shortcutName}'."
+        : $"Started referencing data shortcut '{shortcutName}'.",
       new List<Dictionary<string, object?>>
       {
-        WorkflowStep("Reference project data shortcut", "project.data_shortcut_reference", "completed", referenceResult),
+        WorkflowStep("Reference project data shortcut", "project.data_shortcut_reference", dryRun ? "skipped" : "completed", referenceResult),
         WorkflowStep("Synchronize referenced shortcut", "project.data_shortcut_sync", "completed", syncResult),
       },
       new Dictionary<string, object?>
       {
         ["reference"] = referenceResult,
         ["sync"] = syncResult,
-      });
+      },
+      dryRun ? null : [WaitsOnWindow]);
   }
 
   /// <summary>
@@ -321,7 +327,7 @@ public static class WorkflowCommands
       syncProjectFolder ??= projectFolder;
       shortcutNames.Add(shortcutName);
 
-      var result = await RequireDictionary(
+      var result = dryRun ? new Dictionary<string, object?> { ["dryRun"] = true, ["status"] = "skipped" } : await RequireDictionary(
         DataShortcutCommands.ReferenceDataShortcutAsync(new JsonObject
         {
           ["projectFolder"] = projectFolder,
@@ -331,7 +337,7 @@ public static class WorkflowCommands
         }),
         $"referenceDataShortcut.{shortcutName}");
       referenceResults.Add(result);
-      steps.Add(WorkflowStep($"Reference data shortcut '{shortcutName}'", "project.data_shortcut_reference", "completed", result));
+      steps.Add(WorkflowStep($"Reference data shortcut '{shortcutName}'", "project.data_shortcut_reference", dryRun ? "skipped" : "completed", result));
     }
 
     var syncResult = await RequireDictionary(
@@ -362,7 +368,9 @@ public static class WorkflowCommands
 
     return WorkflowResult(
       "project_reference_setup",
-      $"Completed project reference setup for {shortcutNames.Count} data shortcut(s).",
+      dryRun
+        ? $"Dry run: nothing was referenced for {shortcutNames.Count} data shortcut(s)."
+        : $"Started referencing {shortcutNames.Count} data shortcut(s).",
       steps,
       new Dictionary<string, object?>
       {
@@ -370,7 +378,8 @@ public static class WorkflowCommands
         ["sync"] = syncResult,
         ["dataShortcuts"] = dataShortcutsResult,
         ["save"] = saveResult,
-      });
+      },
+      dryRun ? null : [WaitsOnWindow]);
   }
 
   /// <summary>A read-only audit in one answer: health, drawing info and settings, object types, the selection (up to
@@ -638,6 +647,10 @@ public static class WorkflowCommands
   }
 
   /// <summary>The workflow answer; status is "completed_with_warnings" when there are warnings.</summary>
+  /// <summary>Data shortcut commands only open Civil 3D's window: a person finishes them, so a workflow can't call them done.</summary>
+  private const string WaitsOnWindow =
+    "Not finished: Civil 3D's window needs a person, and nothing here checks that the shortcut exists or that the step was completed.";
+
   private static Dictionary<string, object?> WorkflowResult(
     string workflow,
     string summary,

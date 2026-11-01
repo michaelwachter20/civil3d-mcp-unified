@@ -18,7 +18,8 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   QC called every spiral-curve-spiral invalid twice over; slope analysis failed where a profile stops short of its
   alignment; a volume between a surface and itself gave a raw error; a second network of a name became `Name (1)`; a
   zero-length pressure pipe was accepted; `data_shortcut_create` opened a window that stopped every request, and did
-  so from a dry run too. Unmatched pay items are now listed, and two empty codes no longer count as a match. Approvals
+  so from a dry run too; the data shortcut workflows reported success for a window nobody had answered, and for a
+  shortcut that didn't exist. Unmatched pay items are now listed, and two empty codes no longer count as a match. Approvals
   take the action names tools show (`run`), not only the inside ones (`script_run`).
 
 - **Parcels can be made:** `create` works, through Civil 3D's COM interface, since the .NET API has no call for it. It
