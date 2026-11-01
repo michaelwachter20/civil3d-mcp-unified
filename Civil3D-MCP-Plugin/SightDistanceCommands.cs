@@ -107,13 +107,15 @@ public static class SightDistanceCommands
         {
           var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName!);
           var profileId = FindProfileId(alignment, transaction, profileName!);
-          double? kValueAtStation = profileId != ObjectId.Null
-            ? GetKValueAtStation(transaction, profileId, checkStation.Value)
-            : null;
+          var curve = profileId != ObjectId.Null ? CurveAtStation(transaction, profileId, checkStation.Value) : null;
+          // A profile's K is in the drawing's units, whichever units the speed came in.
+          var metricDrawing = database.Insunits == UnitsValue.Meters;
+          var (sagLimit, crestLimit) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
 
           result["stationChecked"] = checkStation;
-          result["kValueAtStation"] = kValueAtStation.HasValue ? Math.Round(kValueAtStation.Value, 1) : (object?)"N/A";
-          result["kValueCompliant"] = kValueAtStation.HasValue && kValueAtStation.Value >= kcrest;
+          result["kValueAtStation"] = curve is { } found ? Math.Round(found.K, 1) : (object?)"N/A";
+          result["curveTypeAtStation"] = curve is { } atStation ? (atStation.Sag ? "sag" : "crest") : null;
+          result["kValueCompliant"] = curve is { } c && c.K >= (c.Sag ? sagLimit : crestLimit);
         }
         catch
         {
@@ -133,41 +135,47 @@ public static class SightDistanceCommands
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var profileName = PluginRuntime.GetRequiredString(parameters, "profileName");
     var designSpeed = PluginRuntime.GetRequiredDouble(parameters, "designSpeed");
+    var speedUnits = PluginRuntime.GetOptionalString(parameters, "speedUnits");
     var stationStart = PluginRuntime.GetOptionalDouble(parameters, "stationStart");
     var stationEnd = PluginRuntime.GetOptionalDouble(parameters, "stationEnd");
     var stationInterval = PluginRuntime.GetOptionalDouble(parameters, "stationInterval") ?? 25.0;
 
-    var speedKmh = designSpeed;
-    var friction = InterpolateFriction(speedKmh);
-    var ssdMetres = 0.278 * speedKmh * 2.5 + (speedKmh * speedKmh) / (254.0 * friction);
-
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      // K on a profile is in the drawing's units, so the limit is too. A speed with no units follows the drawing.
+      var metricDrawing = database.Insunits == UnitsValue.Meters;
+      var mph = string.IsNullOrWhiteSpace(speedUnits)
+        ? !metricDrawing
+        : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
+      var speedKmh = mph ? designSpeed * 1.60934 : designSpeed;
+      var friction = InterpolateFriction(speedKmh);
+      var ssdMetres = 0.278 * speedKmh * 2.5 + (speedKmh * speedKmh) / (254.0 * friction);
+
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var alignmentLength = CivilObjectUtils.GetPropertyValue<double?>(alignment, "Length") ?? 0.0;
       var startSta = stationStart ?? CivilObjectUtils.GetPropertyValue<double?>(alignment, "StartingStation") ?? 0.0;
       var endSta = stationEnd ?? (startSta + alignmentLength);
 
       var profileId = FindProfileId(alignment, transaction, profileName);
-      // K on a profile is in the drawing's units, so the limit is too.
-      var metricDrawing = database.Insunits == UnitsValue.Meters;
-      var (_, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
+      var (ksagMin, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
       var violations = new List<Dictionary<string, object?>>();
       var checkedCount = 0;
 
       for (double sta = startSta; sta <= endSta; sta += stationInterval)
       {
         checkedCount++;
-        var kValue = profileId != ObjectId.Null ? GetKValueAtStation(transaction, profileId, sta) : null;
-        if (kValue.HasValue && kValue.Value < kcrestMin)
+        if ((profileId != ObjectId.Null ? CurveAtStation(transaction, profileId, sta) : null) is not { } curve) continue;
+        var required = curve.Sag ? ksagMin : kcrestMin;
+        if (curve.K < required)
         {
           violations.Add(new Dictionary<string, object?>
           {
             ["station"] = Math.Round(sta, 2),
-            ["kValue"] = Math.Round(kValue.Value, 1),
-            ["kValueRequired"] = kcrestMin,
-            ["deficiency"] = Math.Round(kcrestMin - kValue.Value, 1),
-            ["severity"] = kValue.Value < kcrestMin * 0.75 ? "FAIL" : "WARN",
+            ["curveType"] = curve.Sag ? "sag" : "crest",
+            ["kValue"] = Math.Round(curve.K, 1),
+            ["kValueRequired"] = required,
+            ["deficiency"] = Math.Round(required - curve.K, 1),
+            ["severity"] = curve.K < required * 0.75 ? "FAIL" : "WARN",
           });
         }
       }
@@ -176,9 +184,12 @@ public static class SightDistanceCommands
       {
         ["alignmentName"] = alignmentName,
         ["profileName"] = profileName,
-        ["designSpeedKmh"] = speedKmh,
+        ["designSpeed"] = designSpeed,
+        ["designSpeedUnits"] = mph ? "mph" : "km/h",
+        ["designSpeedKmh"] = Math.Round(speedKmh, 1),
         ["requiredSsdMetres"] = Math.Round(ssdMetres, 1),
         ["minimumKValueCrest"] = kcrestMin,
+        ["minimumKValueSag"] = ksagMin,
         ["stationsChecked"] = checkedCount,
         ["violationCount"] = violations.Count,
         ["compliant"] = violations.Count == 0,
@@ -239,7 +250,11 @@ public static class SightDistanceCommands
     return ObjectId.Null;
   }
 
-  private static double? GetKValueAtStation(Transaction transaction, ObjectId profileId, double station)
+  /// <summary>
+  /// The K of the vertical curve at a station and whether it's a sag; null on a tangent or a flat curve. Civil 3D's
+  /// classes are ProfileParabolaSymmetric, ProfileParabolaAsymmetric and ProfileCircular, none with "curve" in the name.
+  /// </summary>
+  private static (double K, bool Sag)? CurveAtStation(Transaction transaction, ObjectId profileId, double station)
   {
     try
     {
@@ -255,20 +270,18 @@ public static class SightDistanceCommands
         if (station < startSta || station > endSta) continue;
 
         var entityType = entity.GetType().Name;
-        if (entityType.IndexOf("curve", StringComparison.OrdinalIgnoreCase) < 0) continue;
+        if (entityType.IndexOf("parabola", StringComparison.OrdinalIgnoreCase) < 0
+          && entityType.IndexOf("circular", StringComparison.OrdinalIgnoreCase) < 0
+          && entityType.IndexOf("curve", StringComparison.OrdinalIgnoreCase) < 0) continue;
 
-        var kValue = CivilObjectUtils.GetPropertyValue<double?>(entity, "K")
-                  ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "KValue");
-        if (kValue.HasValue && kValue.Value > 0) return kValue.Value;
-
-        // Calculate K from length and grade change
         var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
         var gradeIn = CivilObjectUtils.GetPropertyValue<double?>(entity, "GradeIn")
                    ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "StartGrade") ?? 0;
         var gradeOut = CivilObjectUtils.GetPropertyValue<double?>(entity, "GradeOut")
                     ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "EndGrade") ?? 0;
-        var a = Math.Abs(gradeOut - gradeIn);
-        if (a > 0.001 && length > 0) return length / a;
+        // Civil 3D gives grades as ratios (0.02 = 2%); K is per percent.
+        var a = Math.Abs(gradeOut - gradeIn) * 100;
+        if (a > 1e-10 && length > 0) return (length / a, gradeOut > gradeIn);
       }
       return null;
     }

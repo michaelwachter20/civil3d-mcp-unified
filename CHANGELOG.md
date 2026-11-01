@@ -11,6 +11,10 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
   scale and corridor region add, region delete and targets didn't work.
 
+- **`stopping_distance_check` checked nothing:** it looked for "curve" in a class name, and Civil 3D's are
+  `ProfileParabolaSymmetric` and `ProfileCircular`, so every profile came back compliant. It also read mph as km/h, held
+  sags to the crest limit and worked K 100 times too small. A speed with no units now follows the drawing.
+
 - **Wrong answers put right:** sight distance K (3.7 and 8.5 at 30 mph, now 19 and 37), tangents QC called zero-length,
   pipe inverts (they were centerlines), pipe cover (0 for every pipe), K in profile QC, point totals, surface profiles
   called layouts, entities out of station order, superelevation reported on curves with none.

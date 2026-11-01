@@ -220,6 +220,7 @@ public static class ProfileEditCommands
       {
         var entityType = entity?.GetType().Name ?? string.Empty;
         var isCurve = entityType.ToLowerInvariant().Contains("parabola")
+          || entityType.ToLowerInvariant().Contains("circular")
           || entityType.ToLowerInvariant().Contains("curve");
         if (!isCurve)
         {
