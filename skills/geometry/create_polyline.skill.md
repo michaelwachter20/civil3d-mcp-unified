@@ -22,11 +22,11 @@ parameters:
 
 ```csharp
 var polyline = new Polyline();
-polyline.AddVertexAt(0, new Point2d(0, 0), 0, 0, 0);
-polyline.AddVertexAt(1, new Point2d(100, 0), 0, 0, 0);
-polyline.AddVertexAt(2, new Point2d(100, 100), 0, 0, 0);
-polyline.Closed = false;  // Set true to close
-// polyline.Layer = "MyLayer";
+var at = 0;
+foreach (var v in Args.Raw("vertices").AsArray())
+    polyline.AddVertexAt(at++, new Point2d(v["x"].GetValue<double>(), v["y"].GetValue<double>()), 0, 0, 0);
+polyline.Closed = Args.GetBool("closed", false);
+if (Args.Has("layer")) polyline.Layer = Args.GetString("layer");
 
 var bt = (BlockTable)Transaction.GetObject(Database.BlockTableId, OpenMode.ForRead);
 var btr = (BlockTableRecord)Transaction.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
@@ -40,11 +40,10 @@ return new { success = true, handle = polyline.Handle.ToString(), vertexCount = 
 
 ```csharp
 var pts = new Point3dCollection();
-pts.Add(new Point3d(0, 0, 10));
-pts.Add(new Point3d(100, 0, 15));
-pts.Add(new Point3d(100, 100, 20));
+foreach (var v in Args.Raw("vertices").AsArray())
+    pts.Add(new Point3d(v["x"].GetValue<double>(), v["y"].GetValue<double>(), v["z"]?.GetValue<double>() ?? 0));
 
-var polyline3d = new Polyline3d(Poly3dType.SimplePoly, pts, false);
+var polyline3d = new Polyline3d(Poly3dType.SimplePoly, pts, Args.GetBool("closed", false));
 
 var bt = (BlockTable)Transaction.GetObject(Database.BlockTableId, OpenMode.ForRead);
 var btr = (BlockTableRecord)Transaction.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite);

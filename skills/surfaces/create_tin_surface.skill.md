@@ -22,16 +22,19 @@ parameters:
 
 ```csharp
 // Create the TIN surface
-var surfaceId = TinSurface.Create(Database, "SURFACE_NAME_HERE");
+var surfaceId = TinSurface.Create(Database, Args.GetString("surfaceName"));
 var surface = Transaction.GetObject(surfaceId, OpenMode.ForWrite) as TinSurface;
 
 // Optionally set description
-// surface.Description = "description here";
+if (Args.Has("description")) surface.Description = Args.GetString("description");
 
 // Optionally add points
 var pts = new Point3dCollection();
-// pts.Add(new Point3d(x, y, z));
-// pts.Add(new Point3d(x2, y2, z2));
+if (Args.Has("points"))
+{
+    foreach (var p in Args.Raw("points").AsArray())
+        pts.Add(new Point3d(p["x"].GetValue<double>(), p["y"].GetValue<double>(), p["z"].GetValue<double>()));
+}
 
 if (pts.Count > 0)
 {

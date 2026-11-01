@@ -18,7 +18,7 @@ parameters:
 
 ```csharp
 var points = new List<object>();
-var limit = 500;
+var limit = Args.GetInt("limit", 500);
 var count = 0;
 
 foreach (ObjectId id in CivilDoc.CogoPoints)

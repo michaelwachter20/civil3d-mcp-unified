@@ -15,13 +15,14 @@ parameters:
 ```csharp
 var created = new List<object>();
 
-// Add points
-var pt1 = CivilDoc.CogoPoints.Add(new Point3d(1000.0, 2000.0, 100.0), false);
-var point1 = Transaction.GetObject(pt1, OpenMode.ForWrite) as CogoPoint;
-point1.RawDescription = "TOPO";
-created.Add(new { pointNumber = point1.PointNumber, easting = point1.Easting, northing = point1.Northing });
-
-// Repeat for more points...
+// Civil 3D asks the user in a window before these are made.
+foreach (var p in Args.Raw("points").AsArray())
+{
+    var id = CivilDoc.CogoPoints.Add(new Point3d(p["easting"].GetValue<double>(), p["northing"].GetValue<double>(), p["elevation"].GetValue<double>()), false);
+    var point = Transaction.GetObject(id, OpenMode.ForWrite) as CogoPoint;
+    point.RawDescription = p["description"]?.GetValue<string>() ?? "";
+    created.Add(new { pointNumber = point.PointNumber, easting = point.Easting, northing = point.Northing });
+}
 
 return new { success = true, created };
 ```

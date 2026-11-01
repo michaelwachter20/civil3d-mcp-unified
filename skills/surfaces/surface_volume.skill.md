@@ -24,9 +24,9 @@ foreach (ObjectId id in CivilDoc.GetSurfaceIds())
     var s = Transaction.GetObject(id, OpenMode.ForRead);
     if (s is TinSurface tin)
     {
-        if (tin.Name.Equals("BASE_SURFACE_NAME", StringComparison.OrdinalIgnoreCase))
+        if (tin.Name.Equals(Args.GetString("baseSurface"), StringComparison.OrdinalIgnoreCase))
             baseSurf = tin;
-        if (tin.Name.Equals("COMPARISON_SURFACE_NAME", StringComparison.OrdinalIgnoreCase))
+        if (tin.Name.Equals(Args.GetString("comparisonSurface"), StringComparison.OrdinalIgnoreCase))
             compSurf = tin;
     }
 }

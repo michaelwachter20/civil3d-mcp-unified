@@ -23,7 +23,7 @@ Autodesk.Civil.DatabaseServices.Surface targetSurface = null;
 foreach (ObjectId id in CivilDoc.GetSurfaceIds())
 {
     var s = Transaction.GetObject(id, OpenMode.ForRead) as Autodesk.Civil.DatabaseServices.Surface;
-    if (s != null && s.Name.Equals("SURFACE_NAME", StringComparison.OrdinalIgnoreCase))
+    if (s != null && s.Name.Equals(Args.GetString("surfaceName"), StringComparison.OrdinalIgnoreCase))
     {
         targetSurface = s;
         break;
@@ -33,8 +33,8 @@ foreach (ObjectId id in CivilDoc.GetSurfaceIds())
 if (targetSurface == null)
     return new { error = "Surface not found" };
 
-double x = 1000.0;  // Replace with actual X
-double y = 2000.0;  // Replace with actual Y
+double x = Args.GetDouble("x");
+double y = Args.GetDouble("y");
 double elevation = targetSurface.FindElevationAtXY(x, y);
 
 return new {

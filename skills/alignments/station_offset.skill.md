@@ -32,13 +32,13 @@ Alignment alignment = null;
 foreach (ObjectId id in CivilDoc.GetAlignmentIds())
 {
     var a = Transaction.GetObject(id, OpenMode.ForRead) as Alignment;
-    if (a != null && a.Name.Equals("ALIGNMENT_NAME", StringComparison.OrdinalIgnoreCase))
+    if (a != null && a.Name.Equals(Args.GetString("alignmentName"), StringComparison.OrdinalIgnoreCase))
     { alignment = a; break; }
 }
 if (alignment == null) return new { error = "Alignment not found" };
 
-double station = 100.0;  // Replace
-double offset = 0.0;     // Replace
+double station = Args.GetDouble("station");
+double offset = Args.GetDouble("offset", 0.0);
 double x = 0, y = 0;
 alignment.PointLocation(station, offset, ref x, ref y);
 
@@ -52,12 +52,12 @@ Alignment alignment = null;
 foreach (ObjectId id in CivilDoc.GetAlignmentIds())
 {
     var a = Transaction.GetObject(id, OpenMode.ForRead) as Alignment;
-    if (a != null && a.Name.Equals("ALIGNMENT_NAME", StringComparison.OrdinalIgnoreCase))
+    if (a != null && a.Name.Equals(Args.GetString("alignmentName"), StringComparison.OrdinalIgnoreCase))
     { alignment = a; break; }
 }
 if (alignment == null) return new { error = "Alignment not found" };
 
-double x = 1000.0, y = 2000.0;  // Replace
+double x = Args.GetDouble("x"), y = Args.GetDouble("y");
 double station = 0, offset = 0;
 alignment.StationOffset(x, y, ref station, ref offset);
 

@@ -18,7 +18,7 @@ TinSurface egSurface = null;
 foreach (ObjectId id in CivilDoc.GetSurfaceIds())
 {
     var s = Transaction.GetObject(id, OpenMode.ForRead) as TinSurface;
-    if (s != null && s.Name.Equals("SURFACE_NAME", StringComparison.OrdinalIgnoreCase))
+    if (s != null && s.Name.Equals(Args.GetString("surfaceName"), StringComparison.OrdinalIgnoreCase))
     { egSurface = s; break; }
 }
 if (egSurface == null) return new { error = "Surface not found" };
