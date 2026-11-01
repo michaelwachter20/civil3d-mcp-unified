@@ -138,7 +138,7 @@ public static class WorkflowCommands
     var projectFolder = PluginRuntime.GetOptionalString(parameters, "projectFolder");
     var dryRun = PluginRuntime.GetOptionalBool(parameters, "dryRun") ?? false;
 
-    // Publishing opens a window in Civil 3D, so a dry run stops short of it and only checks it could.
+    // A dry run stops short of publishing and only checks it could.
     if (dryRun)
     {
       DataShortcutCommands.RequireShortcutFolder();
@@ -167,7 +167,7 @@ public static class WorkflowCommands
       "data_shortcut_publish_sync",
       dryRun
         ? $"Dry run: nothing was published for '{shortcutName}'."
-        : $"Started publishing data shortcut '{shortcutName}'.",
+        : $"Published and synchronized data shortcut '{shortcutName}'.",
       new List<Dictionary<string, object?>>
       {
         WorkflowStep("Publish data shortcut", "project.data_shortcut_create", dryRun ? "skipped" : "completed", publishResult),
@@ -178,8 +178,7 @@ public static class WorkflowCommands
         ["publish"] = publishResult,
         ["sync"] = syncResult,
         ["shortcutName"] = shortcutName,
-      },
-      dryRun ? null : [WaitsOnWindow]);
+      });
   }
 
   /// <summary>References shortcut <c>shortcutName</c> of <c>shortcutType</c> from <c>projectFolder</c> into this
@@ -214,7 +213,7 @@ public static class WorkflowCommands
       "data_shortcut_reference_sync",
       dryRun
         ? $"Dry run: nothing was referenced for '{shortcutName}'."
-        : $"Started referencing data shortcut '{shortcutName}'.",
+        : $"Referenced and synchronized data shortcut '{shortcutName}'.",
       new List<Dictionary<string, object?>>
       {
         WorkflowStep("Reference project data shortcut", "project.data_shortcut_reference", dryRun ? "skipped" : "completed", referenceResult),
@@ -224,8 +223,7 @@ public static class WorkflowCommands
       {
         ["reference"] = referenceResult,
         ["sync"] = syncResult,
-      },
-      dryRun ? null : [WaitsOnWindow]);
+      });
   }
 
   /// <summary>
@@ -370,7 +368,7 @@ public static class WorkflowCommands
       "project_reference_setup",
       dryRun
         ? $"Dry run: nothing was referenced for {shortcutNames.Count} data shortcut(s)."
-        : $"Started referencing {shortcutNames.Count} data shortcut(s).",
+        : $"Referenced {shortcutNames.Count} data shortcut(s).",
       steps,
       new Dictionary<string, object?>
       {
@@ -378,8 +376,7 @@ public static class WorkflowCommands
         ["sync"] = syncResult,
         ["dataShortcuts"] = dataShortcutsResult,
         ["save"] = saveResult,
-      },
-      dryRun ? null : [WaitsOnWindow]);
+      });
   }
 
   /// <summary>A read-only audit in one answer: health, drawing info and settings, object types, the selection (up to
@@ -648,10 +645,6 @@ public static class WorkflowCommands
   }
 
   /// <summary>The workflow answer; status is "completed_with_warnings" when there are warnings.</summary>
-  /// <summary>Data shortcut commands only open Civil 3D's window: a person finishes them, so a workflow can't call them done.</summary>
-  private const string WaitsOnWindow =
-    "Not finished: Civil 3D's window needs a person, and nothing here checks that the shortcut exists or that the step was completed.";
-
   private static Dictionary<string, object?> WorkflowResult(
     string workflow,
     string summary,

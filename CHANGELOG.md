@@ -11,6 +11,10 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
   scale and corridor region add, region delete and targets didn't work.
 
+- **Three tools that said Civil 3D couldn't, and it can:** data shortcuts now publish and reference through
+  `DataShortcutManager` with no window, and can make a new project. `stage_storage` measures the surface's contours and
+  stops at the rim. `resize_pressure_pipe` swaps the part.
+
 - **Answers checked by hand:** tools were run on objects solved on paper, in feet and in metres. Stopping sight distance
   used an old friction formula (842 ft at 70 mph; AASHTO's is 730), and passing was six times stopping (5,054 ft; AASHTO's
   is 1,200): both now match the published tables. Every catchment tool found nothing, because it called a method that

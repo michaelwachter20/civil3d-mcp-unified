@@ -303,11 +303,27 @@ public static class PressureNetworkCommands
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
     var pipeName = PluginRuntime.GetRequiredString(parameters, "pipeName");
     var newPartName = PluginRuntime.GetRequiredString(parameters, "newPartName");
-    var newDiameter = PluginRuntime.GetOptionalDouble(parameters, "newDiameter");
 
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Civil 3D PressurePipe does not expose a managed resize or part-swap method. No diameter or catalog part was changed.");
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var network = FindPressureNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
+      var pipe = (PressurePipe)FindPressureComponentByName(network, transaction, pipeName, "GetPipeIds", "PipeIds", "Pipes");
+      var part = FindPressurePart(transaction, ((PressurePipeNetwork)network).PartsListId, newPartName, PressurePartType.PressurePipe);
+      var previousDiameter = pipe.InnerDiameter;
+
+      pipe.UpgradeOpen();
+      pipe.SwapPartSize(part);
+
+      return new Dictionary<string, object?>
+      {
+        ["networkName"] = networkName,
+        ["pipeName"] = pipeName,
+        ["newPartName"] = newPartName,
+        ["previousDiameter"] = previousDiameter,
+        ["newDiameter"] = pipe.InnerDiameter,
+        ["resized"] = true,
+      };
+    });
   }
 
   // -------------------------------------------------------------------------

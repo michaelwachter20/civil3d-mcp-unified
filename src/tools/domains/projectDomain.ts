@@ -8,10 +8,10 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * domainRuntime.ts turns these definitions into validated, approval-checked MCP tools. Not the suite's job database
  * (`civil3d_project_notes`, scriptingDomain.ts).
  *
- * Every action forwards to one plugin method, but Civil 3D has little managed API for data shortcuts, so several
- * don't finish the job: create opens Civil 3D's dialog for the user, sync queues SynchronizeReferences to run after
- * the answer, and reference, create_reference and promote answer "manual_step_required" with the Toolspace steps.
- * The answer's `status` says which; the AI must pass that on rather than report the shortcut as done.
+ * Every action forwards to one plugin method. Create and reference finish in the plugin, through Civil 3D's
+ * DataShortcutManager, with no window: `projectFolder` is a project in the working folder, or a full path, and create
+ * makes it if it's new. Sync queues SynchronizeReferences to run after the answer. Create_reference and promote answer
+ * "manual_step_required" with the Toolspace steps; the AI must pass that on rather than report them as done.
  */
 
 /** Object types Civil 3D can share as data shortcuts. */
@@ -42,6 +42,9 @@ const ExportableDataShortcutSchema = z.object({
 });
 
 const DataShortcutListResponseSchema = z.object({
+  workingFolder: z.string().optional(),
+  currentProject: z.string().optional(),
+  published: z.array(z.object({}).passthrough()).optional(),
   incoming: z.array(IncomingDataShortcutSchema),
   exportable: z.array(ExportableDataShortcutSchema),
 });

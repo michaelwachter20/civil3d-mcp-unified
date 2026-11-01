@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.Civil.DatabaseServices;
 
 namespace Civil3DMcpPlugin;
 
@@ -128,11 +129,108 @@ public static class DetentionCommands
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "topElevation must be greater than bottomElevation.");
     }
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Stage-storage for surface '{surfaceName}' is unavailable because the Civil 3D .NET surface API does not expose " +
-      "the inundated plan area at an arbitrary elevation. Provide surveyed stage-area data or an explicit basin boundary workflow; " +
-      "the server will not synthesize storage from a bounding box.");
+
+    if (elevIncrement <= 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "elevationIncrement must be positive.");
+    }
+
+    // Contours are extracted into the drawing to measure them. MeasureAsync never commits, so none are left behind.
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      if (CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, surfaceName, OpenMode.ForWrite) is not TinSurface surface)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Surface '{surfaceName}' isn't a TIN surface.");
+      }
+
+      var metric = database.Insunits == UnitsValue.Meters;
+      var steps = (int)Math.Ceiling((topElevation - bottomElevation) / elevIncrement - 1e-9);
+      var rows = new List<Dictionary<string, object?>>();
+      var notes = new List<string>
+      {
+        "Area is what the surface's contours enclose at each stage, so a mound inside the basin isn't taken out.",
+        "Volume between stages is by the conic formula, exact for a basin with straight sides.",
+      };
+      double previousArea = 0, previousElevation = bottomElevation, volume = 0;
+
+      for (var step = 0; step <= steps; step++)
+      {
+        var elevation = Math.Min(bottomElevation + step * elevIncrement, topElevation);
+        var (area, open) = AreaAt(surface, elevation, transaction);
+        if (open)
+        {
+          notes.Add($"Stopped at {elevation}: the contour there runs off the surface, so the basin doesn't hold water to that height.");
+          break;
+        }
+
+        // Above the rim there's no contour at all, which isn't a basin with no area: the water has gone.
+        if (area <= 0 && previousArea > 0)
+        {
+          notes.Add($"Stopped at {elevation}: the surface is lower than that everywhere, so {previousElevation} is the top of the basin.");
+          break;
+        }
+
+        var depth = elevation - previousElevation;
+        volume += depth / 3.0 * (previousArea + area + Math.Sqrt(previousArea * area));
+        rows.Add(new Dictionary<string, object?>
+        {
+          ["elevation"] = elevation,
+          ["area"] = Math.Round(area, 2),
+          ["cumulativeVolume"] = Math.Round(volume, 2),
+          ["discharge"] = metric ? null : Discharge(outletType, outletDiameter, weirLength, cd, elevation - bottomElevation),
+        });
+        previousArea = area;
+        previousElevation = elevation;
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["surfaceName"] = surfaceName,
+        ["stages"] = rows,
+        ["totalVolume"] = Math.Round(volume, 2),
+        ["units"] = metric ? "metres" : "feet, cfs",
+        ["notes"] = notes,
+      };
+    });
+  }
+
+  /// <summary>
+  /// The plan area a surface's contours enclose at an elevation. Civil 3D marks these polylines not closed even when they
+  /// end where they start, so the ends are compared. <c>Open</c> is true for a contour that runs off the surface.
+  /// </summary>
+  private static (double Area, bool Open) AreaAt(TinSurface surface, double elevation, Transaction transaction)
+  {
+    var area = 0.0;
+    foreach (ObjectId id in surface.ExtractContoursAt(elevation))
+    {
+      var contour = (Curve)transaction.GetObject(id, OpenMode.ForRead);
+      if (contour.StartPoint.DistanceTo(contour.EndPoint) > 1e-6)
+      {
+        return (0, true);
+      }
+
+      area += contour.Area;
+    }
+
+    return (area, false);
+  }
+
+  /// <summary>Flow through the outlet at a head in feet, in cfs; null without the size it needs.</summary>
+  private static double? Discharge(string outletType, double? diameterInches, double? weirLength, double coefficient, double head)
+  {
+    if (string.Equals(outletType, "weir", StringComparison.OrdinalIgnoreCase))
+    {
+      return weirLength is { } length ? Math.Round(coefficient * length * Math.Pow(head, 1.5), 3) : null;
+    }
+
+    if (diameterInches is not { } inches)
+    {
+      return null;
+    }
+
+    var feet = inches / 12.0;
+    var orificeArea = Math.PI * feet * feet / 4.0;
+    return Math.Round(coefficient * orificeArea * Math.Sqrt(2.0 * 32.2 * Math.Max(head, 0)), 3);
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────────────

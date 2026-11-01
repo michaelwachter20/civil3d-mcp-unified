@@ -8,16 +8,16 @@ using Autodesk.Civil.DatabaseServices;
 using App = Autodesk.AutoCAD.ApplicationServices.Application;
 using AcDbObject = Autodesk.AutoCAD.DatabaseServices.DBObject;
 using CivilSurface = Autodesk.Civil.DatabaseServices.Surface;
+using Shortcuts = Autodesk.Civil.DataShortcuts.DataShortcuts;
 
 namespace Civil3DMcpPlugin;
 
 /// <summary>
 /// Plugin methods behind civil3d_project (data shortcuts; src/tools/domains/projectDomain.ts) and the data shortcut
-/// workflows. Much of Civil 3D's data shortcut handling has no managed API, so several methods don't finish the job
-/// themselves: create opens Civil 3D's Create Data Shortcuts dialog for the user to confirm, sync launches the
-/// SynchronizeReferences command, and reference, create-reference and promote answer "manual_step_required" with
-/// what the user must do in Toolspace. Each answer says so (<c>status</c>, <c>dialogRequired</c>, <c>notes</c>);
-/// pass that on to the user instead of reporting the shortcut as done.
+/// workflows. Publishing and referencing go through Civil 3D's DataShortcutManager, so they finish here with no window:
+/// a drawing's objects are selected and saved into the current project, and a published item becomes a reference with
+/// CreateReference. Sync launches the SynchronizeReferences command. Create-reference and promote answer
+/// "manual_step_required" with what the user must do in Toolspace; pass that on instead of reporting them as done.
 /// </summary>
 public static class DataShortcutCommands
 {
@@ -66,63 +66,202 @@ public static class DataShortcutCommands
         RegisterShortcutCandidate(corridor, "corridor", incoming, exportable);
       }
 
+      var (current, _) = Projects();
       return new Dictionary<string, object?>
       {
         ["incoming"] = incoming,
         ["exportable"] = exportable,
+        ["workingFolder"] = Shortcuts.GetWorkingFolder(),
+        ["currentProject"] = current,
+        ["published"] = PublishedItems(),
       };
     });
   }
 
+  /// <summary>The current shortcut project, and the working folder's other ones.</summary>
+  private static (string Current, List<string> Others) Projects()
+  {
+    string current = string.Empty;
+    var others = new List<string>();
+    Shortcuts.GetAllProjectFolders(ref current, ref others);
+    return (current ?? string.Empty, others ?? new List<string>());
+  }
+
+  /// <summary>
+  /// Makes a project current: <paramref name="project"/> is a name in the working folder, or a full path, which also
+  /// moves the working folder to the project's parent. <paramref name="create"/> makes one that isn't there.
+  /// </summary>
+  private static void UseProject(string? project, bool create)
+  {
+    if (string.IsNullOrWhiteSpace(project))
+    {
+      return;
+    }
+
+    var name = project.TrimEnd('\\', '/');
+    if (Path.IsPathRooted(name))
+    {
+      Shortcuts.SetWorkingFolder(Path.GetDirectoryName(name)!);
+      name = Path.GetFileName(name);
+    }
+
+    var (current, others) = Projects();
+    if (string.Equals(current, name, StringComparison.OrdinalIgnoreCase))
+    {
+      return;
+    }
+
+    if (others.Contains(name, StringComparer.OrdinalIgnoreCase))
+    {
+      Shortcuts.SetCurrentProjectFolder(name);
+    }
+    else if (create)
+    {
+      Shortcuts.CreateProjectFolder(name, string.Empty, true);
+    }
+    else
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+        $"No shortcut project '{name}' in '{Shortcuts.GetWorkingFolder()}'. It has: {string.Join(", ", others.Prepend(current).Where(item => item.Length > 0))}.");
+    }
+  }
+
+  /// <summary>Refuses when no project is current. Civil 3D's own commands answer that with a window that stops every request.</summary>
+  internal static void RequireShortcutFolder()
+  {
+    var (current, others) = Projects();
+    if (current.Length > 0)
+    {
+      // Civil 3D remembers the name across sessions but doesn't load the project until it's set: the manager then sees
+      // nothing published, and publishing fails with "Unknown error".
+      Shortcuts.SetCurrentProjectFolder(current);
+      return;
+    }
+
+    var choices = others.Count > 0 ? $" Its projects are: {string.Join(", ", others)}." : string.Empty;
+    throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+      $"Nothing was started: no shortcut project is current in '{Shortcuts.GetWorkingFolder()}'.{choices} Name one with projectFolder; publishing makes it if it's new.");
+  }
+
+  /// <summary>What the current project has published. The manager throws when it has nothing yet, rather than giving 0.</summary>
+  private static List<Dictionary<string, object?>> PublishedItems()
+  {
+    var (current, _) = Projects();
+    var items = new List<Dictionary<string, object?>>();
+    if (current.Length == 0)
+    {
+      return items;
+    }
+
+    Shortcuts.SetCurrentProjectFolder(current);
+    var valid = false;
+    var manager = Shortcuts.CreateDataShortcutManager(ref valid);
+    try
+    {
+      for (var index = 0; index < PublishedCount(manager); index++)
+      {
+        var item = manager.GetPublishedItemAt(index);
+        items.Add(new Dictionary<string, object?> { ["name"] = item.Name, ["type"] = item.DSEntityType.ToString(), ["broken"] = item.IsBroken });
+      }
+    }
+    finally
+    {
+      manager.Dispose();
+    }
+
+    return items;
+  }
+
+  private static int PublishedCount(Shortcuts.DataShortcutManager manager)
+  {
+    try
+    {
+      return manager.GetPublishedItemsCount();
+    }
+    catch (InvalidOperationException)
+    {
+      return 0;
+    }
+  }
+
+  /// <summary>Whether Civil 3D's entity type is the tools' <c>pipe_network</c>, <c>surface</c> and so on.</summary>
+  private static bool IsType(object entityType, string objectType)
+  {
+    var entity = entityType.ToString()?.ToLowerInvariant() ?? string.Empty;
+    return objectType.ToLowerInvariant() switch
+    {
+      "pressure_network" => entity.StartsWith("pressure", StringComparison.Ordinal),
+      "section_view_group" => entity.Contains("sampleline", StringComparison.Ordinal),
+      var other => entity == other.Replace("_", string.Empty),
+    };
+  }
+
+  /// <summary>
+  /// Publishes object <c>objectName</c> to the current project, or to <c>projectFolder</c>, which is made if it's new.
+  /// Civil 3D also publishes what the object depends on: an alignment brings its profiles and sample lines.
+  /// </summary>
   public static Task<object?> CreateDataShortcutAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
     var objectName = PluginRuntime.GetRequiredString(parameters, "objectName");
-    var description = PluginRuntime.GetOptionalString(parameters, "description");
     var projectFolder = PluginRuntime.GetOptionalString(parameters, "projectFolder");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      RequireShortcutFolder();
-      SendCommand(doc, "CreateDataShortcuts");
-
-      return new Dictionary<string, object?>
+      if (!Path.IsPathRooted(doc.Name))
       {
-        ["objectType"] = objectType,
-        ["objectName"] = objectName,
-        ["description"] = description,
-        ["projectFolder"] = projectFolder,
-        ["status"] = "initiated",
-        ["dialogRequired"] = true,
-        ["command"] = "CreateDataShortcuts",
-        ["notes"] = new List<string>
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Save the drawing first: a data shortcut points at a saved file.");
+      }
+
+      UseProject(projectFolder, create: true);
+      RequireShortcutFolder();
+
+      var valid = false;
+      var manager = Shortcuts.CreateDataShortcutManager(ref valid);
+      try
+      {
+        var found = -1;
+        var names = new List<string>();
+        for (var index = 0; index < manager.GetExportableItemsCount(); index++)
         {
-          "The Create Data Shortcuts dialog was opened in Civil 3D.",
-          "Civil 3D still requires user confirmation in the dialog to choose which eligible objects will be published.",
-          !string.IsNullOrWhiteSpace(projectFolder)
-            ? $"Ensure the active Data Shortcuts project folder is set to '{projectFolder}' before completing the dialog."
-            : "Ensure the active Data Shortcuts project folder is set correctly before completing the dialog.",
-        },
-      };
+          var item = manager.GetExportableItemAt(index);
+          names.Add(item.Name);
+          if (found < 0 && IsType(item.DSEntityType, objectType) && string.Equals(item.Name, objectName, StringComparison.OrdinalIgnoreCase))
+          {
+            found = index;
+          }
+        }
+
+        if (found < 0)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+            $"No {objectType} '{objectName}' can be published from this drawing. It has: {string.Join(", ", names.Take(30))}.");
+        }
+
+        var already = manager.IsItemAtIndexAlreadyPublished(found);
+        if (!already)
+        {
+          manager.SetSelectItemAtIndex(found, true);
+          Shortcuts.SaveDataShortcutManager(ref manager);
+        }
+
+        return new Dictionary<string, object?>
+        {
+          ["objectType"] = objectType,
+          ["objectName"] = objectName,
+          ["project"] = Projects().Current,
+          ["workingFolder"] = Shortcuts.GetWorkingFolder(),
+          ["status"] = already ? "already_published" : "published",
+        };
+      }
+      finally
+      {
+        manager.Dispose();
+      }
     });
   }
 
-  /// <summary>
-  /// Refuses when the working folder has no project with a _Shortcuts folder: CreateDataShortcuts would otherwise open
-  /// an error window that holds up every request until someone answers it.
-  /// </summary>
-  internal static void RequireShortcutFolder()
-  {
-    var workingFolder = Autodesk.Civil.DataShortcuts.DataShortcuts.GetWorkingFolder();
-    var hasProject = Directory.Exists(workingFolder)
-      && Directory.EnumerateDirectories(workingFolder).Any(project => Directory.Exists(Path.Combine(project, "_Shortcuts")));
-    if (!hasProject)
-    {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
-        $"Nothing was started: the working folder '{workingFolder}' has no shortcut folder. In Prospector, right-click Data Shortcuts and use New Data Shortcuts Folder.");
-    }
-  }
-
+  /// <summary>Makes published item <c>shortcutName</c> of project <c>projectFolder</c> a reference in the active drawing.</summary>
   public static Task<object?> ReferenceDataShortcutAsync(JsonObject? parameters)
   {
     var projectFolder = PluginRuntime.GetRequiredString(parameters, "projectFolder");
@@ -130,54 +269,63 @@ public static class DataShortcutCommands
     var shortcutType = PluginRuntime.GetRequiredString(parameters, "shortcutType");
     var layer = PluginRuntime.GetOptionalString(parameters, "layer");
 
-    var commandName = shortcutType.ToLowerInvariant() switch
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      "surface" => "CreateSurfaceReference",
-      "alignment" => "CreateAlignmentReference",
-      "profile" => "CreateProfileReference",
-      "pipe_network" => "CreateNetworkReference",
-      "corridor" => "CreateCorridorReference",
-      _ => null,
-    };
+      UseProject(projectFolder, create: false);
+      RequireShortcutFolder();
 
-    if (commandName == null)
-    {
-      return Task.FromResult<object?>(new Dictionary<string, object?>
+      var valid = false;
+      var manager = Shortcuts.CreateDataShortcutManager(ref valid);
+      try
       {
-        ["projectFolder"] = projectFolder,
-        ["shortcutName"] = shortcutName,
-        ["shortcutType"] = shortcutType,
-        ["layer"] = layer,
-        ["status"] = "manual_step_required",
-        ["dialogRequired"] = true,
-        ["notes"] = new List<string>
+        var found = -1;
+        var names = new List<string>();
+        for (var index = 0; index < PublishedCount(manager); index++)
         {
-          $"Automatic command launch is not yet mapped for shortcut type '{shortcutType}'.",
-          "Use the Data Shortcuts node in Toolspace or the Data Shortcut Manager dialog to create the reference manually.",
-        },
-      });
-    }
+          var item = manager.GetPublishedItemAt(index);
+          names.Add(item.Name);
+          if (found < 0 && IsType(item.DSEntityType, shortcutType) && string.Equals(item.Name, shortcutName, StringComparison.OrdinalIgnoreCase))
+          {
+            found = index;
+          }
+        }
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      SendCommand(doc, commandName);
+        if (found < 0)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+            $"No {shortcutType} '{shortcutName}' is published in this project. It has: {string.Join(", ", names)}.");
+        }
 
-      return new Dictionary<string, object?>
+        if (manager.GetPublishedItemAt(found).IsBroken)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Shortcut '{shortcutName}' is broken: its source can't be found, so nothing was referenced.");
+        }
+
+        var handles = new List<string>();
+        foreach (ObjectId id in manager.CreateReference(found, database))
+        {
+          var created = transaction.GetObject(id, OpenMode.ForWrite);
+          handles.Add(CivilObjectUtils.GetHandle(created));
+          if (!string.IsNullOrWhiteSpace(layer) && created is Autodesk.AutoCAD.DatabaseServices.Entity entity)
+          {
+            entity.Layer = layer;
+          }
+        }
+
+        return new Dictionary<string, object?>
+        {
+          ["projectFolder"] = projectFolder,
+          ["shortcutName"] = shortcutName,
+          ["shortcutType"] = shortcutType,
+          ["layer"] = layer,
+          ["handles"] = handles,
+          ["status"] = "referenced",
+        };
+      }
+      finally
       {
-        ["projectFolder"] = projectFolder,
-        ["shortcutName"] = shortcutName,
-        ["shortcutType"] = shortcutType,
-        ["layer"] = layer,
-        ["status"] = "initiated",
-        ["dialogRequired"] = true,
-        ["command"] = commandName,
-        ["notes"] = new List<string>
-        {
-          $"The {commandName} command was launched in Civil 3D.",
-          $"Civil 3D still requires the user to pick the '{shortcutName}' shortcut from the active project.",
-          $"Ensure the active Data Shortcuts project folder matches '{projectFolder}' before completing the dialog.",
-        },
-      };
+        manager.Dispose();
+      }
     });
   }
 
@@ -208,6 +356,18 @@ public static class DataShortcutCommands
         ["dryRun"] = true,
         ["staleReferenceCount"] = staleReferences.Count,
         ["wouldSynchronize"] = staleReferences,
+      };
+    }
+
+    if (incoming.Count == 0 || staleReferences.Count == 0)
+    {
+      return new Dictionary<string, object?>
+      {
+        ["projectFolder"] = projectFolder,
+        ["shortcutNames"] = shortcutNames,
+        ["dryRun"] = false,
+        ["staleReferenceCount"] = 0,
+        ["status"] = "up_to_date",
       };
     }
 
