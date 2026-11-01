@@ -227,6 +227,14 @@ public static class PipeNetworkCommands
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      foreach (ObjectId existingId in civilDoc.GetPipeNetworkIds())
+      {
+        if (string.Equals(CivilObjectUtils.GetRequiredObject<Network>(transaction, existingId, OpenMode.ForRead).Name, name, StringComparison.OrdinalIgnoreCase))
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"A pipe network named '{name}' already exists.");
+        }
+      }
+
       var networkId = CreatePipeNetwork(civilDoc, name);
       var network = CivilObjectUtils.GetRequiredObject<Network>(transaction, networkId, OpenMode.ForWrite);
 

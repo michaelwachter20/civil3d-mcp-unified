@@ -401,9 +401,9 @@ Status: Complete in automated tests. Not live-tested in Civil 3D.
 In order. Reviewed 2026-11-01, after the first live day. Details and every test are in
 [docs/LIVE-TEST-PLAN.md](docs/LIVE-TEST-PLAN.md); part 5 has the results.
 
-1. **What Civil 3D's .NET API can't do:** parcels turned out to be possible through COM (`ParcelCom`), so try the same
-   for grading groups, `watershed_add`, `sheet_set_create` and `sheet_set_export` before deciding to stop advertising
-   them. `lot_line_adjust` has no route: it says so.
+1. **Sheet sets:** `sheet_set_create` and `sheet_set_get_info` use the real library (`SheetSetCom`). The other sheet
+   tools were written for an API that doesn't exist; rebuild `sheet_add` and `sheet_set_export` on it, or stop advertising
+   them. Grading groups and `lot_line_adjust` have no route.
 2. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
 3. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
    file's old id stay with the old id; OneDrive placeholders may be refused by `FileBoundary` (suspected).

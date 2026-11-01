@@ -61,8 +61,14 @@ public static class SlopeAnalysisCommands
         throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "Could not resolve profile or surface.");
 
       var alignLen = alignment.Length;
-      var startSta = stationStart ?? alignment.StartingStation;
-      var endSta = stationEnd ?? (startSta + alignLen);
+      // A profile often stops short of its alignment, and has no elevation past its ends.
+      var startSta = Math.Max(stationStart ?? alignment.StartingStation, profile.StartingStation);
+      var endSta = Math.Min(stationEnd ?? (alignment.StartingStation + alignLen), profile.EndingStation);
+      if (startSta > endSta)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"Profile '{profile.Name}' runs from {profile.StartingStation:F2} to {profile.EndingStation:F2}: nothing to check in that range.");
+      }
 
       var rows = new List<Dictionary<string, object?>>();
       double maxCutHeight = 0, maxFillHeight = 0;

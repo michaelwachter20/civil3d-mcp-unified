@@ -90,7 +90,9 @@ public static class QcCommands
 
             if (checkCurves && isCurve)
             {
-              var radius = CivilObjectUtils.GetPropertyValue<double?>(entity, "Radius") ?? 0;
+              // A spiral-curve-spiral has no radius of its own: it's on the entity's Arc.
+              var arc = CivilObjectUtils.GetPropertyValue<object>(entity, "Arc") ?? entity;
+              var radius = CivilObjectUtils.GetPropertyValue<double?>(arc, "Radius") ?? 0;
               if (radius <= 0)
               {
                 findings.Add(new Dictionary<string, object?>
@@ -145,8 +147,10 @@ public static class QcCommands
 
             if (checkSpirals && isSpiral)
             {
-              var aValue = CivilObjectUtils.GetPropertyValue<double?>(entity, "A")
-                ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "SpiralParameter")
+              // A spiral-curve-spiral has no A of its own: each spiral in it has one.
+              var spiral = CivilObjectUtils.GetPropertyValue<object>(entity, "SpiralIn") ?? entity;
+              var aValue = CivilObjectUtils.GetPropertyValue<double?>(spiral, "A")
+                ?? CivilObjectUtils.GetPropertyValue<double?>(spiral, "SpiralParameter")
                 ?? 0;
               if (aValue <= 0)
               {

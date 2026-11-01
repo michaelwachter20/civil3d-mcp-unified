@@ -42,6 +42,7 @@ public static class QuantityCommands
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
 
+      CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, compSurface.ObjectId);
       var temporaryName = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
       var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, compSurface.ObjectId);
       var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
@@ -57,7 +58,8 @@ public static class QuantityCommands
         ["netVolume"] = volumeProperties.UnadjustedNetVolume,
         ["net2dArea"] = null,
         ["units"] = CivilObjectUtils.VolumeUnits(database),
-        ["note"] = "Volumes are exact Civil 3D TinVolumeSurface results. The managed volume-properties API does not expose a net 2D area.",
+        ["note"] = "Volumes are exact Civil 3D TinVolumeSurface results. The managed volume-properties API does not expose a net 2D area."
+          + (string.IsNullOrWhiteSpace(corridorName) ? "" : " corridorName is not used: this is the volume between the two surfaces."),
       };
     });
   }
@@ -149,7 +151,7 @@ public static class QuantityCommands
       foreach (var pipeId in GetChildObjectIds(networkObj, "GetPipeIds", "PipeIds", "Pipes"))
       {
         var pipe = transaction.GetObject(pipeId, OpenMode.ForRead);
-        var length = GetRequiredEngineeringDouble(pipe, $"pressure pipe '{CivilObjectUtils.GetName(pipe)}' length", "Length3D", "Length2D", "Length");
+        var length = GetRequiredEngineeringDouble(pipe, $"pressure pipe '{CivilObjectUtils.GetName(pipe)}' length", "Length3DCenterToCenter", "Length2DCenterToCenter");
         var diameter = GetRequiredEngineeringDouble(pipe, $"pressure pipe '{CivilObjectUtils.GetName(pipe)}' diameter", "InnerDiameter", "OuterDiameter", "Diameter", "InnerDiameterOrWidth");
         var material = GetAnyString(pipe, "Material", "PipeFamily", "PartFamilyName", "PartDescription") ?? "Unknown";
 
@@ -228,7 +230,7 @@ public static class QuantityCommands
           if (requestedParcelNames != null && !requestedParcelNames.Contains(parcelName)) continue;
 
           var area = parcel.Area;
-          var perimeter = CivilObjectUtils.GetDoubleProperty(parcel, "Perimeter");
+          var perimeter = ParcelEditingCommands.GetParcelPerimeter(parcel);
 
           totalArea += area;
           parcelResults.Add(new Dictionary<string, object?>
@@ -457,7 +459,7 @@ public static class QuantityCommands
             var parcelName = parcel.Name;
             if (filterNames != null && !filterNames.Contains(parcelName)) continue;
             var area = parcel.Area;
-            var perimeter = CivilObjectUtils.GetDoubleProperty(parcel, "Perimeter");
+            var perimeter = ParcelEditingCommands.GetParcelPerimeter(parcel);
             var perimeterText = perimeter.HasValue ? perimeter.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
             sb.AppendLine($"Parcel,{EscapeCsv(currentSiteName)},{EscapeCsv(parcelName)},{area:F3},{perimeterText},{CivilObjectUtils.LinearUnits(database)}");
             rowsWritten++;
@@ -524,6 +526,7 @@ public static class QuantityCommands
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var designSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurfaceName, OpenMode.ForRead);
+      CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, designSurface.ObjectId);
       var volumeId = TinVolumeSurface.Create($"MCP_TMP_EARTHWORK_{Guid.NewGuid():N}", baseSurface.ObjectId, designSurface.ObjectId);
       var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeId, OpenMode.ForRead);
       var volumes = volumeSurface.GetVolumeProperties();

@@ -102,7 +102,10 @@ const SheetSetGetInfoArgsSchema = z.object({
 const SheetSetCreateArgsSchema = z.object({
   action: z.literal("sheet_set_create"),
   name: z.string(),
+  outputPath: z.string(),
   description: z.string().optional(),
+  layoutNames: z.array(z.string()).optional(),
+  overwrite: z.boolean().optional(),
 });
 
 const SheetAddArgsSchema = z.object({
@@ -216,12 +219,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
     sheet_set_get_info: {
       action: "sheet_set_get_info",
       inputSchema: SheetSetGetInfoArgsSchema,
-      responseSchema: z.object({
-        name: z.string(),
-        handle: z.string(),
-        description: z.string().nullable(),
-        sheets: z.array(SheetSummarySchema),
-      }),
+      responseSchema: z.object({}).passthrough(),
       capabilities: ["query", "inspect"],
       requiresActiveDrawing: true,
       safeForRetry: true,
@@ -233,7 +231,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
     sheet_set_create: {
       action: "sheet_set_create",
       inputSchema: SheetSetCreateArgsSchema,
-      responseSchema: z.object({ name: z.string(), handle: z.string(), created: z.boolean() }),
+      responseSchema: z.object({}).passthrough(),
       capabilities: ["create", "manage"],
       requiresActiveDrawing: true,
       safeForRetry: false,
@@ -241,7 +239,10 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("createSheetSet", {
           name: args.name,
+          outputPath: args.outputPath,
           description: args.description,
+          layoutNames: args.layoutNames,
+          overwrite: args.overwrite,
         }),
       ),
     },

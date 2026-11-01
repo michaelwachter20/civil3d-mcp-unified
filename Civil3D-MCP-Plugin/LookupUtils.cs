@@ -126,11 +126,7 @@ public static class LookupUtils
       return ObjectId.Null;
     }
 
-    var labelSetStyles = civilDoc.Styles.LabelSetStyles;
-    var bandSetStyles = CivilObjectUtils.GetPropertyValue<object>(labelSetStyles, "ProfileViewBandSetStyles");
-    return bandSetStyles != null
-      ? GetStyleId(bandSetStyles, transaction, bandSetName)
-      : ObjectId.Null;
+    return GetStyleId(civilDoc.Styles.ProfileViewBandSetStyles, transaction, bandSetName);
   }
 
   public static ObjectId GetParcelStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)

@@ -319,6 +319,7 @@ public static class CorridorCommands
     Autodesk.Civil.DatabaseServices.Surface baseSurface,
     Autodesk.Civil.DatabaseServices.Surface comparisonSurface)
   {
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, comparisonSurface.ObjectId);
     var temporaryName = $"MCP_TMP_CORRIDOR_VOLUME_{Guid.NewGuid():N}";
     var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, comparisonSurface.ObjectId);
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);

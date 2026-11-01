@@ -176,7 +176,7 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 
 | Still open | Why |
 |---|---|
-| Grading groups, `watershed_add`, `lot_line_adjust` | Civil 3D's .NET API has no call for them; the tools say so. COM may reach the first two, not yet tried |
+| Grading groups, `lot_line_adjust`, `sheet_add`, `sheet_set_export` | No route found: neither the .NET API nor COM offers them, and the tools say so |
 | `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
 | A drawing held by a real second user (3.27) | Passed on a held copy with a made-up `.dwl`, not with two people |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
@@ -188,6 +188,9 @@ Civil 3D facts learned, worth knowing before testing again:
 - A new script costs nothing after the first (about 450 MB, once). Read `memoryUsageMb` from `civil3d_health` as you go.
 - A script run between undo and redo empties the redo list.
 - A command left at its prompt doesn't block: reads answer, and the next write ends it. (The plan expected HOST_BUSY.)
+- Tools that send a Civil 3D command (`export_stm`, `import_stm`) open a window that holds up every later request until
+  someone answers it. The busy message names the window.
+- Saved scripts run in the plugin, which reads the real shared folder whatever the server's environment says.
 
 ## 6. The test job
 

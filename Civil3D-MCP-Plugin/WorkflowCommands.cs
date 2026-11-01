@@ -138,7 +138,13 @@ public static class WorkflowCommands
     var projectFolder = PluginRuntime.GetOptionalString(parameters, "projectFolder");
     var dryRun = PluginRuntime.GetOptionalBool(parameters, "dryRun") ?? false;
 
-    var publishResult = await RequireDictionary(
+    // Publishing opens a window in Civil 3D, so a dry run stops short of it and only checks it could.
+    if (dryRun)
+    {
+      DataShortcutCommands.RequireShortcutFolder();
+    }
+
+    var publishResult = dryRun ? new Dictionary<string, object?> { ["dryRun"] = true, ["status"] = "skipped" } : await RequireDictionary(
       DataShortcutCommands.CreateDataShortcutAsync(new JsonObject
       {
         ["objectType"] = objectType,

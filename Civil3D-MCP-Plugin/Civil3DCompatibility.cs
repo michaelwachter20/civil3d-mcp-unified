@@ -318,6 +318,10 @@ internal static class Civil3DCompatibility
     return false;
   }
 
+  /// <summary>A COM object by its registered name, for libraries with no .NET API (the sheet set library).</summary>
+  public static T CreateComObject<T>(string progId) =>
+    (T)Activator.CreateInstance(Type.GetTypeFromProgID(progId, throwOnError: true)!)!;
+
   public static Type? FindLoadedType(params string[] fullNames)
   {
     foreach (var fullName in fullNames)

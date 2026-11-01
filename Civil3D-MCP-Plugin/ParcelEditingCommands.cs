@@ -150,7 +150,7 @@ public static class ParcelEditingCommands
         }
       }
 
-      var segments = ParcelCom.FindSite(siteName).ParcelSegments;
+      var segments = LandCom.FindSite(siteName).ParcelSegments;
       var added = new List<dynamic>();
       dynamic document = Autodesk.AutoCAD.ApplicationServices.DocumentExtension.GetAcadDocument(doc);
       document.StartUndoMark();
@@ -462,7 +462,7 @@ public static class ParcelEditingCommands
       ?? Civil3DCompatibility.GetFieldValue(value, memberName);
   }
 
-  private static double? GetParcelPerimeter(Parcel parcel)
+  internal static double? GetParcelPerimeter(Parcel parcel)
   {
     var perimeter = CivilObjectUtils.GetDoubleProperty(parcel, "Perimeter");
     if (perimeter.HasValue)

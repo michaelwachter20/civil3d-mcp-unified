@@ -1,5 +1,5 @@
 {
   "version": "2.4.1",
-  "sourceHash": "bbac61309b928c4c694227165dc938999d3603459e01e3ed735e6d2315d50643",
+  "sourceHash": "b1a624f892acf5103a7180c0d0346420720de7e2ef5f9556aa11a84a5f2c0594",
   "note": "Built locally against Civil 3D 2027 by npm run plugin:prebuild. Autodesk assemblies are not included."
 }

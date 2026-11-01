@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { approvalPolicy, isApprovalRequired } from "./approvalPolicy.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
-import { findManifestAction } from "./toolManifest.js";
+import { findManifestAction, findManifestActionByCall } from "./toolManifest.js";
 
 /**
  * The two approval tools, `civil3d_preview_action` and `civil3d_request_approval`, registered directly by
@@ -50,13 +50,14 @@ const ApprovalResponseSchema = z.object({
  * input schema must accept them. So a token is never issued for a call that would fail validation anyway.
  */
 function resolveApprovalTarget(args: { toolName: string; action: string; parameters: JsonObject }) {
-  const target = findManifestAction(args.toolName, args.action);
+  const target = findManifestAction(args.toolName, args.action)
+    ?? findManifestActionByCall(args.toolName, args.action, args.parameters);
   if (!target) {
     throw new Error(`Unknown tool action '${args.toolName}' / '${args.action}'.`);
   }
 
   const resolved = target.exposure.resolveAction(args.parameters);
-  if (resolved.action !== args.action) {
+  if (resolved.action !== target.actionDefinition.action) {
     throw new Error(
       `Parameters do not resolve to action '${args.action}' for tool '${args.toolName}'. ` +
       "Include the tool action in parameters when calling a multi-action tool.",
@@ -97,7 +98,7 @@ export function registerApprovalTool(server: McpServer) {
       const target = resolveApprovalTarget(args);
       const requiresApproval = isApprovalRequired({
         toolName: args.toolName,
-        action: args.action,
+        action: target.actionDefinition.action,
         capabilities: target.actionDefinition.capabilities,
         safeForRetry: target.actionDefinition.safeForRetry,
         requiresActiveDrawing: target.actionDefinition.requiresActiveDrawing,
@@ -129,7 +130,7 @@ export function registerApprovalTool(server: McpServer) {
       const receipt = await approvalPolicy.requestApproval(
         {
           toolName: args.toolName,
-          action: args.action,
+          action: target.actionDefinition.action,
           capabilities: target.actionDefinition.capabilities,
           safeForRetry: target.actionDefinition.safeForRetry,
           requiresActiveDrawing: target.actionDefinition.requiresActiveDrawing,

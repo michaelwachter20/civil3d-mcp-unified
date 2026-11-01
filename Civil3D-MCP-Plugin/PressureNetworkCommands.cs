@@ -260,6 +260,11 @@ public static class PressureNetworkCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var network = FindPressureNetworkByName(civilDoc, transaction, networkName, OpenMode.ForWrite);
+      if (startPoint.IsEqualTo(endPoint))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "startPoint and endPoint are the same: a pipe needs a length.");
+      }
+
       var createdId = AddPressurePipeToNetwork(network, transaction, partName, startPoint, endPoint, diameter);
       var pipe = CivilObjectUtils.GetRequiredObject<AcDbObject>(transaction, createdId, OpenMode.ForRead);
 
@@ -514,7 +519,7 @@ public static class PressureNetworkCommands
       ["name"] = CivilObjectUtils.GetName(pipe) ?? string.Empty,
       ["handle"] = CivilObjectUtils.GetHandle(pipe),
       ["diameter"] = GetAnyDouble(pipe, "InnerDiameter", "InnerDiameterOrWidth", "Diameter"),
-      ["length"] = GetAnyDouble(pipe, "Length3D", "Length2D", "Length"),
+      ["length"] = GetAnyDouble(pipe, "Length3DCenterToCenter", "Length2DCenterToCenter"),
       ["material"] = GetAnyString(pipe, "Material", "PartFamilyName", "PartDescription") ?? string.Empty,
       ["startPoint"] = sp.HasValue ? new Dictionary<string, object?> { ["x"] = sp.Value.X, ["y"] = sp.Value.Y, ["z"] = sp.Value.Z } : null,
       ["endPoint"] = ep.HasValue ? new Dictionary<string, object?> { ["x"] = ep.Value.X, ["y"] = ep.Value.Y, ["z"] = ep.Value.Z } : null,
@@ -644,7 +649,7 @@ public static class PressureNetworkCommands
           return part;
       }
     }
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Exact pressure part '{partName}' was not found in parts list '{partsList.Name}'.");
+    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Exact pressure part '{partName}' was not found in parts list '{partsList.Name}'. It has: {string.Join(", ", partTypes.SelectMany(type => partsList.GetParts(type).Where(part => part.IsValid).Select(part => part.Description)).Take(12))}.");
   }
 
   private static IEnumerable<ObjectId> GetChildObjectIds(object owner, params string[] memberNames)

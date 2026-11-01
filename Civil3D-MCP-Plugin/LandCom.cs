@@ -5,25 +5,29 @@ using AcadApplication = Autodesk.AutoCAD.ApplicationServices.Application;
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// Civil 3D's COM interface, the only way to make parcels: the .NET API can read and edit them but has no call that
-/// creates one. Parcels aren't added directly. A site's ParcelSegments takes lines, and Civil 3D forms a parcel wherever
-/// those lines close a loop, as it does for Create Parcel from Objects.
+/// Civil 3D's COM interface, for what the .NET API can't do. Parcels: the .NET API can read and edit them but has no
+/// call that creates one. A site's ParcelSegments takes lines, and Civil 3D forms a parcel wherever those lines close a
+/// loop, as it does for Create Parcel from Objects. Watersheds: a surface's SurfaceAnalysis runs the analysis.
 /// </summary>
-internal static class ParcelCom
+internal static class LandCom
 {
   private const string ProgIdPrefix = "AeccXUiLand.AeccApplication.";
 
   /// <summary>The COM site of this name in the active drawing, which has been checked to exist.</summary>
-  public static dynamic FindSite(string siteName)
+  public static dynamic FindSite(string siteName) => FindByName(LandApplication().ActiveDocument.Sites, siteName, "Site");
+
+  /// <summary>The COM surface of this name in the active drawing, which has been checked to exist.</summary>
+  public static dynamic FindSurface(string surfaceName) => FindByName(LandApplication().ActiveDocument.Surfaces, surfaceName, "Surface");
+
+  private static dynamic FindByName(dynamic collection, string name, string kind)
   {
-    dynamic sites = LandApplication().ActiveDocument.Sites;
-    for (var index = 0; index < sites.Count; index++)
+    for (var index = 0; index < collection.Count; index++)
     {
-      dynamic site = sites.Item(index);
-      if (string.Equals((string)site.Name, siteName, StringComparison.OrdinalIgnoreCase)) return site;
+      dynamic item = collection.Item(index);
+      if (string.Equals((string)item.Name, name, StringComparison.OrdinalIgnoreCase)) return item;
     }
 
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Site '{siteName}' was not found through COM.");
+    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"{kind} '{name}' was not found through COM.");
   }
 
   /// <summary>
@@ -49,6 +53,6 @@ internal static class ParcelCom
       }
     }
 
-    throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D's COM interface is not available, so parcels can't be made.");
+    throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D's COM interface is not available.");
   }
 }

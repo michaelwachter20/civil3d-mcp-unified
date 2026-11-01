@@ -110,6 +110,23 @@ export function findManifestAction(toolName: string, action: string): ManifestAc
 }
 
 /**
+ * The same, from the action name a tool shows: `civil3d_script` offers `run`, which is `script_run` inside. The
+ * exposure's resolveAction gives the inside name from the call's parameters.
+ */
+export function findManifestActionByCall(toolName: string, action: string, parameters: Record<string, unknown>): ManifestActionMatch | undefined {
+  for (const definition of MIGRATED_DOMAIN_DEFINITIONS as DomainToolDefinition[]) {
+    const exposure = definition.exposures.find((candidate) => candidate.toolName === toolName);
+    if (!exposure) continue;
+    const resolved = exposure.resolveAction(parameters).action;
+    const actionDefinition = definition.actions[resolved];
+    if (actionDefinition && resolved !== action && resolved.endsWith(`_${action}`)) {
+      return { definition, exposure, actionDefinition };
+    }
+  }
+  return undefined;
+}
+
+/**
  * Registers every domain at startup: all handlers are captured for HTTP and orchestration, and the exposures that
  * selectManifestExposures picks are listed to the MCP client. CIVIL3D_ENABLE_TOOL_ALIASES is read once, here, so a
  * change needs a server restart.

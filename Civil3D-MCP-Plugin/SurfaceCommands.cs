@@ -835,9 +835,9 @@ public static class SurfaceCommands
   }
 
   /// <summary>
-  /// Tries to add a watershed analysis to surface <c>name</c>. The managed API has no documented call for it, so this
-  /// tries a few member names late-bound through CivilObjectUtils and reports <c>watershedsAdded = false</c> when none
-  /// exists, rather than failing. <c>mergeAdjacentWatersheds</c> is only echoed.
+  /// Runs Civil 3D's watershed analysis on surface <c>name</c> through COM (the .NET API has no call for it) and lists
+  /// the regions. <c>depthThreshold</c> merges depressions shallower than that, and <c>mergeAdjacentWatersheds</c>
+  /// joins adjacent boundary watersheds, as on the Analysis tab of Surface Properties.
   /// </summary>
   public static Task<object?> AddSurfaceWatershedsAsync(JsonObject? parameters)
   {
@@ -845,46 +845,38 @@ public static class SurfaceCommands
     var depthThreshold = PluginRuntime.GetParameter(parameters, "depthThreshold") is JsonNode dt ? dt.GetValue<double>() : 0.1;
     var mergeAdjacent = PluginRuntime.GetParameter(parameters, "mergeAdjacentWatersheds") is JsonNode ma && ma.GetValue<bool>();
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.WithDocumentLockAsync<object?>((doc, civilDoc) =>
     {
-      var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForWrite);
-
-      // Try to add watersheds via reflection
-      var watershedsAdded = false;
-      var watershedCount = 0;
-
-      foreach (var methodName in new[] { "AddWatersheds", "CreateWatersheds", "ComputeWatersheds" })
+      using (var transaction = doc.Database.TransactionManager.StartOpenCloseTransaction())
       {
-        var result = CivilObjectUtils.InvokeMethod(surface, methodName, depthThreshold);
-        if (result != null)
-        {
-          watershedsAdded = true;
-          watershedCount = result is int count ? count : 1;
-          break;
-        }
+        CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
       }
 
-      if (!watershedsAdded)
-      {
-        // Try accessing the Watersheds property
-        var watershedsProperty = CivilObjectUtils.GetPropertyValue<object>(surface, "Watersheds");
-        if (watershedsProperty != null)
-        {
-          CivilObjectUtils.InvokeMethod(watershedsProperty, "Add", depthThreshold);
-          watershedsAdded = true;
-        }
-      }
+      var analysis = LandCom.FindSurface(name).SurfaceAnalysis.WatershedAnalysis;
+      analysis.MergeDepression = depthThreshold;
+      analysis.MergeAdjacentBoundaries = mergeAdjacent;
+      analysis.CalculateWatersheds();
 
-      RebuildSurfaceIfAvailable(surface);
+      var regions = new List<Dictionary<string, object?>>();
+      foreach (var region in analysis.WatershedRegions)
+      {
+        regions.Add(new Dictionary<string, object?>
+        {
+          ["id"] = (int)region.Id,
+          ["type"] = (int)region.Type,
+          ["area"] = (double)region.Area,
+        });
+      }
 
       return new Dictionary<string, object?>
       {
         ["surfaceName"] = name,
         ["depthThreshold"] = depthThreshold,
         ["mergeAdjacentWatersheds"] = mergeAdjacent,
-        ["watershedsAdded"] = watershedsAdded,
-        ["watershedCount"] = watershedCount,
-        ["status"] = watershedsAdded ? "Watershed analysis added successfully" : "Civil 3D's API can't run a watershed analysis: nothing was added. Run it on the Analysis tab of Surface Properties; trace_flow_path follows the water from a point.",
+        ["watershedsAdded"] = true,
+        ["watershedCount"] = regions.Count,
+        ["regions"] = regions,
+        ["units"] = $"{CivilObjectUtils.LinearUnits(doc.Database)}²",
       };
     });
   }
@@ -1335,6 +1327,7 @@ public static class SurfaceCommands
 
   private static TinVolumeSurface CreateTinVolumeSurface(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, comparisonSurface.ObjectId);
     var name = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
     var surfaceId = TinVolumeSurface.Create(name, baseSurface.ObjectId, comparisonSurface.ObjectId);
     return CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, surfaceId, OpenMode.ForRead);

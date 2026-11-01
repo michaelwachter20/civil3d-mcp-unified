@@ -112,14 +112,15 @@ public static class CostEstimationCommands
     return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var lineItems = new List<Dictionary<string, object?>>();
+      var matched = new HashSet<PayItem>();
       double subtotal = 0;
 
       // Earthwork
       if (!string.IsNullOrWhiteSpace(baseSurface) && !string.IsNullOrWhiteSpace(designSurface))
       {
         var (cutCy, fillCy) = GetEarthworkVolumes(civilDoc, database, transaction, baseSurface!, designSurface!);
-        AddCostLine(lineItems, payItems, "203.01", "Unclassified Excavation (Cut)", "CY", Math.Round(cutCy, 1), ref subtotal);
-        AddCostLine(lineItems, payItems, "203.02", "Embankment (Fill)", "CY", Math.Round(fillCy, 1), ref subtotal);
+        AddCostLine(lineItems, payItems, matched, "203.01", "Unclassified Excavation (Cut)", "CY", Math.Round(cutCy, 1), ref subtotal);
+        AddCostLine(lineItems, payItems, matched, "203.02", "Embankment (Fill)", "CY", Math.Round(fillCy, 1), ref subtotal);
       }
 
       // Corridor materials
@@ -132,14 +133,14 @@ public static class CostEstimationCommands
       var pipeNetworks = GetAllPipeNetworkLengths(civilDoc, transaction);
       foreach (var (netName, lengthLf) in pipeNetworks)
       {
-        AddCostLine(lineItems, payItems, string.Empty, $"Pipe Network '{netName}'", "LF", Math.Round(lengthLf, 1), ref subtotal);
+        AddCostLine(lineItems, payItems, matched, string.Empty, $"Pipe Network '{netName}'", "LF", Math.Round(lengthLf, 1), ref subtotal);
       }
 
       // Structure counts
       var structs = GetStructureCounts(civilDoc, transaction);
       foreach (var (typeName, count) in structs)
       {
-        AddCostLine(lineItems, payItems, string.Empty, typeName, "EA", count, ref subtotal);
+        AddCostLine(lineItems, payItems, matched, string.Empty, typeName, "EA", count, ref subtotal);
       }
 
       double mobilizationCost = subtotal * mobilizationPct / 100.0;
@@ -156,7 +157,9 @@ public static class CostEstimationCommands
         ["contingencyCost"] = Math.Round(contingencyCost, 2),
         ["totalEstimatedCost"] = Math.Round(total, 2),
         ["totalFormatted"] = $"${total:N2}",
-        ["note"] = "Estimate is preliminary. Field verification of quantities required for bid documents.",
+        ["unmatchedPayItems"] = payItems.Where(item => !matched.Contains(item)).Select(item => item.Description).ToList(),
+        ["note"] = "Estimate is preliminary. Field verification of quantities required for bid documents. "
+          + "Pay items are prices: each is matched to a quantity from the drawing by code or description, and one that matches nothing adds nothing.",
       };
 
       if (!string.IsNullOrWhiteSpace(outputPath))
@@ -208,15 +211,17 @@ public static class CostEstimationCommands
     };
   }
 
-  private static void AddCostLine(List<Dictionary<string, object?>> lineItems, List<PayItem> payItems,
+  private static void AddCostLine(List<Dictionary<string, object?>> lineItems, List<PayItem> payItems, HashSet<PayItem> matched,
     string code, string description, string unit, double quantity, ref double subtotal)
   {
-    var match = payItems.FirstOrDefault(p => string.Equals(p.Code, code, StringComparison.OrdinalIgnoreCase)
+    // A line with no code matches on its description alone: two empty codes aren't a match.
+    var match = payItems.FirstOrDefault(p => (!string.IsNullOrEmpty(code) && string.Equals(p.Code, code, StringComparison.OrdinalIgnoreCase))
       || description.IndexOf(p.Description, StringComparison.OrdinalIgnoreCase) >= 0
       || p.Description.IndexOf(description, StringComparison.OrdinalIgnoreCase) >= 0);
 
     var lineTotal = match != null ? match.UnitPrice * quantity : 0;
     subtotal += lineTotal;
+    if (match != null) matched.Add(match);
 
     lineItems.Add(new Dictionary<string, object?>
     {
@@ -233,6 +238,7 @@ public static class CostEstimationCommands
   {
     var baseSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurface, OpenMode.ForRead);
     var desSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurface, OpenMode.ForRead);
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurf.ObjectId, desSurf.ObjectId);
     var temporaryName = $"MCP_TMP_COST_VOLUME_{Guid.NewGuid():N}";
     var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurf.ObjectId, desSurf.ObjectId);
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);

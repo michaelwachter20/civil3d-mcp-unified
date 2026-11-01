@@ -11,6 +11,16 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
   scale and corridor region add, region delete and targets didn't work.
 
+- **A sweep of every tool (about 500 calls on a live drawing):** `watershed_add` now runs Civil 3D's analysis, through
+  COM, and lists the regions. `sheet_set_create` makes a real `.dst` with a sheet for each layout, and
+  `sheet_set_get_info` reads one back by path. Fixed: `create_3dpolyline` failed on every call; every named band set
+  failed; `pressure_network_lengths` and pipe length failed on every pressure pipe; `parcel_areas` had no perimeter;
+  QC called every spiral-curve-spiral invalid twice over; slope analysis failed where a profile stops short of its
+  alignment; a volume between a surface and itself gave a raw error; a second network of a name became `Name (1)`; a
+  zero-length pressure pipe was accepted; `data_shortcut_create` opened a window that stopped every request, and did
+  so from a dry run too. Unmatched pay items are now listed, and two empty codes no longer count as a match. Approvals
+  take the action names tools show (`run`), not only the inside ones (`script_run`).
+
 - **Parcels can be made:** `create` works, through Civil 3D's COM interface, since the .NET API has no call for it. It
   takes corners, a polyline, or a line across a parcel to split it. It's one undo step, and lines that close no area
   are taken out again. `lot_line_adjust` said "attempted" with nothing changed; it now says Civil 3D has no API for it.

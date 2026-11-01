@@ -83,6 +83,7 @@ public static class DataShortcutCommands
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      RequireShortcutFolder();
       SendCommand(doc, "CreateDataShortcuts");
 
       return new Dictionary<string, object?>
@@ -104,6 +105,22 @@ public static class DataShortcutCommands
         },
       };
     });
+  }
+
+  /// <summary>
+  /// Refuses when the working folder has no project with a _Shortcuts folder: CreateDataShortcuts would otherwise open
+  /// an error window that holds up every request until someone answers it.
+  /// </summary>
+  internal static void RequireShortcutFolder()
+  {
+    var workingFolder = Autodesk.Civil.DataShortcuts.DataShortcuts.GetWorkingFolder();
+    var hasProject = Directory.Exists(workingFolder)
+      && Directory.EnumerateDirectories(workingFolder).Any(project => Directory.Exists(Path.Combine(project, "_Shortcuts")));
+    if (!hasProject)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Nothing was started: the working folder '{workingFolder}' has no shortcut folder. In Prospector, right-click Data Shortcuts and use New Data Shortcuts Folder.");
+    }
   }
 
   public static Task<object?> ReferenceDataShortcutAsync(JsonObject? parameters)

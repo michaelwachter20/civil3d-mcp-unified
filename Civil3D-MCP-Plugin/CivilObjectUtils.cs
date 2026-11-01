@@ -15,6 +15,15 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class CivilObjectUtils
 {
+  /// <summary>Civil 3D answers a volume between a surface and itself with "Fail to create a surface".</summary>
+  public static void RequireDifferentSurfaces(ObjectId baseSurface, ObjectId comparisonSurface)
+  {
+    if (baseSurface == comparisonSurface)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A volume needs two different surfaces: these are the same one.");
+    }
+  }
+
   public static string GetHandle(AcDbObject dbObject)
   {
     return dbObject.Handle.ToString();

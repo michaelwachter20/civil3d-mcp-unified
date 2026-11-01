@@ -50,6 +50,11 @@ public static class PlanProductionCommands
   public static Task<object?> GetSheetSetInfoAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
+    if (name.EndsWith(".dst", StringComparison.OrdinalIgnoreCase))
+    {
+      return CivilExecution.OnActiveDocumentAsync<object?>(_ => SheetSetCom.Read(FileBoundary.ResolveImportPath(name, ".dst")));
+    }
+
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var sheetSet = FindSheetSetByName(civilDoc, transaction, name);
@@ -72,12 +77,43 @@ public static class PlanProductionCommands
   // createSheetSet
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// A new sheet set file (.dst) at <c>outputPath</c>, with a sheet for each of <c>layoutNames</c> of the active drawing,
+  /// which must be saved, since a sheet is a reference to a layout in a file.
+  /// </summary>
   public static Task<object?> CreateSheetSetAsync(JsonObject? parameters)
   {
-    _ = PluginRuntime.GetRequiredString(parameters, "name");
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Civil 3D does not document a managed sheet-set creation API. No sheet set was created; use Sheet Set Manager or a reviewed Autodesk Sheet Set API integration.");
+    var name = PluginRuntime.GetRequiredString(parameters, "name");
+    var description = PluginRuntime.GetOptionalString(parameters, "description");
+    var overwrite = PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false;
+    var outputPath = FileBoundary.ResolveExportPath(PluginRuntime.GetRequiredString(parameters, "outputPath"), overwrite, ".dst");
+    var layoutNames = (PluginRuntime.GetParameter(parameters, "layoutNames") as JsonArray)?
+      .Select(node => node?.GetValue<string>())
+      .Where(layout => !string.IsNullOrWhiteSpace(layout))
+      .Select(layout => layout!)
+      .ToList() ?? [];
+
+    return CivilExecution.OnActiveDocumentAsync<object?>(doc =>
+    {
+      if (layoutNames.Count > 0 && !Path.IsPathRooted(doc.Name))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Save the drawing first: a sheet refers to a layout in a saved file.");
+      }
+
+      // Before the file exists: the library's own answer is a bare 0x80040211, with an empty sheet set left behind.
+      using (var transaction = doc.Database.TransactionManager.StartOpenCloseTransaction())
+      {
+        var layouts = (DBDictionary)transaction.GetObject(doc.Database.LayoutDictionaryId, OpenMode.ForRead);
+        var missing = layoutNames.Where(layout => !layouts.Contains(layout)).ToList();
+        if (missing.Count > 0)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+            $"No layout named {string.Join(", ", missing.Select(layout => $"'{layout}'"))}. This drawing has: {string.Join(", ", layouts.Cast<DBDictionaryEntry>().Select(entry => entry.Key))}.");
+        }
+      }
+
+      return SheetSetCom.Create(outputPath, name, description, doc.Name, layoutNames, overwrite);
+    });
   }
 
   // -------------------------------------------------------------------------

@@ -114,5 +114,16 @@
       <HintPath>$(AdWindowsPath)</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="AeccDataShortcutMgd">
+      <HintPath>$(Civil3DInstallPath)\C3D\AeccDataShortcutMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- The sheet set library's interfaces aren't IDispatch, so they can't be reached late-bound. Embedded, so nothing
+         extra ships. -->
+    <Reference Include="AcSmComponents.Interop">
+      <HintPath>$(Civil3DInstallPath)\AcSmComponents.Interop.dll</HintPath>
+      <Private>False</Private>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
+    </Reference>
   </ItemGroup>
 </Project>
