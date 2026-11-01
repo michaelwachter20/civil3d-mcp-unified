@@ -1,5 +1,43 @@
 # Changelog
 
+## v2.4.1 — 2026-11-01
+
+From a review of the code against Project Analyzer and Civil 3D's own API list. Nothing here has been tried in Civil 3D
+yet: docs/LIVE-TEST-PLAN.md is the plan for that.
+
+- **A script's timeout now stops a tight loop.** Every loop in a script checks the cancellation token by itself
+  (`ScriptLoopGuard`), so `while (true) { }` ends at the timeout instead of freezing Civil 3D. Recursion, one long call
+  into Civil 3D and loops in a class the script declares aren't covered.
+
+- **One folder, one job.** `link` refuses a folder that belongs to another job; it could quietly take the job's drawings
+  to a new, empty database. A drawing never saved has no folder to link.
+
+- **Open asks before it opens, and tells the truth about newer files.** The same name in different areas (each phase's
+  C-109) is asked about first; dated delivery folders are versions, and the latest opens. A newer version is reported
+  only if it's on the drive and was really saved later. A job named with `project` limits open drawings too. A newer .dxf
+  doesn't replace the .dwg. A full path picks the right one of two open drawings with one name.
+
+- **The job's database:** a rebuild in progress or stopped is said in every answer, so "none found" isn't believed; a
+  damaged job is named when a drawing can't be matched; `file` says when a file moved or is gone, and finds files inside
+  archives; `locate` shows every file a relative path can mean; a superseded fact can be said again and search marks it;
+  a job on a drive's root works. Revisions by letter or after an underscore are one series, as in Project Analyzer.
+
+- **K values were wrong by a factor of 100,** and the table was too low. `check_k_values` now uses percent, AASHTO's
+  stopping sight distance tables, and the drawing's units: mph and K in feet in a foot drawing, km/h and K in metres in
+  a metre drawing. Results now say which.
+
+- **Smaller fixes:** `save` on a drawing never saved refuses instead of overwriting its template; `redo steps=n` really
+  redoes n (MREDO); `delete_pvi` and `add_curve` refuse a station with no PVI within 1 unit, instead of the nearest one;
+  `extract_contours` needs approval; quantity CSV flags match their names; pipe sizes read Ø18in and Ø450mm, not Ø2mm
+  and Ø0mm; drawing settings, parcels, and grid or volume surfaces no longer fail their own schema when a value is null;
+  `transform` refuses a scale of zero or less; `startNumber` must be a positive whole number; the report's end station
+  can't round past the alignment's end.
+
+- **Skills** take their values from `Args` instead of placeholders such as `SURFACE_NAME_HERE`.
+
+- **CI:** the tool-docs check ignores line endings; the plugin workflow is manual-only, since no machine runs it; the
+  Actions are on current versions.
+
 ## v2.4.0 — 2026-10-27
 
 - **Points from a file go through Civil 3D's own importer; any other point-making asks you in Civil 3D.**
