@@ -14,7 +14,8 @@ const output = `# Generated Civil 3D tool reference\n\n` +
 const target = new URL("../docs/tools.generated.md", import.meta.url);
 
 if (process.argv.includes("--check")) {
-  const current = await readFile(target, "utf8").catch(() => "");
+  // A Windows checkout can turn the file's line endings into CRLF; only its words count as stale.
+  const current = (await readFile(target, "utf8").catch(() => "")).replace(/\r\n/g, "\n");
   if (current !== output) {
     console.error("docs/tools.generated.md is stale. Run npm run docs:generate.");
     process.exit(1);
