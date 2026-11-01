@@ -10,14 +10,22 @@ const SERVER_NAME = "civil3d-mcp";
 const [action, serverEntry] = process.argv.slice(2);
 
 // Classic installs use %APPDATA%\Claude; the Microsoft Store app keeps a redirected copy under
-// %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude. Update every one that exists.
+// %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude, and newer ones keep their data outside the package, in
+// %LOCALAPPDATA%\Claude-Data\claude_*. Update every one that exists.
 function configFiles() {
   const dirs = [];
   if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, "Claude"));
-  const packages = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Packages") : null;
+  const local = process.env.LOCALAPPDATA;
+  const packages = local ? path.join(local, "Packages") : null;
   if (packages && fs.existsSync(packages)) {
     for (const name of fs.readdirSync(packages)) {
       if (/^Claude_/i.test(name)) dirs.push(path.join(packages, name, "LocalCache", "Roaming", "Claude"));
+    }
+  }
+  const outside = local ? path.join(local, "Claude-Data") : null;
+  if (outside && fs.existsSync(outside)) {
+    for (const name of fs.readdirSync(outside)) {
+      if (/^claude_/i.test(name)) dirs.push(path.join(outside, name));
     }
   }
   return dirs.filter((dir) => fs.existsSync(dir)).map((dir) => path.join(dir, "claude_desktop_config.json"));

@@ -145,7 +145,9 @@ Write-Host "Civil 3D MCP plugin $version installed to $target" -ForegroundColor 
 # ---------- optional: Claude Desktop ----------
 $claudeSettings = @(Join-Path $env:APPDATA 'Claude') +
   @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Directory -Filter 'Claude_*' -ErrorAction SilentlyContinue |
-    ForEach-Object { Join-Path $_.FullName 'LocalCache\Roaming\Claude' }) | Where-Object { Test-Path -LiteralPath $_ }
+    ForEach-Object { Join-Path $_.FullName 'LocalCache\Roaming\Claude' }) +
+  @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Claude-Data') -Directory -Filter 'claude_*' -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.FullName }) | Where-Object { Test-Path -LiteralPath $_ }
 $serverSource = Join-Path $PSScriptRoot 'mcp-server'
 if ($claudeSettings -and (Test-Path -LiteralPath $serverSource)) {
   Write-Host ''
