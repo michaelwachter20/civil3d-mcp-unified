@@ -181,7 +181,6 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 | `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
 | A drawing held by a real second user (3.27) | Passed on a held copy with a made-up `.dwl`, not with two people |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
-
 | DEM import | Civil 3D called both a generated .asc and a generated .tif invalid: needs a real DEM file |
 
 Civil 3D facts learned, worth knowing before testing again:
