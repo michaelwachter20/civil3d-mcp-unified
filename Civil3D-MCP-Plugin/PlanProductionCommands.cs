@@ -95,23 +95,7 @@ public static class PlanProductionCommands
 
     return CivilExecution.OnActiveDocumentAsync<object?>(doc =>
     {
-      if (layoutNames.Count > 0 && !Path.IsPathRooted(doc.Name))
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Save the drawing first: a sheet refers to a layout in a saved file.");
-      }
-
-      // Before the file exists: the library's own answer is a bare 0x80040211, with an empty sheet set left behind.
-      using (var transaction = doc.Database.TransactionManager.StartOpenCloseTransaction())
-      {
-        var layouts = (DBDictionary)transaction.GetObject(doc.Database.LayoutDictionaryId, OpenMode.ForRead);
-        var missing = layoutNames.Where(layout => !layouts.Contains(layout)).ToList();
-        if (missing.Count > 0)
-        {
-          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
-            $"No layout named {string.Join(", ", missing.Select(layout => $"'{layout}'"))}. This drawing has: {string.Join(", ", layouts.Cast<DBDictionaryEntry>().Select(entry => entry.Key))}.");
-        }
-      }
-
+      RequireSheetLayouts(doc, layoutNames);
       return SheetSetCom.Create(outputPath, name, description, doc.Name, layoutNames, overwrite);
     });
   }
@@ -120,26 +104,63 @@ public static class PlanProductionCommands
   // addSheet
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Adds layout <c>layoutName</c> of the active drawing (default: the one named <c>sheetName</c>) to the sheet set file
+  /// <c>sheetSetName</c>, numbered <c>sheetNumber</c> or after the last sheet.
+  /// </summary>
   public static Task<object?> AddSheetAsync(JsonObject? parameters)
   {
-    var sheetSetName = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
+    var sheetSetPath = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
     var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
     var sheetNumber = PluginRuntime.GetOptionalString(parameters, "sheetNumber");
-    var layoutName = PluginRuntime.GetOptionalString(parameters, "layoutName");
+    var layoutName = PluginRuntime.GetOptionalString(parameters, "layoutName") ?? sheetName;
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.OnActiveDocumentAsync<object?>(doc =>
     {
-      var sheetSet = FindSheetSetByName(civilDoc, transaction, sheetSetName);
-      var sheet = AddSheetToSet(sheetSet, transaction, sheetName, sheetNumber ?? "1", layoutName);
-
-      return new Dictionary<string, object?>
-      {
-        ["name"] = GetName(sheet) ?? sheetName,
-        ["number"] = sheetNumber ?? "1",
-        ["handle"] = GetHandleString(sheet),
-        ["added"] = true,
-      };
+      RequireSheetLayouts(doc, [layoutName]);
+      return SheetSetCom.AddSheet(sheetSetPath, sheetName, sheetNumber, doc.Name, layoutName);
     });
+  }
+
+  /// <summary>A .dst path, checked. A sheet set is a file: the name of one means nothing without where it is.</summary>
+  private static string SheetSetFile(string sheetSetName)
+  {
+    if (!sheetSetName.EndsWith(".dst", StringComparison.OrdinalIgnoreCase))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"'{sheetSetName}' isn't a sheet set file: give the path of the .dst, as sheet_set_create returned it.");
+    }
+
+    return FileBoundary.ResolveImportPath(sheetSetName, ".dst");
+  }
+
+  /// <summary>
+  /// Checks before the library is asked, since its own answer is a bare 0x80040211, with an empty sheet set left behind.
+  /// A sheet is a paper layout in a saved file, so model space and an unsaved drawing can't be one.
+  /// </summary>
+  private static void RequireSheetLayouts(Document doc, IReadOnlyCollection<string> layoutNames)
+  {
+    if (layoutNames.Count == 0)
+    {
+      return;
+    }
+
+    if (!Path.IsPathRooted(doc.Name))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Save the drawing first: a sheet refers to a layout in a saved file.");
+    }
+
+    using var transaction = doc.Database.TransactionManager.StartOpenCloseTransaction();
+    var layouts = (DBDictionary)transaction.GetObject(doc.Database.LayoutDictionaryId, OpenMode.ForRead);
+    var usable = layouts.Cast<System.Collections.DictionaryEntry>().Select(entry => (string)entry.Key)
+      .Where(name => !string.Equals(name, "Model", StringComparison.OrdinalIgnoreCase))
+      .ToList();
+    var missing = layoutNames.Where(layout => !usable.Contains(layout, StringComparer.OrdinalIgnoreCase)).ToList();
+    if (missing.Count > 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+        $"No layout named {string.Join(", ", missing.Select(layout => $"'{layout}'"))}. This drawing has: {string.Join(", ", usable)}.");
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -385,16 +406,51 @@ public static class PlanProductionCommands
   // exportSheetSet
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Publishes the sheets of the sheet set file <c>sheetSetName</c> to one PDF, in the set's order, leaving out those
+  /// marked do-not-plot. The plot engine works on the active drawing, so a set with sheets in other drawings is refused
+  /// by name: a PDF missing some of them would look like the whole set.
+  /// </summary>
   public static Task<object?> ExportSheetSetAsync(JsonObject? parameters)
   {
-    _ = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
-    _ = FileBoundary.ResolveExportPath(
+    var sheetSetPath = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
+    var outputPath = FileBoundary.ResolveExportPath(
       PluginRuntime.GetRequiredString(parameters, "outputPath"),
       PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false,
-      ".pdf", ".dwf", ".dwfx", ".dst");
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Sheet-set PDF export is unavailable until a typed AutoCAD PlotEngine workflow with output verification is implemented. No export was started.");
+      ".pdf");
+    var paperSize = PluginRuntime.GetOptionalString(parameters, "paperSize");
+    var plotStyleTable = PluginRuntime.GetOptionalString(parameters, "plotStyleTable");
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var sheets = SheetSetCom.Sheets(sheetSetPath);
+      var plotted = sheets.Where(sheet => !sheet.DoNotPlot).ToList();
+      if (plotted.Count == 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "This sheet set has no sheets to plot.");
+      }
+
+      var elsewhere = plotted.Where(sheet => !SheetSetCom.SameFile(sheet.Drawing, doc.Name)).ToList();
+      if (elsewhere.Count > 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          "Nothing was published: this set has sheets in other drawings, and only the active drawing can be plotted: "
+          + string.Join(", ", elsewhere.Select(sheet => $"{sheet.Name} ({Path.GetFileName(sheet.Drawing)})")) + ".");
+      }
+
+      var layoutNames = plotted.Select(sheet => sheet.Layout!).ToList();
+      var size = PdfPublisher.Publish(doc, transaction, layoutNames, outputPath, paperSize, plotStyleTable);
+      return new Dictionary<string, object?>
+      {
+        ["sheetSetName"] = sheetSetPath,
+        ["outputPath"] = outputPath,
+        ["sheetsExported"] = layoutNames.Count,
+        ["sheetsSkipped"] = sheets.Count - layoutNames.Count,
+        ["layouts"] = layoutNames,
+        ["sizeBytes"] = size,
+        ["exported"] = true,
+      };
+    });
   }
 
   // =========================================================================
@@ -507,28 +563,6 @@ public static class PlanProductionCommands
     }
 
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sheet '{name}' was not found.");
-  }
-
-  private static DBObject AddSheetToSet(
-    DBObject sheetSet,
-    Transaction transaction,
-    string sheetName,
-    string sheetNumber,
-    string? layoutName)
-  {
-    // Try AddSheet(name) or Add(name) method on the sheet set
-    var addResult = CivilObjectUtils.InvokeMethod(sheetSet, "AddSheet", sheetName, sheetNumber)
-      ?? CivilObjectUtils.InvokeMethod(sheetSet, "Add", sheetName);
-
-    if (addResult is DBObject addedSheet)
-      return addedSheet;
-
-    if (addResult is ObjectId addedId && addedId != ObjectId.Null)
-      return transaction.GetObject(addedId, OpenMode.ForRead);
-
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Civil 3D could not add sheet '{sheetName}' to the sheet set. No simulated sheet was created.");
   }
 
   private static Dictionary<string, object?> ToSheetSetSummary(DBObject sheetSet, Transaction transaction)

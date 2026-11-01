@@ -538,6 +538,7 @@ public static class WorkflowCommands
           ["sheetSetName"] = sheetSetName,
           ["outputPath"] = outputPath,
           ["plotStyleTable"] = plotStyleTable,
+          ["paperSize"] = paperSize,
         }),
         "exportSheetSet");
 

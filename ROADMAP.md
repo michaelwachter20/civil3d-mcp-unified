@@ -401,9 +401,10 @@ Status: Complete in automated tests. Not live-tested in Civil 3D.
 In order. Reviewed 2026-11-01, after the first live day. Details and every test are in
 [docs/LIVE-TEST-PLAN.md](docs/LIVE-TEST-PLAN.md); part 5 has the results.
 
-1. **Sheet sets:** `sheet_set_create` and `sheet_set_get_info` use the real library (`SheetSetCom`). The other sheet
-   tools were written for an API that doesn't exist; rebuild `sheet_add` and `sheet_set_export` on it, or stop advertising
-   them. Grading groups and `lot_line_adjust` have no route.
+1. **Sheet sets:** create, add, read and export use the real library (`SheetSetCom`). `sheet_set_export` only plots the
+   active drawing, so a set across several drawings is refused. `sheet_set_list`, `sheet_get_properties`,
+   `sheet_set_title_block` and `plan_profile_sheet_update_alignment` still look inside the drawing, where there are no
+   sheet sets: rebuild them too, or stop advertising them. Grading groups and `lot_line_adjust` have no route.
 2. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
 3. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
    file's old id stay with the old id; OneDrive placeholders may be refused by `FileBoundary` (suspected).

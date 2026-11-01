@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Autodesk.AutoCAD.Interop;
 
 namespace Civil3DMcpPlugin;
@@ -10,6 +11,9 @@ namespace Civil3DMcpPlugin;
 internal static class SheetSetCom
 {
   private const string ProgIdVersion = "26";
+
+  /// <summary>One sheet: <c>Drawing</c> is the file its layout is in.</summary>
+  public sealed record Sheet(string Name, string Number, string Title, string? Layout, string? Drawing, bool DoNotPlot);
 
   private static T Make<T>(string className) =>
     Civil3DCompatibility.CreateComObject<T>($"AcSmComponents.{className}.{ProgIdVersion}");
@@ -30,14 +34,7 @@ internal static class SheetSetCom
       var number = 1;
       foreach (var layoutName in layoutNames)
       {
-        var layout = Make<IAcSmAcDbLayoutReference>("AcSmAcDbLayoutReference");
-        layout.InitNew((IAcSmPersist)database);
-        layout.SetFileName(drawingPath);
-        layout.SetName(layoutName);
-        var sheet = sheetSet.ImportSheet((AcSmAcDbLayoutReference)layout);
-        sheet.SetNumber(number++.ToString());
-        sheet.SetTitle(layoutName);
-        sheetSet.InsertComponent((IAcSmComponent)sheet, null);
+        AddLayout(database, sheetSet, drawingPath, layoutName, layoutName, number++.ToString());
       }
 
       committed = true;
@@ -51,6 +48,49 @@ internal static class SheetSetCom
     return new Dictionary<string, object?> { ["name"] = name, ["path"] = path, ["sheetCount"] = layoutNames.Count, ["created"] = true };
   }
 
+  /// <summary>Adds a layout to a sheet set as a new sheet, numbered after the last one unless given a number.</summary>
+  public static Dictionary<string, object?> AddSheet(string path, string sheetName, string? sheetNumber, string drawingPath, string layoutName)
+  {
+    var manager = Make<IAcSmSheetSetMgr>("AcSmSheetSetMgr");
+    var database = manager.OpenDatabase(path, false);
+    try
+    {
+      var sheetSet = database.GetSheetSet();
+      var existing = Walk(sheetSet.GetSheetEnumerator()).Select(Describe).ToList();
+      if (existing.Any(sheet => SameFile(sheet.Drawing, drawingPath) && string.Equals(sheet.Layout, layoutName, StringComparison.OrdinalIgnoreCase)))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Layout '{layoutName}' of this drawing is already a sheet in this set.");
+      }
+
+      var number = !string.IsNullOrWhiteSpace(sheetNumber) ? sheetNumber! : NextNumber(existing);
+      var committed = false;
+      database.LockDb(database);
+      try
+      {
+        AddLayout(database, sheetSet, drawingPath, layoutName, sheetName, number);
+        committed = true;
+      }
+      finally
+      {
+        database.UnlockDb(database, committed);
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["name"] = sheetName,
+        ["number"] = number,
+        ["layout"] = layoutName,
+        ["sheetSet"] = path,
+        ["sheetCount"] = existing.Count + 1,
+        ["added"] = true,
+      };
+    }
+    finally
+    {
+      manager.Close(database);
+    }
+  }
+
   /// <summary>What a .dst file holds: its name, description and sheets.</summary>
   public static Dictionary<string, object?> Read(string path)
   {
@@ -59,21 +99,127 @@ internal static class SheetSetCom
     try
     {
       var sheetSet = database.GetSheetSet();
-      var sheets = new List<Dictionary<string, object?>>();
-      var enumerator = sheetSet.GetSheetEnumerator();
-      for (var component = enumerator.Next(); component != null; component = enumerator.Next())
-      {
-        if (component is IAcSmSheet sheet)
+      var sheets = Walk(sheetSet.GetSheetEnumerator()).Select(Describe)
+        .Select(sheet => new Dictionary<string, object?>
         {
-          sheets.Add(new Dictionary<string, object?> { ["name"] = sheet.GetName(), ["number"] = sheet.GetNumber(), ["title"] = sheet.GetTitle() });
-        }
-      }
+          ["name"] = sheet.Name,
+          ["number"] = sheet.Number,
+          ["title"] = sheet.Title,
+          ["layout"] = sheet.Layout,
+          ["drawing"] = sheet.Drawing,
+          ["doNotPlot"] = sheet.DoNotPlot,
+        })
+        .ToList();
 
       return new Dictionary<string, object?> { ["name"] = sheetSet.GetName(), ["path"] = path, ["description"] = sheetSet.GetDesc(), ["sheets"] = sheets };
     }
     finally
     {
       manager.Close(database);
+    }
+  }
+
+  /// <summary>Every sheet of a .dst file, in the set's order.</summary>
+  public static List<Sheet> Sheets(string path)
+  {
+    var manager = Make<IAcSmSheetSetMgr>("AcSmSheetSetMgr");
+    var database = manager.OpenDatabase(path, false);
+    try
+    {
+      return Walk(database.GetSheetSet().GetSheetEnumerator()).Select(Describe).ToList();
+    }
+    finally
+    {
+      manager.Close(database);
+    }
+  }
+
+  /// <summary>Whether two paths are the same file, however they're written.</summary>
+  public static bool SameFile(string? first, string? second) =>
+    !string.IsNullOrWhiteSpace(first) && !string.IsNullOrWhiteSpace(second)
+    && string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>A sheet set lists sheets and subsets together, and a subset holds more of both.</summary>
+  private static IEnumerable<IAcSmSheet> Walk(IAcSmEnumComponent components)
+  {
+    for (var component = components.Next(); component != null; component = components.Next())
+    {
+      if (component is IAcSmSheet sheet)
+      {
+        yield return sheet;
+      }
+      else if (component is IAcSmSubset subset)
+      {
+        foreach (var inner in Walk(subset.GetSheetEnumerator()))
+        {
+          yield return inner;
+        }
+      }
+    }
+  }
+
+  private static Sheet Describe(IAcSmSheet sheet)
+  {
+    var layout = (IAcSmAcDbLayoutReference?)sheet.GetLayout();
+    string? drawing = null;
+    try
+    {
+      drawing = layout?.ResolveFileName();
+    }
+    catch (COMException)
+    {
+      // The drawing has moved: what the set recorded is still the best name for it.
+    }
+
+    return new Sheet(sheet.GetName(), sheet.GetNumber(), sheet.GetTitle(), layout?.GetName(), drawing ?? layout?.GetFileName(), sheet.GetDoNotPlot());
+  }
+
+  /// <summary>One past the highest whole number in use, so "1", "2", "A-3" gets "3"; else one past the count.</summary>
+  private static string NextNumber(List<Sheet> existing)
+  {
+    var numbers = existing.Select(sheet => int.TryParse(sheet.Number, out var number) ? number : 0).ToList();
+    return (numbers.DefaultIfEmpty(0).Max() is var highest && highest > 0 ? highest + 1 : existing.Count + 1).ToString();
+  }
+
+  private static IAcSmComponent? LastComponent(IAcSmEnumComponent components)
+  {
+    IAcSmComponent? last = null;
+    for (var component = components.Next(); component != null; component = components.Next())
+    {
+      last = component;
+    }
+
+    return last;
+  }
+
+  private static void AddLayout(AcSmDatabase database, AcSmSheetSet sheetSet, string drawingPath, string layoutName, string title, string number)
+  {
+    try
+    {
+      var layout = Make<IAcSmAcDbLayoutReference>("AcSmAcDbLayoutReference");
+      layout.InitNew((IAcSmPersist)database);
+      layout.SetFileName(drawingPath);
+      layout.SetName(layoutName);
+      var sheet = sheetSet.ImportSheet((AcSmAcDbLayoutReference)layout);
+      sheet.SetNumber(number);
+      sheet.SetTitle(title);
+
+      // InsertComponent with no "before" puts a sheet at the front, which would publish a set last sheet first.
+      var last = LastComponent(sheetSet.GetSheetEnumerator());
+      if (last == null)
+      {
+        sheetSet.InsertComponent((IAcSmComponent)sheet, null);
+      }
+      else
+      {
+        sheetSet.InsertComponentAfter((IAcSmComponent)sheet, last);
+      }
+    }
+    catch (COMException exception)
+    {
+      // It reads the file on disk, so a layout made since the last save isn't there.
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+        $"Layout '{layoutName}' couldn't be added from the saved drawing (0x{exception.HResult:X8}). Save the drawing and try again.");
     }
   }
 }

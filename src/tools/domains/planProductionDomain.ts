@@ -9,11 +9,11 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * definitions into validated, approval-checked MCP tools. Every action forwards to one plugin method; nothing runs in
  * Node.
  *
- * Several plugin methods refuse by design and change nothing: `createSheetSet`, `createPlanProfileSheet` and
- * `exportSheetSet` check their arguments (and the output path, through FileBoundary) and then throw CIVIL3D.API_ERROR,
- * because there is no documented managed API. The working actions are the reads, `sheet_add`, `sheet_set_title_block`,
- * `plan_profile_sheet_update_alignment`, the viewport actions and `sheet_publish_pdf`, which plots layouts with the plot
- * engine and answers once the file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.)
+ * A sheet set is a .dst file, handled by the plugin's SheetSetCom: `sheet_set_create` makes one, and `sheet_set_get_info`,
+ * `sheet_add` and `sheet_set_export` take its path as the name. `sheet_set_export` plots with the same engine as
+ * `sheet_publish_pdf`, which answers once the file exists. (The jobs domain's `publish_sheet_pdf` runs the same
+ * `publishSheetPdf`.) `sheet_set_list`, `sheet_get_properties`, `sheet_set_title_block` and
+ * `plan_profile_sheet_update_alignment` look for sheet sets inside the drawing, where there are none.
  */
 
 /** One sheet in a sheet set, as the list and info answers give it. */
@@ -108,6 +108,7 @@ const SheetSetCreateArgsSchema = z.object({
   overwrite: z.boolean().optional(),
 });
 
+/** `sheetSetName` is the .dst path; `layoutName`, of the active drawing, defaults to `sheetName`. */
 const SheetAddArgsSchema = z.object({
   action: z.literal("sheet_add"),
   sheetSetName: z.string(),
@@ -187,12 +188,14 @@ const SheetPublishPdfArgsSchema = z.object({
   paperSize: z.string().optional(),
 });
 
+/** `sheetSetName` is the .dst path; every sheet to plot must be a layout of the active drawing. */
 const SheetSetExportArgsSchema = z.object({
   action: z.literal("sheet_set_export"),
   sheetSetName: z.string(),
   outputPath: z.string(),
   overwrite: z.boolean().optional(),
   plotStyleTable: z.string().optional(),
+  paperSize: z.string().optional(),
 });
 
 /**
@@ -249,7 +252,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
     sheet_add: {
       action: "sheet_add",
       inputSchema: SheetAddArgsSchema,
-      responseSchema: z.object({ name: z.string(), number: z.string(), handle: z.string(), added: z.boolean() }),
+      responseSchema: z.object({}).passthrough(),
       capabilities: ["create", "manage"],
       requiresActiveDrawing: true,
       safeForRetry: false,
@@ -400,12 +403,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
     sheet_set_export: {
       action: "sheet_set_export",
       inputSchema: SheetSetExportArgsSchema,
-      responseSchema: z.object({
-        sheetSetName: z.string(),
-        outputPath: z.string(),
-        sheetsExported: z.number(),
-        exported: z.boolean(),
-      }),
+      responseSchema: z.object({}).passthrough(),
       capabilities: ["export", "generate"],
       requiresActiveDrawing: true,
       safeForRetry: false,
@@ -416,6 +414,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
           outputPath: args.outputPath,
           overwrite: args.overwrite ?? false,
           plotStyleTable: args.plotStyleTable,
+          paperSize: args.paperSize,
         }),
       ),
     },

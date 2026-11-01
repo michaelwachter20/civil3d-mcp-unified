@@ -12,8 +12,9 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   scale and corridor region add, region delete and targets didn't work.
 
 - **A sweep of every tool (about 500 calls on a live drawing):** `watershed_add` now runs Civil 3D's analysis, through
-  COM, and lists the regions. `sheet_set_create` makes a real `.dst` with a sheet for each layout, and
-  `sheet_set_get_info` reads one back by path. Fixed: `create_3dpolyline` failed on every call; every named band set
+  COM, and lists the regions. `sheet_set_create` makes a real `.dst` with a sheet for each layout,
+  `sheet_add` adds one, `sheet_set_get_info` reads a set back by path, and `sheet_set_export` publishes it to one PDF in
+  order. A set with sheets in other drawings is refused by name, since only the active drawing can be plotted. Fixed: `create_3dpolyline` failed on every call; every named band set
   failed; `pressure_network_lengths` and pipe length failed on every pressure pipe; `parcel_areas` had no perimeter;
   QC called every spiral-curve-spiral invalid twice over; slope analysis failed where a profile stops short of its
   alignment; a volume between a surface and itself gave a raw error; a second network of a name became `Name (1)`; a

@@ -176,7 +176,8 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 
 | Still open | Why |
 |---|---|
-| Grading groups, `lot_line_adjust`, `sheet_add`, `sheet_set_export` | No route found: neither the .NET API nor COM offers them, and the tools say so |
+| Grading groups, `lot_line_adjust` | No route found: neither the .NET API nor COM offers them, and the tools say so |
+| `sheet_set_list`, `sheet_get_properties`, `sheet_set_title_block`, `plan_profile_sheet_update_alignment` | Written for sheet sets inside the drawing, which don't exist; they find none |
 | `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
 | A drawing held by a real second user (3.27) | Passed on a held copy with a made-up `.dwl`, not with two people |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
