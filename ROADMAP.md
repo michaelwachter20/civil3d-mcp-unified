@@ -339,31 +339,95 @@ panned, zoomed out, and stayed put as expected across three writes.
 
 ### Fork phase C - Re-validate on 2027
 
-Status: Not started.
+Status: Partly done. Reviewed 2026-10-31.
+
+Live-tested on Civil 3D 2027 (English, build 13.9.1308): code execution, saved scripts, `MCPRUN`, `acad_command`, undo
+grouping, read context and view following.
+
+Still to do, all at a PC with Civil 3D open:
 
 - Run `npm run test:live-plugin`, `npm run test:live-host`, and
   `npm run test:live-mcp-client` against Civil 3D 2027 on disposable drawings.
-- Fix any upstream fixed tools affected by the 2027 managed-API removal.
+- Fix any upstream fixed tools affected by the 2027 managed-API removal. They haven't been fully re-validated.
 - Connect a real MCP client (Claude Code / Claude Desktop) and complete the
   preview → approval → execute flow for `civil3d_execute`.
 - Confirm the Docker path can reach the plugin. The plugin listens on loopback
-  only, so a container may not be able to connect.
+  only (`RpcTcpServer`), so a container may not be able to connect.
 
 ### Fork phase D - Script robustness
 
-Status: Not started.
+Status: Partly done. Reviewed 2026-10-31.
+
+Done:
+
+- Scripts compile in Release mode. Debug-mode script code crashed the .NET 10 runtime, the `clrjit.dll` crash this
+  phase set out to find.
+- `MCPRUN` no longer blocks on `.GetAwaiter().GetResult()`.
+
+Still to do:
 
 - Guard against runaway scripts: inject `CancellationToken` checks into loop
-  bodies before compiling, so the timeout can stop a tight loop.
-- Investigate the one observed `clrjit.dll` access-violation crash shortly
-  after a query (not reproduced; consider Release-mode script compilation).
-- Replace `.GetAwaiter().GetResult()` in `MCPRUN` with an async command pattern.
-- Convert the original barbosaihan skill templates from placeholder names to `Args`.
+  bodies before compiling, so the timeout can stop a tight loop. Today such a loop freezes Civil 3D.
+- Convert the original barbosaihan skill templates from placeholder names to `Args`. 12 of the 37 skills have no `Args`,
+  and templates such as `create_tin_surface` still hold values like `SURFACE_NAME_HERE`.
 
 ### Fork phase E - CI and housekeeping
 
-Status: Not started.
+Status: Partly done. Reviewed 2026-10-31.
+
+Done:
+
+- 2.4.0 released. The Node checks in CI run on Windows, like the Release workflow, because job paths are Windows paths.
+
+Still to do:
 
 - Make the self-hosted `Civil3D-2027` plugin workflow manual-only (or register a
-  runner), so pull requests don't wait indefinitely for a machine that doesn't exist.
-- Bump the version once phase C passes.
+  runner). It still runs on pull requests, which then wait indefinitely for a machine that doesn't exist.
+- Move the workflows off the action versions that run on Node 20, which GitHub has deprecated.
+
+### Fork phase F - Knowing the job, shared with the suite
+
+Status: Complete in automated tests (555 tests, plus the suite test of all three programs on one database). Not
+live-tested in Civil 3D.
+
+- The learned-knowledge base: preferences, lessons, skills, scripts and good practices, each checked for job data
+  before saving, kept in the suite's shared folder.
+- `civil3d_project_notes`: the job's SQLite database, shared with Project Analyzer and TBC MCP, with `overview`,
+  `search`, `file`, `entity`, `timeline`, `locate`, `latest`, `checks` and `changes`, and User Knowledge documents.
+- Safe sharing: read-only opens, a clear answer when the database is busy or damaged, daily checked backups of
+  databases this tool created, and a lock around changes to knowledge files.
+- `civil3d_drawing action=open` opens an open drawing first, then the latest version from the job's database.
+
+### Fork phase G - Guards
+
+Status: Complete in automated tests. The first two items below are still to be tried in Civil 3D.
+
+- Points come in through `import_file`; any other way of making points asks the user in a window in Civil 3D.
+- Misspelled style, layer and site names are refused.
+- `transform` on every point needs `allPoints: true`; report files need approval; a sampling interval of zero or less
+  is refused.
+
+## What needs working on
+
+In order. Reviewed 2026-10-31, against the code and 2.4.0.
+
+1. **Crash on SAVEAS ([issue #3](https://github.com/michaelwachter20/civil3d-mcp-unified/issues/3)).** A user reports
+   Civil 3D 2027 crashing in `acdb26.dll` on SAVEAS with the plugin loaded (2.2.4), even with the AI connection off. It
+   didn't reproduce here, and the issue is waiting for their minidumps. First place to look: what stays hooked with the
+   connection off (`CommandLineMonitor` attaches to every document's command events).
+2. **Try 2.4.0 in Civil 3D** (needs a person at Civil 3D):
+   - `import_file`, and the window that asks before making points;
+   - the `open` action, including a drawing someone else has open;
+   - the misspelled-name refusal.
+3. **Results that are wrong or incomplete.** Each is marked `NOTE` in the code. Fix them with Civil 3D open, because the
+   answer depends on how Civil 3D behaves:
+   - lot-line adjust probably never moves anything (`parcelDomain.ts`);
+   - section data always comes back with no surfaces (`SectionCommands.cs`);
+   - each corridor region reports an insertion frequency of 0 (`CorridorCommands.cs`);
+   - surface profiles may not be recognized (`ProfileCommands.cs`);
+   - plan production falls back to the first viewport and sets the sheet's alignment by guessing property names
+     (`planProductionDomain.ts`);
+   - the corridor volume check makes a temporary surface during a read (`CorridorCommands.cs`, `corridorDomain.ts`).
+4. **Phase C:** the live suites and the upstream fixed tools on 2027.
+5. **Phase D:** the runaway-script guard, then the skill templates.
+6. **Phase E:** the plugin workflow's trigger and the action versions.

@@ -12,3 +12,7 @@ The short version:
   only inside the plugin, through `CivilExecution`.
 - Never start Civil 3D, AutoCAD or `accoreconsole` from an automated session; `dotnet build` of the plugin only
   compiles.
+- After changing the plugin's source, run `npm run plugin:prebuild` and commit `prebuilt/` before tagging a release: the
+  Release workflow stops if the prebuilt plugin doesn't match the source.
+- Job paths are Windows paths, on purpose (`path.win32`), so `npm test` needs Windows; CI runs there too.
+- What's planned and what needs working on is in [ROADMAP.md](ROADMAP.md); keep its review date and lists true.

@@ -95,6 +95,13 @@ connection on, and `test:live-host` changes disposable drawings only when `CIVIL
 is set. They are for a person sitting at Civil 3D: an automated session must not start Civil 3D, AutoCAD or
 `accoreconsole`.
 
+Job paths are Windows paths on purpose (`path.win32`), so `npm test` needs Windows: on Linux a backslash in
+`Packages\2026-02\C-101.dwg` is part of the file's name. CI runs on Windows for this reason.
+
+Before tagging a release after a change to the plugin's source, run `npm run plugin:prebuild` and commit `prebuilt/`:
+the Release workflow stops if the prebuilt plugin doesn't match the source. What needs working on is in
+[ROADMAP.md](ROADMAP.md).
+
 ## Rules
 
 1. **No job data in the repository.** Code, tests, skills, lessons and docs hold general know-how only. Examples are
