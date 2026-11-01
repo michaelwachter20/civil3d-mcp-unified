@@ -321,7 +321,17 @@ public static class CorridorCommands
   {
     CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, comparisonSurface.ObjectId);
     var temporaryName = $"MCP_TMP_CORRIDOR_VOLUME_{Guid.NewGuid():N}";
-    var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, comparisonSurface.ObjectId);
+    ObjectId volumeSurfaceId;
+    try
+    {
+      volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, comparisonSurface.ObjectId);
+    }
+    catch (ArgumentException exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+        $"Civil 3D couldn't measure against '{baseSurface.Name}' ({exception.Message}). If the corridor changed since it was last built, rebuild it first.");
+    }
+
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
     var properties = volumeSurface.GetVolumeProperties();
     return new Dictionary<string, object?>

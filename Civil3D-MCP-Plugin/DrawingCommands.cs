@@ -200,12 +200,21 @@ public static class DrawingCommands
     return File.Exists(civil) ? civil : null;
   }
 
+  /// <summary>A .dwt that sits in the folder of AutoCAD's default template: the program's own, so it needs no allowed root.</summary>
+  private static bool IsProgramTemplate(string path)
+  {
+    var folder = Path.GetDirectoryName(DefaultTemplate() ?? string.Empty);
+    return !string.IsNullOrWhiteSpace(folder)
+      && string.Equals(Path.GetExtension(path), ".dwt", StringComparison.OrdinalIgnoreCase)
+      && string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase);
+  }
+
   public static async Task<object?> NewDrawingAsync(JsonObject? parameters)
   {
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
     if (!string.IsNullOrWhiteSpace(templatePath))
     {
-      templatePath = FileBoundary.ResolveReferencePath(templatePath, ".dwt", ".dwg");
+      templatePath = IsProgramTemplate(templatePath) ? Path.GetFullPath(templatePath) : FileBoundary.ResolveReferencePath(templatePath, ".dwt", ".dwg");
     }
 
     return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>

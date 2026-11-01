@@ -40,9 +40,9 @@ public static class CostEstimationCommands
       // Earthwork volumes
       if (includeEarthwork && !string.IsNullOrWhiteSpace(baseSurface) && !string.IsNullOrWhiteSpace(designSurface))
       {
-        var (cutCy, fillCy) = GetEarthworkVolumes(civilDoc, database, transaction, baseSurface!, designSurface!);
-        quantityLines.Add(MakeLine("203.01", "Unclassified Excavation (Cut)", "CY", Math.Round(cutCy, 1), payItems));
-        quantityLines.Add(MakeLine("203.02", "Embankment (Fill)", "CY", Math.Round(fillCy, 1), payItems));
+        var (cut, fill, unit) = GetEarthworkVolumes(civilDoc, database, transaction, baseSurface!, designSurface!);
+        quantityLines.Add(MakeLine("203.01", "Unclassified Excavation (Cut)", unit, Math.Round(cut, 1), payItems));
+        quantityLines.Add(MakeLine("203.02", "Embankment (Fill)", unit, Math.Round(fill, 1), payItems));
       }
 
       // Civil 3D exposes QTO totals through SampleLineGroup material lists,
@@ -118,9 +118,9 @@ public static class CostEstimationCommands
       // Earthwork
       if (!string.IsNullOrWhiteSpace(baseSurface) && !string.IsNullOrWhiteSpace(designSurface))
       {
-        var (cutCy, fillCy) = GetEarthworkVolumes(civilDoc, database, transaction, baseSurface!, designSurface!);
-        AddCostLine(lineItems, payItems, matched, "203.01", "Unclassified Excavation (Cut)", "CY", Math.Round(cutCy, 1), ref subtotal);
-        AddCostLine(lineItems, payItems, matched, "203.02", "Embankment (Fill)", "CY", Math.Round(fillCy, 1), ref subtotal);
+        var (cut, fill, unit) = GetEarthworkVolumes(civilDoc, database, transaction, baseSurface!, designSurface!);
+        AddCostLine(lineItems, payItems, matched, "203.01", "Unclassified Excavation (Cut)", unit, Math.Round(cut, 1), ref subtotal);
+        AddCostLine(lineItems, payItems, matched, "203.02", "Embankment (Fill)", unit, Math.Round(fill, 1), ref subtotal);
       }
 
       // Corridor materials
@@ -234,7 +234,7 @@ public static class CostEstimationCommands
     });
   }
 
-  private static (double CutCy, double FillCy) GetEarthworkVolumes(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Database database, Transaction transaction, string baseSurface, string designSurface)
+  private static (double Cut, double Fill, string Unit) GetEarthworkVolumes(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Database database, Transaction transaction, string baseSurface, string designSurface)
   {
     var baseSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurface, OpenMode.ForRead);
     var desSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurface, OpenMode.ForRead);
@@ -243,9 +243,12 @@ public static class CostEstimationCommands
     var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurf.ObjectId, desSurf.ObjectId);
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
     var properties = volumeSurface.GetVolumeProperties();
-    var cubicUnitsToCubicYards = database.Insunits == UnitsValue.Meters
-      ? 1.3079506193
-      : database.Insunits == UnitsValue.Feet || database.Insunits.ToString().Contains("Survey", StringComparison.OrdinalIgnoreCase)
+    if (database.Insunits == UnitsValue.Meters)
+    {
+      return (properties.UnadjustedCutVolume, properties.UnadjustedFillVolume, "M3");
+    }
+
+    var cubicUnitsToCubicYards = database.Insunits == UnitsValue.Feet || database.Insunits.ToString().Contains("Survey", StringComparison.OrdinalIgnoreCase)
         ? 1.0 / 27.0
         : throw new JsonRpcDispatchException(
           "CIVIL3D.API_ERROR",
@@ -253,7 +256,8 @@ public static class CostEstimationCommands
 
     return (
       properties.UnadjustedCutVolume * cubicUnitsToCubicYards,
-      properties.UnadjustedFillVolume * cubicUnitsToCubicYards);
+      properties.UnadjustedFillVolume * cubicUnitsToCubicYards,
+      "CY");
   }
 
   private static JsonRpcDispatchException CorridorMaterialCapabilityError(string corridorName)

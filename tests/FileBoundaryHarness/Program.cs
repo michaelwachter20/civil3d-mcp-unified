@@ -314,6 +314,24 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
+  // AASHTO's published stopping and passing distances, which FDOT's manual repeats (SightMath).
+  (double Mph, double Stopping, double Passing)[] aashto =
+    [(25, 155, 450), (30, 200, 500), (35, 250, 550), (40, 305, 600), (45, 360, 700), (50, 425, 800), (55, 495, 900), (60, 570, 1000), (65, 645, 1100), (70, 730, 1200)];
+  foreach (var (speed, stopping, passing) in aashto)
+  {
+    Assert(SightMath.StoppingFeet(speed) == stopping, $"Stopping at {speed} mph is {stopping} ft: {SightMath.StoppingFeet(speed)}");
+    Assert(SightMath.PassingDistanceFeet(speed) == passing, $"Passing at {speed} mph is {passing} ft.");
+  }
+  (double Kmh, double Metres)[] aashtoMetric = [(50, 65), (60, 85), (80, 130), (100, 185), (120, 250)];
+  foreach (var (kmh, metres) in aashtoMetric)
+  {
+    Assert(SightMath.StoppingMetres(kmh) == metres, $"Stopping at {kmh} km/h is {metres} m: {SightMath.StoppingMetres(kmh)}");
+  }
+  Assert(Math.Abs(SightMath.StoppingFeet(40, -3) - 315) < 1 && Math.Abs(SightMath.StoppingFeet(40, 3) - 289) < 1,
+    $"Downhill takes longer than uphill: {SightMath.StoppingFeet(40, -3)}, {SightMath.StoppingFeet(40, 3)}");
+  Assert(SightMath.PassingDistanceFeet(10) == 400 && SightMath.PassingDistanceFeet(90) == 1400 && SightMath.PassingDistanceFeet(42.5) == 650,
+    "Passing distance interpolates, and holds at the ends of the table.");
+
   // Stations every interval (StationMath): the end kept despite rounding, names with a dot on any PC.
   var tenths = StationMath.IntervalStations(0, 1, 0.1);
   Assert(tenths.Count == 11 && tenths[^1] == 1, $"0 to 1 every 0.1 is 11 stations ending at 1: {tenths.Count}");

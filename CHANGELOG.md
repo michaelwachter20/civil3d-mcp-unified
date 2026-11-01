@@ -11,6 +11,12 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
   scale and corridor region add, region delete and targets didn't work.
 
+- **Answers checked by hand:** tools were run on objects solved on paper, in feet and in metres. Stopping sight distance
+  used an old friction formula (842 ft at 70 mph; AASHTO's is 730), and passing was six times stopping (5,054 ft; AASHTO's
+  is 1,200): both now match the published tables. Every catchment tool found nothing, because it called a method that
+  doesn't exist. Metric cost estimates converted to cubic yards, so a price per cubic metre came out 31% high.
+  `calculate` follows the drawing's units when given none. `drawing new` accepts Civil 3D's own template folder.
+
 - **A sweep of every tool (about 500 calls on a live drawing):** `watershed_add` now runs Civil 3D's analysis, through
   COM, and lists the regions. `sheet_set_create` makes a real `.dst` with a sheet for each layout,
   `sheet_add` adds one, `sheet_set_get_info` reads a set back by path, and `sheet_set_export` publishes it to one PDF in

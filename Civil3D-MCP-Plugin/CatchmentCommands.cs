@@ -395,7 +395,7 @@ public static class CatchmentCommands
 
     var ids = new List<ObjectId>();
 
-    if (Civil3DCompatibility.TryInvokeMethod(groupObj, "GetCatchmentIds", out var result))
+    if (Civil3DCompatibility.TryInvokeMethod(groupObj, "GetAllCatchmentIds", out var result))
     {
       foreach (var id in CivilObjectUtils.ToObjectIds(result))
       {

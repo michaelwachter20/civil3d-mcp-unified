@@ -234,7 +234,7 @@ public static class AlignmentCommands
         ["handle"] = CivilObjectUtils.GetHandle(alignment),
         ["created"] = true,
         ["note"] = pointsNode.Count > 2
-          ? "Curves were added between the tangents, so the alignment passes near the interior points, not through them."
+          ? "Curves were added between the tangents, at the radius in the drawing's alignment settings, so the alignment passes near the interior points, not through them."
           : null,
       };
     });

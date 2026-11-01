@@ -5,36 +5,21 @@ using Autodesk.AutoCAD.DatabaseServices;
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// AASHTO sight distance calculation commands.
-/// Implements stopping (SSD), passing (PSD), and decision (DSD) sight distance
-/// per AASHTO Green Book formulas. Can optionally check against alignment K-values.
+/// Sight distance commands: AASHTO stopping (SSD), passing (PSD) and decision (DSD) distances for a design speed
+/// (SightMath), and a profile's vertical curves against the minimum K. A speed with no units follows the drawing: mph
+/// in a foot drawing, km/h in a metre one.
 /// </summary>
 public static class SightDistanceCommands
 {
-  // ─── AASHTO constants ────────────────────────────────────────────────────────
-
-  // AASHTO Table 3-1: friction coefficients by design speed (km/h)
-  private static readonly (double SpeedKmh, double f)[] AashtoFriction =
-  [
-    (30, 0.40), (40, 0.38), (50, 0.35), (60, 0.33),
-    (70, 0.31), (80, 0.30), (90, 0.30), (100, 0.29),
-    (110, 0.28), (120, 0.28), (130, 0.27),
-  ];
-
-  // AASHTO minimum K-values for crest curves by design speed (km/h)
-  private static readonly (double SpeedKmh, double Kcrest, double Ksag)[] AashtoKValues =
-  [
-    (30, 1, 3), (40, 2, 6), (50, 4, 9), (60, 7, 12),
-    (70, 12, 17), (80, 19, 23), (90, 30, 30), (100, 43, 38),
-    (110, 60, 45), (120, 79, 55), (130, 104, 63),
-  ];
+  private const double KmhPerMph = 1.60934;
+  private const double FeetPerMetre = 3.28084;
 
   // ─── calculateSightDistance ──────────────────────────────────────────────────
 
   public static Task<object?> CalculateSightDistanceAsync(JsonObject? parameters)
   {
     var designSpeed = PluginRuntime.GetRequiredDouble(parameters, "designSpeed");
-    var speedUnits = PluginRuntime.GetOptionalString(parameters, "speedUnits") ?? "kmh";
+    var speedUnits = PluginRuntime.GetOptionalString(parameters, "speedUnits");
     var sightType = PluginRuntime.GetOptionalString(parameters, "sightDistanceType") ?? "stopping";
     var grade = PluginRuntime.GetOptionalDouble(parameters, "grade") ?? 0.0;
     var prt = PluginRuntime.GetOptionalDouble(parameters, "perceptionReactionTime") ?? 2.5;
@@ -43,65 +28,62 @@ public static class SightDistanceCommands
     var profileName = PluginRuntime.GetOptionalString(parameters, "profileName");
     var checkStation = PluginRuntime.GetOptionalDouble(parameters, "checkStation");
 
-    // Normalise to km/h
-    var speedKmh = string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase)
-      ? designSpeed * 1.60934
-      : designSpeed;
-
-    var friction = userFriction ?? InterpolateFriction(speedKmh);
-    var gradeDecimal = grade / 100.0;
-
-    // ── SSD (AASHTO Green Book Equation 3-1) ────────────────────────────────
-    // SSD = 0.278 * V * t + V² / (254 * (f ± g))    [result in metres]
-    var ssdMetres = 0.278 * speedKmh * prt + (speedKmh * speedKmh) / (254.0 * (friction + gradeDecimal));
-    var ssdFeet = ssdMetres * 3.28084;
-
-    // Min K-value for crest curve (AASHTO):  K = L / A,  SSD ≈ √(SSD² / 658) for H1=1.08m, H2=0.60m
-    // Stopping sight distance K in the units asked in: feet at mph, metres at km/h, as the Green Book's tables give them.
-    var mph = string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
-    var (ksag, kcrest) = ProfileEditCommands.MinimumK(mph ? speedKmh / 1.60934 : speedKmh, metric: !mph);
-
-    double requiredSightDistance;
-    string sightTypeLabel;
-    switch (sightType.ToLowerInvariant())
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      case "passing":
-      case "psd":
-        // PSD ≈ 6 * SSD (rough rule of thumb; AASHTO Table 3-4)
-        requiredSightDistance = ssdMetres * 6.0;
-        sightTypeLabel = "Passing Sight Distance (PSD)";
-        break;
-      case "decision":
-      case "dsd":
-        // DSD ≈ 3.5 * SSD for complex situations (AASHTO Table 3-3)
-        requiredSightDistance = ssdMetres * 3.5;
-        sightTypeLabel = "Decision Sight Distance (DSD)";
-        break;
-      default:
-        requiredSightDistance = ssdMetres;
-        sightTypeLabel = "Stopping Sight Distance (SSD)";
-        break;
-    }
+      var metricDrawing = database.Insunits == UnitsValue.Meters;
+      var mph = SpeedIsMph(speedUnits, metricDrawing);
+      var speedKmh = mph ? designSpeed * KmhPerMph : designSpeed;
+      var speedMph = mph ? designSpeed : designSpeed / KmhPerMph;
 
-    var result = new Dictionary<string, object?>
-    {
-      ["designSpeedKmh"] = Math.Round(speedKmh, 1),
-      ["designSpeedMph"] = Math.Round(speedKmh / 1.60934, 1),
-      ["sightDistanceType"] = sightTypeLabel,
-      ["grade"] = grade,
-      ["frictionCoefficient"] = Math.Round(friction, 3),
-      ["perceptionReactionTime"] = prt,
-      ["requiredSightDistanceMetres"] = Math.Round(requiredSightDistance, 1),
-      ["requiredSightDistanceFeet"] = Math.Round(requiredSightDistance * 3.28084, 1),
-      ["minimumKValueCrest"] = kcrest,
-      ["minimumKValueSag"] = ksag,
-      ["standard"] = "AASHTO Green Book",
-    };
+      var stoppingFeet = mph
+        ? SightMath.StoppingFeet(designSpeed, grade, prt, userFriction)
+        : SightMath.StoppingMetres(designSpeed, grade, prt, userFriction) * FeetPerMetre;
 
-    // If alignment + profile provided, check at the requested station
-    if (!string.IsNullOrWhiteSpace(alignmentName) && !string.IsNullOrWhiteSpace(profileName) && checkStation.HasValue)
-    {
-      return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+      // K in the units asked in: feet at mph, metres at km/h, as the Green Book's tables give them.
+      var (ksag, kcrest) = ProfileEditCommands.MinimumK(designSpeed, metric: !mph);
+
+      double requiredFeet;
+      string sightTypeLabel;
+      string source;
+      switch (sightType.ToLowerInvariant())
+      {
+        case "passing":
+        case "psd":
+          requiredFeet = SightMath.PassingDistanceFeet(speedMph);
+          sightTypeLabel = "Passing Sight Distance (PSD)";
+          source = "AASHTO Green Book passing sight distance table";
+          break;
+        case "decision":
+        case "dsd":
+          // A stand-in: AASHTO's table depends on the avoidance maneuver, which nothing here asks for.
+          requiredFeet = stoppingFeet * 3.5;
+          sightTypeLabel = "Decision Sight Distance (DSD)";
+          source = "Rough rule: 3.5 x stopping sight distance, not AASHTO's table";
+          break;
+        default:
+          requiredFeet = stoppingFeet;
+          sightTypeLabel = "Stopping Sight Distance (SSD)";
+          source = "AASHTO Green Book stopping sight distance";
+          break;
+      }
+
+      var result = new Dictionary<string, object?>
+      {
+        ["designSpeedKmh"] = Math.Round(speedKmh, 1),
+        ["designSpeedMph"] = Math.Round(speedMph, 1),
+        ["sightDistanceType"] = sightTypeLabel,
+        ["grade"] = grade,
+        ["frictionCoefficient"] = userFriction ?? SightMath.DesignFriction,
+        ["perceptionReactionTime"] = prt,
+        ["requiredSightDistanceMetres"] = Math.Round(requiredFeet / FeetPerMetre, 1),
+        ["requiredSightDistanceFeet"] = Math.Round(requiredFeet, 1),
+        ["minimumKValueCrest"] = kcrest,
+        ["minimumKValueSag"] = ksag,
+        ["standard"] = source,
+      };
+
+      // If alignment + profile provided, check at the requested station
+      if (!string.IsNullOrWhiteSpace(alignmentName) && !string.IsNullOrWhiteSpace(profileName) && checkStation.HasValue)
       {
         try
         {
@@ -109,8 +91,7 @@ public static class SightDistanceCommands
           var profileId = FindProfileId(alignment, transaction, profileName!);
           var curve = profileId != ObjectId.Null ? CurveAtStation(transaction, profileId, checkStation.Value) : null;
           // A profile's K is in the drawing's units, whichever units the speed came in.
-          var metricDrawing = database.Insunits == UnitsValue.Meters;
-          var (sagLimit, crestLimit) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
+          var (sagLimit, crestLimit) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedMph, metricDrawing);
 
           result["stationChecked"] = checkStation;
           result["kValueAtStation"] = curve is { } found ? Math.Round(found.K, 1) : (object?)"N/A";
@@ -121,11 +102,10 @@ public static class SightDistanceCommands
         {
           result["stationCheckError"] = "Could not access profile K-values at requested station.";
         }
-        return (object?)result;
-      });
-    }
+      }
 
-    return Task.FromResult<object?>(result);
+      return (object?)result;
+    });
   }
 
   // ─── checkStoppingDistance ───────────────────────────────────────────────────
@@ -144,12 +124,9 @@ public static class SightDistanceCommands
     {
       // K on a profile is in the drawing's units, so the limit is too. A speed with no units follows the drawing.
       var metricDrawing = database.Insunits == UnitsValue.Meters;
-      var mph = string.IsNullOrWhiteSpace(speedUnits)
-        ? !metricDrawing
-        : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
-      var speedKmh = mph ? designSpeed * 1.60934 : designSpeed;
-      var friction = InterpolateFriction(speedKmh);
-      var ssdMetres = 0.278 * speedKmh * 2.5 + (speedKmh * speedKmh) / (254.0 * friction);
+      var mph = SpeedIsMph(speedUnits, metricDrawing);
+      var speedKmh = mph ? designSpeed * KmhPerMph : designSpeed;
+      var ssdMetres = mph ? SightMath.StoppingFeet(designSpeed) / FeetPerMetre : SightMath.StoppingMetres(designSpeed);
 
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var alignmentLength = CivilObjectUtils.GetPropertyValue<double?>(alignment, "Length") ?? 0.0;
@@ -157,7 +134,7 @@ public static class SightDistanceCommands
       var endSta = stationEnd ?? (startSta + alignmentLength);
 
       var profileId = FindProfileId(alignment, transaction, profileName);
-      var (ksagMin, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
+      var (ksagMin, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / KmhPerMph, metricDrawing);
       var violations = new List<Dictionary<string, object?>>();
       var checkedCount = 0;
 
@@ -200,39 +177,11 @@ public static class SightDistanceCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
-  private static double InterpolateFriction(double speedKmh)
-  {
-    if (speedKmh <= AashtoFriction[0].SpeedKmh) return AashtoFriction[0].f;
-    if (speedKmh >= AashtoFriction[^1].SpeedKmh) return AashtoFriction[^1].f;
-    for (int i = 0; i < AashtoFriction.Length - 1; i++)
-    {
-      var (s1, f1) = AashtoFriction[i];
-      var (s2, f2) = AashtoFriction[i + 1];
-      if (speedKmh >= s1 && speedKmh <= s2)
-      {
-        double t = (speedKmh - s1) / (s2 - s1);
-        return f1 + t * (f2 - f1);
-      }
-    }
-    return 0.35;
-  }
-
-  private static (double Kcrest, double Ksag) InterpolateKValues(double speedKmh)
-  {
-    if (speedKmh <= AashtoKValues[0].SpeedKmh) return (AashtoKValues[0].Kcrest, AashtoKValues[0].Ksag);
-    if (speedKmh >= AashtoKValues[^1].SpeedKmh) return (AashtoKValues[^1].Kcrest, AashtoKValues[^1].Ksag);
-    for (int i = 0; i < AashtoKValues.Length - 1; i++)
-    {
-      var (s1, kc1, ks1) = AashtoKValues[i];
-      var (s2, kc2, ks2) = AashtoKValues[i + 1];
-      if (speedKmh >= s1 && speedKmh <= s2)
-      {
-        double t = (speedKmh - s1) / (s2 - s1);
-        return (kc1 + t * (kc2 - kc1), ks1 + t * (ks2 - ks1));
-      }
-    }
-    return (19, 23);
-  }
+  /// <summary>The caller's units when given; otherwise the drawing's.</summary>
+  private static bool SpeedIsMph(string? speedUnits, bool metricDrawing) =>
+    string.IsNullOrWhiteSpace(speedUnits)
+      ? !metricDrawing
+      : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
 
   private static ObjectId FindProfileId(DBObject alignment, Transaction transaction, string profileName)
   {
