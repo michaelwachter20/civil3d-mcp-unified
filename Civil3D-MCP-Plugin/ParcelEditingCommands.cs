@@ -293,19 +293,9 @@ public static class ParcelEditingCommands
 
         if (includeCoordinates)
         {
-          var vertices = new List<Dictionary<string, object?>>();
-          var boundary = CivilObjectUtils.InvokeMethod(parcel, "GetBoundary")
-            ?? CivilObjectUtils.InvokeMethod(parcel, "GetVertices");
-          if (boundary is System.Collections.IEnumerable pts)
-          {
-            foreach (var pt in pts)
-            {
-              double x = CivilObjectUtils.GetDoubleProperty(pt, "X") ?? 0;
-              double y = CivilObjectUtils.GetDoubleProperty(pt, "Y") ?? 0;
-              vertices.Add(new Dictionary<string, object?> { ["x"] = x, ["y"] = y });
-            }
-          }
-          row["vertices"] = vertices;
+          row["vertices"] = ParcelVertices(parcel)
+            .Select(point => new Dictionary<string, object?> { ["x"] = point.X, ["y"] = point.Y })
+            .ToList();
         }
 
         rows.Add(row);
@@ -350,6 +340,22 @@ public static class ParcelEditingCommands
       if (string.Equals(parcel.Name, parcelName, StringComparison.OrdinalIgnoreCase)) return parcel;
     }
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Parcel '{parcelName}' was not found in site '{site.Name}'.");
+  }
+
+  /// <summary>A parcel's corners: its boundary is a curve, with one parameter per segment.</summary>
+  private static List<Point2d> ParcelVertices(object parcel)
+  {
+    var points = new List<Point2d>();
+    if (CivilObjectUtils.GetPropertyValue<object>(parcel, "BaseCurve") is Curve boundary)
+    {
+      for (var parameter = boundary.StartParam; parameter <= boundary.EndParam + 1.0e-9; parameter += 1)
+      {
+        var point = boundary.GetPointAtParameter(parameter);
+        points.Add(new Point2d(point.X, point.Y));
+      }
+    }
+
+    return points;
   }
 
   private static ObjectId CreateParcelFromEntity(Site site, ObjectId entityId, string? name, Transaction transaction)
@@ -482,19 +488,7 @@ public static class ParcelEditingCommands
     if (perimeter.HasValue)
       return perimeter.Value;
 
-    var boundary = CivilObjectUtils.InvokeMethod(parcel, "GetBoundary")
-      ?? CivilObjectUtils.InvokeMethod(parcel, "GetVertices");
-    if (boundary is not System.Collections.IEnumerable vertices)
-      return null;
-
-    var points = new List<Point2d>();
-    foreach (var vertex in vertices)
-    {
-      var x = CivilObjectUtils.GetDoubleProperty(vertex, "X");
-      var y = CivilObjectUtils.GetDoubleProperty(vertex, "Y");
-      if (x.HasValue && y.HasValue)
-        points.Add(new Point2d(x.Value, y.Value));
-    }
+    var points = ParcelVertices(parcel);
 
     if (points.Count < 2)
       return null;

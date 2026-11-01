@@ -174,8 +174,14 @@ public static class PointCommands
   /// Imports a point file with Civil 3D's own importer (CogoPoints.ImportPoints, what Import Points does by hand):
   /// <c>path</c> (inside the import roots, FileBoundary), <c>format</c> by its name in the drawing's point file
   /// formats (listPointFileFormats: "PNEZD (comma delimited)"...), and optionally <c>pointGroup</c> to put the points
-  /// in (created when missing). Civil 3D's settings decide point numbers and duplicates, as in its dialog. No
-  /// question is asked: this is the way points from a file are meant to come in (PointCreationGate).
+  /// in (created when missing). No question is asked: this is the way points from a file are meant to come in
+  /// (PointCreationGate).
+  /// <para>
+  /// A number already in use follows <c>ifNumberExists</c> (renumber, merge or overwrite). Without it the drawing's
+  /// setting decides, except its default, Notify: that opens Civil 3D's Duplicate Point Number window, which blocks
+  /// every request until someone answers it, so such a point takes the next free number and existing points stay as
+  /// they are. A line Civil 3D can't read refuses the whole file, and nothing comes in.
+  /// </para>
   /// </summary>
   public static Task<object?> ImportPointFileAsync(JsonObject? parameters)
   {
@@ -183,6 +189,7 @@ public static class PointCommands
       ".txt", ".csv", ".pnt", ".xyz", ".nez", ".prn", ".asc", ".dat");
     var formatName = PluginRuntime.GetRequiredString(parameters, "format");
     var groupName = PluginRuntime.GetOptionalString(parameters, "pointGroup");
+    var ifNumberExists = PluginRuntime.GetOptionalString(parameters, "ifNumberExists");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -199,15 +206,44 @@ public static class PointCommands
       }
 
       var before = civilDoc.CogoPoints.Count;
+      var duplicateSetting = civilDoc.Settings.GetSettings<Autodesk.Civil.Settings.SettingsCmdCreatePoints>().PointIdentity.ResolveDuplicatePointNumbersOption;
+      var drawingSetting = duplicateSetting.Value;
+      var duplicates = ifNumberExists?.ToLowerInvariant() switch
+      {
+        "renumber" => Autodesk.Civil.PointNumbersExistType.Renumber,
+        "merge" => Autodesk.Civil.PointNumbersExistType.Merge,
+        "overwrite" => Autodesk.Civil.PointNumbersExistType.Overwrite,
+        null => drawingSetting == Autodesk.Civil.PointNumbersExistType.Notify ? Autodesk.Civil.PointNumbersExistType.Renumber : drawingSetting,
+        _ => throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"ifNumberExists must be renumber, merge or overwrite, not '{ifNumberExists}'."),
+      };
+
+      var copy = AnsiCopy(path);
       uint imported;
-      if (!string.IsNullOrWhiteSpace(groupName))
+      try
       {
-        var groupId = civilDoc.PointGroups.Contains(groupName!) ? civilDoc.PointGroups[groupName!] : civilDoc.PointGroups.Add(groupName!);
-        imported = CogoPointCollection.ImportPoints(path, format, groupId);  // static: into the active drawing
+        duplicateSetting.Value = duplicates;
+        if (!string.IsNullOrWhiteSpace(groupName))
+        {
+          var groupId = civilDoc.PointGroups.Contains(groupName!) ? civilDoc.PointGroups[groupName!] : civilDoc.PointGroups.Add(groupName!);
+          imported = CogoPointCollection.ImportPoints(copy?.Path ?? path, format, groupId);  // static: into the active drawing
+        }
+        else
+        {
+          imported = CogoPointCollection.ImportPoints(copy?.Path ?? path, format);
+        }
       }
-      else
+      catch (ArgumentException exception) when (exception.ParamName == "pointFileFullName")
       {
-        imported = CogoPointCollection.ImportPoints(path, format);
+        var reason = exception.Message.Replace($" (Parameter '{exception.ParamName}')", string.Empty).Replace(copy?.Path ?? path, string.Empty).Trim();
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Civil 3D can't read {Path.GetFileName(path)} as {formatName}, so nothing was imported. {reason}");
+      }
+      finally
+      {
+        duplicateSetting.Value = drawingSetting;
+        if (copy != null)
+        {
+          File.Delete(copy.Path);
+        }
       }
 
       return new Dictionary<string, object?>
@@ -218,9 +254,47 @@ public static class PointCommands
         ["pointsBefore"] = before,
         ["pointsAfter"] = civilDoc.CogoPoints.Count,
         ["pointGroup"] = groupName,
+        ["ifNumberExists"] = duplicates.ToString().ToLowerInvariant(),
+        ["note"] = copy?.Lost == true
+          ? "The file is UTF-8 and Civil 3D reads the Windows code page, so characters that code page doesn't have came in as '?'."
+          : null,
         ["importer"] = "Civil 3D (CogoPoints.ImportPoints)",
       };
     });
+  }
+
+  private sealed record PointFileCopy(string Path, bool Lost);
+
+  /// <summary>
+  /// Civil 3D's importer reads a point file in the Windows code page only: a UTF-8 file's "±" comes in as "Â±", and a
+  /// byte order mark fails the first line. Such a file is written to a temporary copy in the code page for Civil 3D to
+  /// import, still its own importer; null for a file that needs no copy. <c>Lost</c> says some characters had no
+  /// equivalent there.
+  /// </summary>
+  private static PointFileCopy? AnsiCopy(string path)
+  {
+    var bytes = File.ReadAllBytes(path);
+    if (bytes.All(value => value < 0x80))
+    {
+      return null;
+    }
+
+    string text;
+    try
+    {
+      text = new System.Text.UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF');
+    }
+    catch (System.Text.DecoderFallbackException)
+    {
+      return null;  // Not UTF-8: already in a code page, as the importer wants it.
+    }
+
+    System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+    var ansi = System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage);
+    var encoded = ansi.GetBytes(text);
+    var copy = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"civil3d-mcp-{Guid.NewGuid():N}{System.IO.Path.GetExtension(path)}");
+    File.WriteAllBytes(copy, encoded);
+    return new PointFileCopy(copy, ansi.GetString(encoded) != text);
   }
 
   /// <summary>The drawing's point file format names, for importPointFile's <c>format</c>.</summary>

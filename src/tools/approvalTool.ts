@@ -134,7 +134,8 @@ export function registerApprovalTool(server: McpServer) {
           safeForRetry: target.actionDefinition.safeForRetry,
           requiresActiveDrawing: target.actionDefinition.requiresActiveDrawing,
         },
-        args.parameters,
+        // Through the tool's own input shape, as the call itself will be: its defaults (a point's z) count in the hash.
+        z.object(target.exposure.inputShape).parse(args.parameters) as JsonObject,
         (args.ttlSeconds ?? 300) * 1000,
       );
 

@@ -24,6 +24,10 @@ public static class LabelCommands
   public static Task<object?> ListLabelStylesAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
+    if (!new[] { "alignment", "profile", "surface", "pipe", "pipe_network", "structure" }.Contains(objectType, StringComparer.OrdinalIgnoreCase))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"No label styles for '{objectType}'. Use alignment, profile, surface, pipe or structure.");
+    }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -116,8 +120,10 @@ public static class LabelCommands
       {
         var station = PluginRuntime.GetOptionalDouble(parameters, "station")
           ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Alignment station labels require 'station'.");
-        var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
-        var labelId = CreateAlignmentStationLabel(target, styleId, station);
+        var alignment = (Autodesk.Civil.DatabaseServices.Alignment)target;
+        AlignmentCommands.RequireStation(alignment, station);
+        var styleId = FindNamedStyle(((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.AlignmentLabelStyles.StationOffsetLabelStyles, transaction, labelStyle);
+        var labelId = CreateAlignmentStationLabel(alignment, styleId, station, ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.MarkerStyles.First());
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -170,8 +176,8 @@ public static class LabelCommands
           pointNode["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.x."),
           pointNode["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.y.")
         );
-        var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
-        var labelId = CreateSurfaceSpotLabel(target, styleId, point);
+        var styleId = FindNamedStyle(((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.SurfaceLabelStyles.SpotElevationLabelStyles, transaction, labelStyle);
+        var labelId = Autodesk.Civil.DatabaseServices.SurfaceElevationLabel.Create(target.ObjectId, point, styleId, ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.MarkerStyles.First());
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -191,7 +197,7 @@ public static class LabelCommands
       if (string.Equals(objectType, "pipe", StringComparison.OrdinalIgnoreCase))
       {
         var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
-        var labelId = CreatePipeLabel(target, styleId, labelType);
+        var labelId = Autodesk.Civil.DatabaseServices.PipeLabel.Create(target.ObjectId, 0.5, styleId);
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -206,7 +212,7 @@ public static class LabelCommands
       if (string.Equals(objectType, "structure", StringComparison.OrdinalIgnoreCase))
       {
         var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
-        var labelId = CreateStructureLabel(target, styleId, labelType);
+        var labelId = Autodesk.Civil.DatabaseServices.StructureLabel.Create(target.ObjectId, styleId, ((Autodesk.Civil.DatabaseServices.Structure)target).Position);
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -342,10 +348,10 @@ public static class LabelCommands
     {
       "alignment" => GetNamedMemberValue(labelSetStyles, "AlignmentLabelSetStyles") ?? GetNamedMemberValue(styles, "AlignmentLabelStyles"),
       "profile" => GetNamedMemberValue(labelSetStyles, "ProfileLabelSetStyles") ?? GetNamedMemberValue(styles, "ProfileLabelStyles"),
-      "surface" => GetNamedMemberValue(styles, "SurfaceLabelStyles"),
+      "surface" => ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.SurfaceLabelStyles.SpotElevationLabelStyles,
       "pipe_network" => GetNamedMemberValue(styles, "PipeNetworkLabelStyles") ?? GetNamedMemberValue(styles, "PipeLabelStyles"),
-      "pipe" => GetNamedMemberValue(styles, "PipeLabelStyles") ?? GetNamedMemberValue(styles, "PipeNetworkLabelStyles"),
-      "structure" => GetNamedMemberValue(styles, "StructureLabelStyles") ?? GetNamedMemberValue(styles, "PipeNetworkLabelStyles"),
+      "pipe" => ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.PipeLabelStyles.PlanProfileLabelStyles,
+      "structure" => ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.StructureLabelStyles.LabelStyles,
       _ => null,
     };
 
@@ -420,62 +426,39 @@ public static class LabelCommands
     );
   }
 
-  private static ObjectId CreatePipeLabel(DBObject pipe, ObjectId styleId, string labelType)
+  private static ObjectId CreateAlignmentStationLabel(Autodesk.Civil.DatabaseServices.Alignment alignment, ObjectId styleId, double station, ObjectId markerStyleId)
   {
-    var candidateTypes = string.Equals(labelType, "plan", StringComparison.OrdinalIgnoreCase)
-      ? new[]
-      {
-        "Autodesk.Civil.DatabaseServices.Labels.PipePlanLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.PipePlanLabel, AeccDbMgd",
-      }
-      : new[]
-      {
-        "Autodesk.Civil.DatabaseServices.Labels.PipeLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.PipeLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.Labels.PipePlanLabel, AeccDbMgd",
-      };
-
-    return TryCreateLabel(
-      candidateTypes,
-      "pipe",
-      parameters => BuildSingleObjectLabelArguments(parameters, pipe.ObjectId, styleId)
-    );
+    double x = 0;
+    double y = 0;
+    alignment.PointLocation(station, 0, ref x, ref y);
+    return Autodesk.Civil.DatabaseServices.StationOffsetLabel.Create(alignment.ObjectId, styleId, markerStyleId, new Point2d(x, y));
   }
 
-  private static ObjectId CreateStructureLabel(DBObject structure, ObjectId styleId, string labelType)
+  /// <summary>The style named <paramref name="name"/> in one kind of label style; with no name, the first.</summary>
+  private static ObjectId FindNamedStyle(IEnumerable<ObjectId> styles, Transaction transaction, string? name)
   {
-    var candidateTypes = string.Equals(labelType, "plan", StringComparison.OrdinalIgnoreCase)
-      ? new[]
+    var ids = styles.Where(id => id != ObjectId.Null).ToList();
+    if (string.IsNullOrWhiteSpace(name))
+    {
+      return ids.FirstOrDefault();
+    }
+
+    var names = new List<string>();
+    foreach (var id in ids)
+    {
+      var styleName = CivilObjectUtils.GetName(transaction.GetObject(id, OpenMode.ForRead));
+      if (string.Equals(styleName, name, StringComparison.OrdinalIgnoreCase))
       {
-        "Autodesk.Civil.DatabaseServices.Labels.StructurePlanLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.StructurePlanLabel, AeccDbMgd",
+        return id;
       }
-      : new[]
-      {
-        "Autodesk.Civil.DatabaseServices.Labels.StructureLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.StructureLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.Labels.StructurePlanLabel, AeccDbMgd",
-      };
 
-    return TryCreateLabel(
-      candidateTypes,
-      "structure",
-      parameters => BuildSingleObjectLabelArguments(parameters, structure.ObjectId, styleId)
-    );
-  }
-
-  private static ObjectId CreateAlignmentStationLabel(DBObject alignment, ObjectId styleId, double station)
-  {
-    return TryCreateLabel(
-      new[]
+      if (styleName != null)
       {
-        "Autodesk.Civil.DatabaseServices.Labels.AlignmentStationLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.AlignmentStationLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.Labels.AlignmentMajorStationLabel, AeccDbMgd",
-      },
-      "alignment station",
-      parameters => BuildAlignmentStationLabelArguments(parameters, alignment.ObjectId, styleId, station)
-    );
+        names.Add(styleName);
+      }
+    }
+
+    throw LookupUtils.NotFound("Label style", name, names);
   }
 
   /// <summary>

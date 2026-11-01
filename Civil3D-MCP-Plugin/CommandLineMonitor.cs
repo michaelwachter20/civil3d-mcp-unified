@@ -137,6 +137,12 @@ internal static class CommandLineMonitor
       note = "Civil 3D's main thread didn't respond within 3 s (a modal dialog may be open, or Civil 3D is busy). Showing command events only.";
     }
 
+    var dialog = WaitingDialog.Title();
+    if (dialog != null)
+    {
+      note = $"Civil 3D is waiting for someone to answer its '{dialog}' window.";
+    }
+
     return new Dictionary<string, object?>
     {
       ["lines"] = lines,

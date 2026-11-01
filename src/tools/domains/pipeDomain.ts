@@ -167,6 +167,7 @@ const PipeAddStructureArgsSchema = z.object({
   x: z.number(),
   y: z.number(),
   partName: z.string(),
+  name: z.string().optional(),
   rimElevation: z.number().optional(),
   sumpDepth: z.number().optional(),
 });
@@ -562,6 +563,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         x: args.x,
         y: args.y,
         partName: args.partName,
+        name: args.name,
         rimElevation: args.rimElevation,
         sumpDepth: args.sumpDepth,
       })),

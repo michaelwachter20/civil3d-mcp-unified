@@ -94,6 +94,7 @@ const canonicalPointInputShape = {
   allPoints: z.boolean().optional().describe("transform: true to move every point in the drawing"),
   path: z.string().optional().describe("import_file: the point file, inside the import roots"),
   fileFormat: z.string().optional().describe("import_file: a Civil 3D point file format name, e.g. \"PNEZD (comma delimited)\" (list_formats)"),
+  ifNumberExists: z.enum(["renumber", "merge", "overwrite"]).optional().describe("import_file: what to do with a point number already in use; left out, the drawing's setting, or renumber if the setting is to ask"),
   pointGroup: z.string().optional().describe("import_file: put the imported points in this point group (created when missing)"),
   targetSurface: z.string().optional(),
   keepPointNumbers: z.boolean().optional().describe("import: keep each point's number from the file when it is free in the drawing (default true)"),
@@ -154,6 +155,7 @@ const PointImportFileArgsSchema = z.object({
   path: z.string(),
   fileFormat: z.string(),
   pointGroup: z.string().optional(),
+  ifNumberExists: z.enum(["renumber", "merge", "overwrite"]).optional(),
 });
 
 const PointListFormatsArgsSchema = z.object({
@@ -317,6 +319,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("importPointFile", {
           path: args.path,
           format: args.fileFormat,
+          ifNumberExists: args.ifNumberExists,
           pointGroup: args.pointGroup,
         }),
       ),

@@ -12,6 +12,8 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class AlignmentCommands
 {
+  private const double StationTolerance = 0.001;
+
   public static Task<object?> ListAlignmentsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -49,10 +51,14 @@ public static class AlignmentCommands
             ["type"] = MapAlignmentEntityType(CivilObjectUtils.GetStringProperty(entity, "EntityType") ?? entity?.GetType().Name),
             ["startStation"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "StartStation") ?? 0,
             ["endStation"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "EndStation") ?? 0,
-            ["length"] = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0,
+            ["length"] = CivilObjectUtils.EntityLength(entity),
           });
         }
       }
+
+      // Civil 3D keeps entities in the order they were made, so a curve added between two tangents comes last. Read
+      // down the road instead; index stays the entity's own, the number delete_entity takes.
+      entities = entities.OrderBy(entity => (double)entity["startStation"]!).ToList();
 
       var dependentProfiles = alignment.GetProfileIds()
         .Cast<ObjectId>()
@@ -72,7 +78,7 @@ public static class AlignmentCommands
         ["entityCount"] = entities.Count,
         ["entities"] = entities,
         ["dependentProfiles"] = dependentProfiles,
-        ["dependentCorridors"] = new List<string>(),
+        ["dependentCorridors"] = CorridorsUsing(civilDoc, transaction, alignment.ObjectId),
         ["isReference"] = CivilObjectUtils.GetPropertyValue<bool?>(alignment, "IsReferenceObject") ?? false,
       };
     });
@@ -87,6 +93,7 @@ public static class AlignmentCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, name);
+      RequireStation(alignment, station);
       double x = 0;
       double y = 0;
       alignment.PointLocation(station, offset, ref x, ref y);
@@ -129,6 +136,7 @@ public static class AlignmentCommands
 
       foreach (var station in stations)
       {
+        RequireStation(alignment, station);
         double x = 0;
         double y = 0;
         alignment.PointLocation(station, offset, ref x, ref y);
@@ -155,9 +163,7 @@ public static class AlignmentCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, name);
-      double station = 0;
-      double offset = 0;
-      alignment.StationOffset(x, y, ref station, ref offset);
+      var (station, offset) = StationOffsetOf(alignment, x, y);
 
       return new Dictionary<string, object?>
       {
@@ -181,6 +187,11 @@ public static class AlignmentCommands
     if (pointsNode == null || pointsNode.Count < 2)
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "createAlignment requires at least two points.");
+    }
+
+    if (string.Equals(PluginRuntime.GetOptionalString(parameters, "type"), "offset", StringComparison.OrdinalIgnoreCase))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "An offset alignment is made from its parent: use action=offset_create.");
     }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -222,17 +233,34 @@ public static class AlignmentCommands
         ["name"] = alignment.Name,
         ["handle"] = CivilObjectUtils.GetHandle(alignment),
         ["created"] = true,
+        ["note"] = pointsNode.Count > 2
+          ? "Curves were added between the tangents, so the alignment passes near the interior points, not through them."
+          : null,
       };
     });
   }
 
-  /// <summary>Erases alignment <c>name</c>; approval-gated on the TypeScript side.</summary>
+  /// <summary>
+  /// Erases alignment <c>name</c> and the profiles on it (the answer names them); approval-gated on the TypeScript
+  /// side. A corridor built on it is refused with CIVIL3D.CONFLICT: Civil 3D would erase the alignment and leave the
+  /// corridor broken.
+  /// </summary>
   public static Task<object?> DeleteAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, name);
+      var corridors = CorridorsUsing(civilDoc, transaction, alignment.ObjectId);
+      if (corridors.Count > 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Alignment '{alignment.Name}' is used by corridor {string.Join(", ", corridors)}. Delete or change the corridor first.");
+      }
+
+      var profiles = alignment.GetProfileIds()
+        .Cast<ObjectId>()
+        .Select(id => CivilObjectUtils.GetRequiredObject<Profile>(transaction, id, OpenMode.ForRead).Name)
+        .ToList();
       var writeAlignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignment.ObjectId, OpenMode.ForWrite);
       writeAlignment.Erase();
 
@@ -240,8 +268,52 @@ public static class AlignmentCommands
       {
         ["name"] = name,
         ["deleted"] = true,
+        ["profilesDeleted"] = profiles,
       };
     });
+  }
+
+  /// <summary>The corridors with a baseline on this alignment.</summary>
+  private static List<string> CorridorsUsing(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, ObjectId alignmentId)
+  {
+    var names = new List<string>();
+    foreach (ObjectId corridorId in civilDoc.CorridorCollection)
+    {
+      var corridor = CivilObjectUtils.GetRequiredObject<Corridor>(transaction, corridorId, OpenMode.ForRead);
+      if (corridor.Baselines.Any(baseline => baseline.AlignmentId == alignmentId))
+      {
+        names.Add(corridor.Name);
+      }
+    }
+
+    return names;
+  }
+
+  /// <summary>Refuses a station off the alignment, which Civil 3D reports only as "PointNotOnEntity".</summary>
+  internal static void RequireStation(Alignment alignment, double station)
+  {
+    if (station < alignment.StartingStation - StationTolerance || station > alignment.EndingStation + StationTolerance)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Station {station} is off alignment '{alignment.Name}', which runs from {alignment.StartingStation} to {alignment.EndingStation}.");
+    }
+  }
+
+  /// <summary>The station and offset of a point, or a plain refusal for one beyond the alignment's ends.</summary>
+  internal static (double Station, double Offset) StationOffsetOf(Alignment alignment, double x, double y)
+  {
+    double station = 0;
+    double offset = 0;
+    try
+    {
+      alignment.StationOffset(x, y, ref station, ref offset);
+    }
+    catch (Exception exception) when (exception.GetType().Name == "PointNotOnEntityException")
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Point ({x}, {y}) isn't alongside alignment '{alignment.Name}': it is beyond the alignment's ends.");
+    }
+
+    return (station, offset);
   }
 
   private static Dictionary<string, object?> ToAlignmentSummary(Alignment alignment)

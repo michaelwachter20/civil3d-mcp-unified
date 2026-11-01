@@ -85,6 +85,7 @@ public static class CorridorEditingCommands
 
       var region = baseline.BaselineRegions[regionIndex];
       var appliedCount = 0;
+      var targetInfos = region.GetTargets();
 
       foreach (var targetNode in targetsNode)
       {
@@ -100,10 +101,23 @@ public static class CorridorEditingCommands
           throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
             $"Target object '{targetName}' of type '{targetType}' was not found.");
 
-        // Apply target mapping via reflection on the region's target collection
-        var applied = ApplyTargetMapping(region, paramName!, targetType!, targetId.Value);
-        if (applied) appliedCount++;
+        var matches = targetInfos.Where(info => string.Equals(info.DisplayName, paramName, StringComparison.OrdinalIgnoreCase)
+          || string.Equals(info.LogicalName, paramName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (matches.Count == 0)
+        {
+          var known = string.Join(", ", targetInfos.Select(info => info.DisplayName).Distinct());
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+            $"Region '{region.Name}' has no target named '{paramName}'. " + (known.Length > 0 ? $"Its targets: {known}." : "Its subassemblies take no targets."));
+        }
+
+        foreach (var info in matches)
+        {
+          info.TargetIds = new ObjectIdCollection { targetId.Value };
+          appliedCount++;
+        }
       }
+
+      region.SetTargets(targetInfos);
 
       // Rebuild corridor to apply changes
       corridor.Rebuild();
@@ -155,17 +169,10 @@ public static class CorridorEditingCommands
 
       // Add region via baseline API
       var newRegionIndex = baseline.BaselineRegions.Count;
-      var added = CivilObjectUtils.InvokeMethod(baseline, "AddRegion",
-        assemblyId, startStation, endStation, frequency, frequencyAtCurves, frequencyAtKneePoints);
-
-      if (added == null)
-      {
-        // Try alternative API
-        added = CivilObjectUtils.InvokeMethod(baseline, "AddRegion", assemblyId, startStation, endStation);
-        if (added == null)
-          throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
-            "Failed to add corridor region. AddRegion method not found or failed.");
-      }
+      var added = baseline.BaselineRegions.Add($"Region {newRegionIndex + 1}", assemblyId, startStation, endStation);
+      added.AppliedAssemblySetting.FrequencyAlongTangents = frequency;
+      added.AppliedAssemblySetting.FrequencyAlongCurves = frequencyAtCurves;
+      added.AppliedAssemblySetting.FrequencyAlongProfileCurves = frequencyAtKneePoints;
 
       // Rebuild corridor
       corridor.Rebuild();
@@ -208,19 +215,9 @@ public static class CorridorEditingCommands
       var startStation = region.StartStation;
       var endStation = region.EndStation;
 
-      // Delete via RemoveRegion or direct erase
-      var removed = CivilObjectUtils.InvokeMethod(baseline, "RemoveRegion", region);
-      if (removed == null)
-        removed = CivilObjectUtils.InvokeMethod(baseline, "DeleteRegion", regionIndex);
-      if (removed == null)
+      if (!baseline.BaselineRegions.Remove(region))
       {
-        // Last resort: erase the region DBObject
-        var regionId = CivilObjectUtils.GetPropertyValue<ObjectId>(region, "ObjectId");
-        if (regionId != ObjectId.Null)
-        {
-          var regionWrite = CivilObjectUtils.GetRequiredObject<AcDbObject>(transaction, regionId, OpenMode.ForWrite);
-          regionWrite.Erase(true);
-        }
+        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Civil 3D didn't remove region '{regionName}' from corridor '{corridorName}'.");
       }
 
       corridor.Rebuild();
@@ -254,34 +251,21 @@ public static class CorridorEditingCommands
     BaselineRegion region, Transaction transaction)
   {
     var mappings = new List<Dictionary<string, object?>>();
-    var targetInfo = CivilObjectUtils.GetPropertyValue<object>(region, "Targets")
-      ?? CivilObjectUtils.InvokeMethod(region, "GetTargets");
-
-    if (targetInfo is System.Collections.IEnumerable targets)
+    foreach (var info in region.GetTargets())
     {
-      foreach (var t in targets)
+      var targetNames = info.TargetIds.Cast<ObjectId>()
+        .Where(id => !id.IsNull)
+        .Select(id => CivilObjectUtils.GetName(transaction.GetObject(id, OpenMode.ForRead)))
+        .ToList();
+      mappings.Add(new Dictionary<string, object?>
       {
-        var paramName = CivilObjectUtils.GetStringProperty(t, "ParameterName")
-          ?? CivilObjectUtils.GetStringProperty(t, "Name");
-        var targetType = CivilObjectUtils.GetStringProperty(t, "TargetType")
-          ?? CivilObjectUtils.GetStringProperty(t, "Type");
-
-        var targetId = Civil3DCompatibility.GetPropertyValue<ObjectId?>(t, "TargetId")
-          ?? Civil3DCompatibility.GetPropertyValue<ObjectId?>(t, "ObjectId");
-        string? targetName = null;
-        if (targetId is ObjectId tid && !tid.IsNull)
-        {
-          var targetObj = transaction.GetObject(tid, OpenMode.ForRead);
-          targetName = CivilObjectUtils.GetName(targetObj);
-        }
-
-        mappings.Add(new Dictionary<string, object?>
-        {
-          ["parameterName"] = paramName,
-          ["targetType"] = targetType,
-          ["targetName"] = targetName,
-        });
-      }
+        ["parameterName"] = info.DisplayName,
+        ["logicalName"] = info.LogicalName,
+        ["subassemblyName"] = info.SubassemblyName,
+        ["targetType"] = info.TargetType.ToString(),
+        ["targetName"] = targetNames.FirstOrDefault(),
+        ["targetNames"] = targetNames,
+      });
     }
 
     return mappings;
@@ -322,25 +306,4 @@ public static class CorridorEditingCommands
     return null;
   }
 
-  private static bool ApplyTargetMapping(BaselineRegion region, string paramName, string targetType, ObjectId targetId)
-  {
-    // Try via SetTarget or AssignTarget methods
-    if (Civil3DCompatibility.TryInvokeMethod(region, "SetTarget", out _, paramName, targetId)) return true;
-    if (Civil3DCompatibility.TryInvokeMethod(region, "AssignTarget", out _, paramName, targetId)) return true;
-
-    // Try via Targets collection
-    var targets = CivilObjectUtils.GetPropertyValue<object>(region, "Targets");
-    if (targets != null)
-    {
-      foreach (var methodName in new[] { "SetTarget", "Add", "AssignTarget" })
-      {
-        if (Civil3DCompatibility.TryInvokeMethod(targets, methodName, out _, paramName, targetId))
-        {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
 }

@@ -50,6 +50,7 @@ public static class DrawingCommands
       ["currentOperationStartedAtUnixMs"] = status.CurrentOperationStartedAtUnixMs,
       ["currentRequestId"] = status.CurrentRequestId,
       ["activeCommands"] = CommandLineMonitor.ActiveCommandNames(),
+      ["waitingDialog"] = WaitingDialog.Title(),
       ["currentOperationDurationMs"] = status.CurrentOperationStartedAtUnixMs is long startedAt
         ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startedAt)
         : null,
@@ -175,6 +176,30 @@ public static class DrawingCommands
   /// reference files) or from AutoCAD's default template, and makes it the active drawing, so later requests act on
   /// it. Returns its name and (empty until saved) file path.
   /// </summary>
+  /// <summary>
+  /// The template a person's New would start from: QNEW's, then Civil 3D's own. An empty template name gives a drawing
+  /// with only Standard styles and no parts lists, where almost every style and pipe tool has nothing to work with.
+  /// </summary>
+  private static string? DefaultTemplate()
+  {
+    try
+    {
+      var files = Civil3DCompatibility.GetComProperty(App.Preferences, "Files");
+      var chosen = Civil3DCompatibility.GetComProperty(files, "QNewTemplateFile") as string;
+      if (!string.IsNullOrWhiteSpace(chosen) && File.Exists(chosen))
+      {
+        return chosen;
+      }
+    }
+    catch (Exception exception)
+    {
+      PluginLog.Warn("DrawingCommands", $"Couldn't read the QNEW template: {exception.Message}");
+    }
+
+    var civil = Path.Combine(Convert.ToString(App.GetSystemVariable("LOCALROOTPREFIX")) ?? string.Empty, "Template", "_Autodesk Civil 3D (Imperial) NCS.dwt");
+    return File.Exists(civil) ? civil : null;
+  }
+
   public static async Task<object?> NewDrawingAsync(JsonObject? parameters)
   {
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
@@ -185,16 +210,15 @@ public static class DrawingCommands
 
     return await CivilExecution.ExecuteInCommandContextAsync<object?>(() =>
     {
-      var createdDocument = string.IsNullOrWhiteSpace(templatePath)
-        ? App.DocumentManager.Add(string.Empty)
-        : App.DocumentManager.Add(templatePath);
+      var template = string.IsNullOrWhiteSpace(templatePath) ? DefaultTemplate() : templatePath;
+      var createdDocument = App.DocumentManager.Add(template ?? string.Empty);
 
       App.DocumentManager.MdiActiveDocument = createdDocument;
       return Task.FromResult<object?>(new Dictionary<string, object?>
       {
         ["drawingName"] = createdDocument.Name,
-        ["filePath"] = createdDocument.Database.Filename,
-        ["templatePath"] = templatePath,
+        ["filePath"] = string.Empty,
+        ["templatePath"] = template,
       });
     });
   }
@@ -393,7 +417,7 @@ public static class DrawingCommands
   public static Task<object?> RedoDrawingAsync(JsonObject? parameters)
   {
     var steps = PluginRuntime.GetOptionalInt(parameters, "steps") ?? 1;
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.OnActiveDocumentAsync<object?>(doc =>
     {
       doc.SendStringToExecute($"_.MREDO {steps} ", true, false, false);
       return new Dictionary<string, object?>
@@ -439,8 +463,9 @@ public static class DrawingCommands
 
     return new Dictionary<string, object?>
     {
-      ["fileName"] = Path.GetFileName(database.Filename),
-      ["filePath"] = database.Filename,
+      // A new drawing's Database.Filename is the template it came from, so a named drawing is asked about directly.
+      ["fileName"] = Path.GetFileName(doc.Name),
+      ["filePath"] = doc.IsNamedDrawing ? database.Filename : string.Empty,
       ["coordinateSystem"] = coordinateSystemCode,
       ["linearUnits"] = CivilObjectUtils.LinearUnits(database),
       ["angularUnits"] = angularUnits,

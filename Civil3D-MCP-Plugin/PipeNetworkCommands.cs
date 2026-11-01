@@ -281,21 +281,32 @@ public static class PipeNetworkCommands
     var x = PluginRuntime.GetRequiredDouble(parameters, "x");
     var y = PluginRuntime.GetRequiredDouble(parameters, "y");
     var partName = PluginRuntime.GetRequiredString(parameters, "partName");
-    var rimElevation = PluginRuntime.GetOptionalDouble(parameters, "rimElevation") ?? 0.0;
+    var requestedRim = PluginRuntime.GetOptionalDouble(parameters, "rimElevation");
     var sumpDepth = PluginRuntime.GetOptionalDouble(parameters, "sumpDepth") ?? 0.0;
+    var structureName = PluginRuntime.GetOptionalString(parameters, "name");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName, OpenMode.ForWrite);
+
+      // Rim 0 would be a structure hundreds of feet underground, so with no rim the surface decides, or the caller.
+      var rimElevation = requestedRim ?? RimFromSurface(network, transaction, x, y);
       var location = new Point3d(x, y, rimElevation);
       var createdStructureId = AddStructureToNetwork(network, transaction, location, partName, rimElevation, sumpDepth);
-      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdStructureId, OpenMode.ForRead);
+      var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdStructureId, OpenMode.ForWrite);
+      if (!string.IsNullOrWhiteSpace(structureName))
+      {
+        structure.Name = structureName;
+      }
 
       return new Dictionary<string, object?>
       {
         ["networkName"] = CivilObjectUtils.GetName(network) ?? networkName,
         ["structure"] = ToStructureData(structure, transaction),
         ["added"] = true,
+        ["note"] = sumpDepth <= 0
+          ? "The structure has no depth yet (sump at rim): give sumpDepth, or connect pipes and resize it."
+          : null,
       };
     });
   }
@@ -390,12 +401,13 @@ public static class PipeNetworkCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var partsLists = EnumeratePartsLists(civilDoc, transaction)
+        .OfType<PartsList>()
         .Where(partsList => string.IsNullOrWhiteSpace(partsListName) || string.Equals(CivilObjectUtils.GetName(partsList), partsListName, StringComparison.OrdinalIgnoreCase))
         .Select(partsList => new Dictionary<string, object?>
         {
           ["name"] = CivilObjectUtils.GetName(partsList),
         ["handle"] = partsList is AcDbObject dbObject ? CivilObjectUtils.GetHandle(dbObject) : null,
-          ["parts"] = EnumeratePartNames(partsList).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList(),
+          ["parts"] = EnumeratePartNames(partsList, transaction).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToList(),
         })
         .ToList();
 
@@ -518,6 +530,19 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Structure '{structureName}' was not found in network '{CivilObjectUtils.GetName(network)}'.");
   }
 
+  /// <summary>A network's reference surface or alignment; Civil 3D throws on these when none was ever set.</summary>
+  private static ObjectId Reference(Func<ObjectId> read)
+  {
+    try
+    {
+      return read();
+    }
+    catch (Exception exception) when (exception.GetType().Name == "CivilException")
+    {
+      return ObjectId.Null;
+    }
+  }
+
   private static Dictionary<string, object?> ToPipeNetworkSummary(Network network, Transaction transaction)
   {
     return new Dictionary<string, object?>
@@ -526,7 +551,7 @@ public static class PipeNetworkCommands
       ["handle"] = CivilObjectUtils.GetHandle(network),
       ["pipeCount"] = network.GetPipeIds().Count,
       ["structureCount"] = network.GetStructureIds().Count,
-      ["surface"] = ResolveObjectName(transaction, network.ReferenceSurfaceId),
+      ["surface"] = ResolveObjectName(transaction, Reference(() => network.ReferenceSurfaceId)),
     };
   }
 
@@ -544,9 +569,10 @@ public static class PipeNetworkCommands
       ["name"] = network.Name,
       ["handle"] = CivilObjectUtils.GetHandle(network),
       ["partsList"] = ResolveObjectName(transaction, network.PartsListId),
-      ["style"] = network.StyleName,
-      ["referenceSurface"] = ResolveObjectName(transaction, network.ReferenceSurfaceId),
-      ["referenceAlignment"] = ResolveObjectName(transaction, network.ReferenceAlignmentId),
+      // A network has no style of its own: Entity.StyleName throws on it.
+      ["style"] = string.Empty,
+      ["referenceSurface"] = ResolveObjectName(transaction, Reference(() => network.ReferenceSurfaceId)),
+      ["referenceAlignment"] = ResolveObjectName(transaction, Reference(() => network.ReferenceAlignmentId)),
       ["units"] = CivilObjectUtils.LinearUnits(network.Database),
       ["pipes"] = pipes,
       ["structures"] = structures,
@@ -600,6 +626,26 @@ public static class PipeNetworkCommands
   {
     var requestedName = name;
     return Network.Create((CivilDocument)civilDoc, ref requestedName);
+  }
+
+  private static double RimFromSurface(Network network, Transaction transaction, double x, double y)
+  {
+    if (Reference(() => network.ReferenceSurfaceId).IsNull)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Give rimElevation: network '{network.Name}' has no reference surface to take it from.");
+    }
+
+    var surface = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Surface>(transaction, Reference(() => network.ReferenceSurfaceId), OpenMode.ForRead);
+    try
+    {
+      return surface.FindElevationAtXY(x, y);
+    }
+    catch (Exception exception) when (exception.GetType().Name == "PointNotOnEntityException")
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Give rimElevation: ({x}, {y}) is off reference surface '{surface.Name}'.");
+    }
   }
 
   private static ObjectId AddStructureToNetwork(Network network, Transaction transaction, Point3d location, string partName, double rimElevation, double sumpDepth)
@@ -808,43 +854,21 @@ public static class PipeNetworkCommands
 
   private static IEnumerable<object> EnumeratePartsLists(object civilDoc, Transaction transaction)
   {
-    var styles = GetNamedMemberValue(civilDoc, "Styles");
-    if (styles == null)
+    foreach (ObjectId objectId in ((CivilDocument)civilDoc).Styles.PartsListSet)
     {
-      yield break;
-    }
-
-    foreach (var collectionName in new[] { "PartsListSet", "PartsLists", "PartsListCollection", "PartsListStyles" })
-    {
-      var collection = GetNamedMemberValue(styles, collectionName) ?? GetNamedMemberValue(civilDoc, collectionName);
-      foreach (var objectId in ToObjectIdsFlexible(collection))
-      {
-        yield return transaction.GetObject(objectId, OpenMode.ForRead)!;
-      }
+      yield return transaction.GetObject(objectId, OpenMode.ForRead)!;
     }
   }
 
-  private static IEnumerable<string> EnumeratePartNames(object partsList)
+  /// <summary>Every part size name in a parts list: the names partName takes.</summary>
+  private static IEnumerable<string> EnumeratePartNames(PartsList partsList, Transaction transaction)
   {
-    foreach (var collectionName in new[] { "PartFamilies", "PipeFamilies", "StructureFamilies", "PartFamilySet" })
+    for (var familyIndex = 0; familyIndex < partsList.PartFamilyCount; familyIndex++)
     {
-      var collection = GetNamedMemberValue(partsList, collectionName);
-      foreach (var item in EnumerateNamedObjects(collection))
+      var family = CivilObjectUtils.GetRequiredObject<PartFamily>(transaction, partsList[familyIndex], OpenMode.ForRead);
+      for (var sizeIndex = 0; sizeIndex < family.PartSizeCount; sizeIndex++)
       {
-        var familyName = CivilObjectUtils.GetName(item);
-        if (!string.IsNullOrWhiteSpace(familyName))
-        {
-          yield return familyName!;
-        }
-
-        foreach (var child in EnumerateNamedObjects(GetNamedMemberValue(item, "PartSizeFilter") ?? GetNamedMemberValue(item, "PartSizes") ?? GetNamedMemberValue(item, "SizeDataRecords")))
-        {
-          var childName = CivilObjectUtils.GetName(child) ?? CivilObjectUtils.GetStringProperty(child, "Description");
-          if (!string.IsNullOrWhiteSpace(childName))
-          {
-            yield return childName!;
-          }
-        }
+        yield return CivilObjectUtils.GetRequiredObject<PartSize>(transaction, family[sizeIndex], OpenMode.ForRead).Name;
       }
     }
   }

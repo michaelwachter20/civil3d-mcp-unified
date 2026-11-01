@@ -182,6 +182,13 @@ public static class PluginRuntime
     catch (Exception ex)
     {
       PluginLog.Error("Dispatch", $"<- {method} [{CurrentRequestId.Value ?? "no-id"}] unhandled failure durationMs={timer.ElapsedMilliseconds} category={ex.GetType().Name}", ex);
+      // Thrown inside Civil 3D, not the plugin: it refused this request, and its own words say why ("Duplicate alignment
+      // name"). That is no fault of the plugin's, and asking differently can work.
+      if (ThrownByCivil3D(ex))
+      {
+        return JsonRpcProtocol.SerializeError(id, JsonRpcProtocol.NumericErrorCode("CIVIL3D.API_ERROR"), "CIVIL3D.API_ERROR", $"Civil 3D refused this: {ex.Message}");
+      }
+
       // Loopback-only server: return the cause so callers can act on it; the stack trace is in the log.
       return JsonRpcProtocol.SerializeError(
         id,
@@ -195,6 +202,20 @@ public static class PluginRuntime
       CurrentRequestId.Value = previousRequestId;
       CurrentRequestCancellation.Value = previousCancellation;
     }
+  }
+
+  private static bool ThrownByCivil3D(Exception exception)
+  {
+    if (exception is NullReferenceException or OutOfMemoryException or InvalidCastException)
+    {
+      return false;
+    }
+
+    // By the stack's text: frames in Civil 3D's native code name no managed type.
+    var stack = exception.StackTrace ?? string.Empty;
+    var inCivil3D = stack.IndexOf("at Autodesk.", StringComparison.Ordinal);
+    var inPlugin = stack.IndexOf("at Civil3DMcpPlugin.", StringComparison.Ordinal);
+    return inCivil3D >= 0 && (inPlugin < 0 || inCivil3D < inPlugin);
   }
 
   internal static CancellationToken GetCurrentRequestCancellationToken() => CurrentRequestCancellation.Value;

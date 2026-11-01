@@ -26,6 +26,16 @@ public static class ProfileEditCommands
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForWrite);
 
+      // Civil 3D says only "Value does not fall within the expected range" for both of these.
+      AlignmentCommands.RequireStation(alignment, station);
+      foreach (ProfilePVI pvi in profile.PVIs)
+      {
+        if (Math.Abs(pvi.RawStation - station) < 0.001)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"Profile '{profile.Name}' already has a PVI at station {station}, elevation {pvi.Elevation}.");
+        }
+      }
+
       profile.PVIs.AddPVI(station, elevation);
 
       return new Dictionary<string, object?>
@@ -161,8 +171,7 @@ public static class ProfileEditCommands
       // K is length per percent of grade change, so the table follows the drawing's units: feet and mph, or metres
       // and km/h. Both are stopping sight distance values (AASHTO Green Book 2011, Exhibits 3-72 and 3-75).
       var metric = database.Insunits == UnitsValue.Meters;
-      var kTable = metric ? BuildAashtoKTableMetric() : BuildAashtoKTableImperial();
-      var (kSagMin, kCrestMin) = LookupKValues(kTable, designSpeed);
+      var (kSagMin, kCrestMin) = MinimumK(designSpeed, metric);
 
       var results = new List<Dictionary<string, object?>>();
       var index = 0;
@@ -237,36 +246,15 @@ public static class ProfileEditCommands
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var insertionPoint = new Point3d(insertX, insertY, 0);
 
-      var blockTable = CivilObjectUtils.GetRequiredObject<BlockTable>(
-        transaction, database.BlockTableId, OpenMode.ForRead);
-      var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(
-        transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
-
       var styleId = LookupUtils.GetProfileViewStyleId(
         civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
-      var bandSetId = LookupUtils.GetProfileViewBandSetId(
-        civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "bandSet"));
+      var bandSetName = PluginRuntime.GetOptionalString(parameters, "bandSet");
+      var bandSetId = string.IsNullOrWhiteSpace(bandSetName)
+        ? civilDoc.Styles.ProfileViewBandSetStyles.First()
+        : LookupUtils.GetProfileViewBandSetId(civilDoc, transaction, bandSetName);
 
-      // ProfileView.Create(profileViewName, alignmentId, styleId, insertionPoint)
-      // or ProfileView.Create(profileViewName, alignmentId, insertionPoint, styleId, bandSetId)
-      var profileViewType = typeof(ProfileView);
-      var pvId = (ObjectId?)(
-        CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint, styleId, bandSetId)
-        ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, styleId, insertionPoint)
-        ?? CivilObjectUtils.InvokeStaticMethod(profileViewType, "Create",
-          profileViewName, alignment.ObjectId, insertionPoint));
-
-      if (pvId == null || pvId.Value.IsNull)
-      {
-        throw new JsonRpcDispatchException(
-          "CIVIL3D.TRANSACTION_FAILED",
-          "ProfileView.Create returned null — this Civil 3D version may require a different API signature.");
-      }
-
-      var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(
-        transaction, pvId.Value, OpenMode.ForRead);
+      var pvId = ProfileView.Create(alignment.ObjectId, insertionPoint, profileViewName, bandSetId, styleId);
+      var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(transaction, pvId, OpenMode.ForRead);
 
       return new Dictionary<string, object?>
       {
@@ -367,6 +355,10 @@ public static class ProfileEditCommands
   private const double PviTolerance = 1.0;
 
   /// <summary>AASHTO minimum K for stopping sight distance, metric: (km/h, sag, crest), K in metres per percent.</summary>
+  /// <summary>The stopping sight distance K for a design speed: km/h and metres, or mph and feet.</summary>
+  internal static (double Sag, double Crest) MinimumK(double designSpeed, bool metric) =>
+    LookupKValues(metric ? BuildAashtoKTableMetric() : BuildAashtoKTableImperial(), designSpeed);
+
   private static List<(double speed, double kSag, double kCrest)> BuildAashtoKTableMetric() =>
   [
     (20, 3, 1),

@@ -62,7 +62,7 @@ public static class QcCommands
             if (entity == null) { index++; continue; }
 
             var entityType = CivilObjectUtils.GetStringProperty(entity, "EntityType") ?? entity.GetType().Name;
-            var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
+            var length = CivilObjectUtils.EntityLength(entity);
             var startStation = CivilObjectUtils.GetPropertyValue<double?>(entity, "StartStation") ?? 0;
             var endStation = CivilObjectUtils.GetPropertyValue<double?>(entity, "EndStation") ?? 0;
             var isTangent = entityType.IndexOf("tangent", StringComparison.OrdinalIgnoreCase) >= 0
@@ -239,10 +239,10 @@ public static class QcCommands
             var elevation = CivilObjectUtils.GetPropertyValue<double?>(pvi, "Elevation") ?? 0;
             var gradeIn = CivilObjectUtils.GetPropertyValue<double?>(pvi, "GradeIn") ?? 0;
             var gradeOut = CivilObjectUtils.GetPropertyValue<double?>(pvi, "GradeOut") ?? 0;
-            var kValue = CivilObjectUtils.GetPropertyValue<double?>(pvi, "KValue")
-              ?? CivilObjectUtils.GetPropertyValue<double?>(pvi, "K")
-              ?? 0;
-            var curveLength = CivilObjectUtils.GetPropertyValue<double?>(pvi, "CurveLength") ?? 0;
+            // K is the curve's length per percent of grade change; a PVI has no value for it, only its curve's length.
+            var curveLength = CivilObjectUtils.GetPropertyValue<double?>(CivilObjectUtils.GetPropertyValue<object>(pvi, "VerticalCurve"), "Length") ?? 0;
+            var gradeChangePercent = Math.Abs(gradeOut - gradeIn) * 100;
+            var kValue = gradeChangePercent > 0 ? curveLength / gradeChangePercent : 0;
 
             if (maxGrade.HasValue)
             {
@@ -488,7 +488,20 @@ public static class QcCommands
 
           if (minCover.HasValue)
           {
-            var coverDepth = GetAnyDouble(pipe, "CoverDepth", "MinimumCover", "CoverMin") ?? 0;
+            // Civil 3D works out cover against the pipe's reference surface, and gives 0 without one: not a real depth.
+            if (pipe is not Pipe coveredPipe || HasNoReferenceSurface(coveredPipe))
+            {
+              findings.Add(new Dictionary<string, object?>
+              {
+                ["severity"] = "info",
+                ["type"] = "pipe_cover_unknown",
+                ["pipeName"] = pipeName,
+                ["message"] = $"Pipe '{pipeName}' has no reference surface, so its cover can't be checked.",
+              });
+              continue;
+            }
+
+            var coverDepth = Math.Min(coveredPipe.CoverOfStartPoint, coveredPipe.CoverOfEndpoint);
             if (coverDepth < minCover.Value)
             {
               findings.Add(new Dictionary<string, object?>
@@ -837,7 +850,7 @@ public static class QcCommands
               foreach (var entity in enumerable)
               {
                 if (entity == null) { index++; continue; }
-                var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
+                var length = CivilObjectUtils.EntityLength(entity);
                 if (length <= 0)
                 {
                   sb.AppendLine($"  [WARN] {alignment.Name} entity[{index}]: zero/negative length");
@@ -1342,6 +1355,19 @@ public static class QcCommands
   }
 
   /// <summary>The first of several property names that has a value, for properties named differently across releases.</summary>
+  /// <summary>Whether a pipe has no reference surface: Civil 3D throws on the id when none was ever set.</summary>
+  private static bool HasNoReferenceSurface(Pipe pipe)
+  {
+    try
+    {
+      return pipe.RefSurfaceId.IsNull;
+    }
+    catch (Exception exception) when (exception.GetType().Name == "CivilException")
+    {
+      return true;
+    }
+  }
+
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)

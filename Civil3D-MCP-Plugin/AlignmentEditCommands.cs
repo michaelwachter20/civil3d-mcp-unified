@@ -154,9 +154,7 @@ public static class AlignmentEditCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
-      double station = 0;
-      double offset = 0;
-      alignment.StationOffset(x, y, ref station, ref offset);
+      var (station, offset) = AlignmentCommands.StationOffsetOf(alignment, x, y);
 
       return new Dictionary<string, object?>
       {
@@ -179,22 +177,17 @@ public static class AlignmentEditCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseAlignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
-      var layerId = LookupUtils.GetLayerId(database, transaction, PluginRuntime.GetOptionalString(parameters, "layer"));
+      var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
+      var layerId = LookupUtils.GetLayerId(database, transaction, layerName);
       var styleId = LookupUtils.GetAlignmentStyleId(civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
-      var labelSetId = LookupUtils.GetAlignmentLabelSetId(civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "labelSet"));
-      var siteId = LookupUtils.GetSiteId(civilDoc, transaction, null);
 
-      // Alignment.CreateOffsetAlignment(name, baseAlignmentId, offset, siteId, layerId, styleId, labelSetId)
-      var offsetAlignmentId = (ObjectId)(
-        CivilObjectUtils.InvokeStaticMethod(typeof(Alignment), "CreateOffsetAlignment",
-          offsetName, baseAlignment.ObjectId, offset, siteId, layerId, styleId, labelSetId)
-        ?? CivilObjectUtils.InvokeStaticMethod(typeof(Alignment), "CreateOffsetAlignment",
-          offsetName, baseAlignment.ObjectId, offset, layerId, styleId, labelSetId)
-        ?? throw new JsonRpcDispatchException(
-          "CIVIL3D.TRANSACTION_FAILED",
-          "Alignment.CreateOffsetAlignment is not available in this Civil 3D version."));
-
-      var offsetAlignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, offsetAlignmentId, OpenMode.ForRead);
+      // A negative offset is left of the parent, a positive one right.
+      var offsetAlignmentId = Alignment.CreateOffsetAlignment(offsetName, baseAlignment.ObjectId, offset, styleId);
+      var offsetAlignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, offsetAlignmentId, OpenMode.ForWrite);
+      if (!string.IsNullOrWhiteSpace(layerName))
+      {
+        offsetAlignment.LayerId = layerId;
+      }
 
       return new Dictionary<string, object?>
       {

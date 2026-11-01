@@ -40,4 +40,11 @@ public static class StationMath
   /// </summary>
   public static string SampleLineName(double station) =>
     "SL-" + station.ToString("0.##", CultureInfo.InvariantCulture);
+
+  /// <summary>
+  /// A sample line's name inside its group ("Elm SLG SL-1250"): Civil 3D wants names unique beyond one group, so a second
+  /// group on an alignment always failed, and three decimals keep stations 100.001 and 100.004 apart.
+  /// </summary>
+  public static string SampleLineName(string group, double station) =>
+    group + " SL-" + station.ToString("0.###", CultureInfo.InvariantCulture);
 }

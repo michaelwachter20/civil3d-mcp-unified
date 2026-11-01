@@ -15,6 +15,9 @@ public static class CivilExecution
   private static SynchronizationContext? _mainThreadContext;
   private static int _mainThreadId;
 
+  /// <summary>The Windows id of AutoCAD's main thread, where its dialogs live (WaitingDialog).</summary>
+  internal static uint MainWindowsThreadId { get; private set; }
+
   /// <summary>
   /// Reads use command context only when CIVIL3D_READ_CONTEXT=command (the
   /// pre-2027-fork behavior, which adds an empty undo step per read).
@@ -28,6 +31,7 @@ public static class CivilExecution
     // AutoCAD installs a plain SynchronizationContext here, whose Post runs on the
     // thread pool, so marshal through the main thread's WPF dispatcher instead.
     _mainThreadId = Environment.CurrentManagedThreadId;
+    MainWindowsThreadId = WaitingDialog.CurrentThreadId();
     _mainThreadContext = new System.Windows.Threading.DispatcherSynchronizationContext(
       System.Windows.Threading.Dispatcher.CurrentDispatcher);
     PluginLog.Info("CivilExecution", _mainThreadContext == null
@@ -47,7 +51,9 @@ public static class CivilExecution
       // taken outside command context is recorded as a blank undo step.
       using var documentLock = write ? doc.LockDocument() : null;
       using var changes = ViewFollower.Track(database);
-      using (var transaction = database.TransactionManager.StartTransaction())
+      // A read uses an open-close transaction, which leaves the undo system alone: an ordinary one, aborted, emptied
+      // the redo list, so redo found "Nothing to redo" after any read.
+      using (var transaction = write ? database.TransactionManager.StartTransaction() : database.TransactionManager.StartOpenCloseTransaction())
       {
         result = action(doc, civilDoc, database, transaction);
 
@@ -174,10 +180,13 @@ public static class CivilExecution
   private static JsonRpcDispatchException BusyError()
   {
     var names = CommandLineMonitor.ActiveCommandNames();
+    var dialog = WaitingDialog.Title();
     return new JsonRpcDispatchException(
       "CIVIL3D.HOST_BUSY",
-      $"Civil 3D has had a command running for {IdleWait.TotalSeconds:0}s" + (names.Length > 0 ? $" ({names})" : string.Empty) +
-      ". Finish or cancel it (Esc) and try again. Use civil3d_drawing action=command_line to see what it is waiting for.");
+      dialog != null
+        ? $"Civil 3D is waiting for someone to answer its '{dialog}' window. Ask the user to answer it, then try again."
+        : $"Civil 3D has had a command running for {IdleWait.TotalSeconds:0}s" + (names.Length > 0 ? $" ({names})" : string.Empty) +
+          ". Finish or cancel it (Esc) and try again. Use civil3d_drawing action=command_line to see what it is waiting for.");
   }
 
   private static async Task<T> RunInCommandContextAsync<T>(Func<Task<T>> action)
@@ -321,9 +330,34 @@ public static class CivilExecution
     return ExecuteAsync(action, false);
   }
 
+  /// <summary>Work on the main thread with no transaction at all, for sending redo to the command line.</summary>
+  public static Task<T> OnActiveDocumentAsync<T>(Func<Document, T> action)
+  {
+    return ExecuteReadOnlyAsync(() => Task.FromResult(action(GetVerifiedActiveDocuments().Item1)));
+  }
+
   public static Task<T> WriteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)
   {
     return ExecuteAsync(action, true);
+  }
+
+  /// <summary>
+  /// For a read that has to make a temporary object: a TIN volume surface is the only way to get exact volumes, and
+  /// Civil 3D refuses to create one without a document lock ("Fail to create a surface"). Runs like a write, under the
+  /// lock, but the transaction is never committed, so the object is gone and the view stays put. The lock leaves one
+  /// blank undo step.
+  /// </summary>
+  public static Task<T> MeasureAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)
+  {
+    Task<T> Run()
+    {
+      var (doc, civilDoc) = GetVerifiedActiveDocuments();
+      using var documentLock = doc.LockDocument();
+      using var transaction = doc.Database.TransactionManager.StartTransaction();
+      return Task.FromResult(action(doc, civilDoc, doc.Database, transaction));
+    }
+
+    return ExecuteInCommandContextAsync(Run);
   }
 
   private static async Task<T> ExecuteSerializedAsync<T>(Func<Task<T>> action)

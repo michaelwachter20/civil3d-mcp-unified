@@ -16,6 +16,18 @@ import { POINT_DOMAIN_DEFINITION } from "../src/tools/domains/pointDomain.js";
 import { SERVER_INSTRUCTIONS } from "../src/serverInstructions.js";
 
 describe("points from a file through Civil 3D's own importer", () => {
+  it("passes on what to do with a point number already in use", async () => {
+    const action = POINT_DOMAIN_DEFINITION.actions.import_file;
+    const args = action.inputSchema.parse({
+      action: "import_file", path: "C:/Jobs/1234/Survey/topo.csv", fileFormat: "PNEZD (comma delimited)", ifNumberExists: "merge",
+    });
+    await action.execute(args);
+    expect(sendCommandMock.mock.calls.at(-1)?.[1]).toMatchObject({ ifNumberExists: "merge" });
+    expect(() => action.inputSchema.parse({
+      action: "import_file", path: "C:/Jobs/1234/Survey/topo.csv", fileFormat: "PNEZD (comma delimited)", ifNumberExists: "ask",
+    })).toThrow();
+  });
+
   beforeEach(() => {
     sendCommandMock.mockReset();
     sendCommandMock.mockResolvedValue({ imported: 2 });

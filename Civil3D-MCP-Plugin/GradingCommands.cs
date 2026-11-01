@@ -69,17 +69,10 @@ public static class GradingCommands
         throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "No site found in the drawing. Create a site first before adding a grading group.");
       }
 
-      var siteObj = transaction.GetObject(firstSiteId, OpenMode.ForRead);
-      var gradingGroups = Civil3DCompatibility.GetPropertyValue(siteObj, "GradingGroups");
-
-      // Try Add(name, useProjection) or Add(name)
       object? newGroupId = null;
-      if (!Civil3DCompatibility.TryInvokeMethod(gradingGroups, "Add", out newGroupId, name, useProjection))
-        Civil3DCompatibility.TryInvokeMethod(gradingGroups, "Add", out newGroupId, name);
-
       if (newGroupId == null)
       {
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Failed to create grading group — Add method not found.");
+        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D's API can't create grading groups: use Create Grading Group on the Home ribbon. Add method not found.");
       }
 
       var newGroupObjectId = (ObjectId)newGroupId;
@@ -298,18 +291,12 @@ public static class GradingCommands
     {
       var criteriaList = new List<Dictionary<string, object?>>();
 
-      // Try GradingCriteriaSets property path
-      var criteriaSets = Civil3DCompatibility.GetPropertyValue(civilDoc, "GradingCriteriaSets");
-
-      foreach (var setId in CivilObjectUtils.ToObjectIds(criteriaSets))
+      foreach (ObjectId setId in civilDoc.Styles.GradingCriteriaSets)
       {
-        var setObj = transaction.GetObject(setId, OpenMode.ForRead);
+        var setObj = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Styles.GradingCriteriaSet>(transaction, setId, OpenMode.ForRead);
         var setName = CivilObjectUtils.GetName(setObj) ?? string.Empty;
 
-        var criteriaIds = Civil3DCompatibility.GetPropertyValue(setObj, "CriteriaIds")
-          ?? Civil3DCompatibility.GetPropertyValue(setObj, "Criteria");
-
-        foreach (var criteriaId in CivilObjectUtils.ToObjectIds(criteriaIds))
+        foreach (ObjectId criteriaId in setObj.GradingCriteriaIds())
         {
           var criteriaObj = transaction.GetObject(criteriaId, OpenMode.ForRead);
           criteriaList.Add(new Dictionary<string, object?>
@@ -420,7 +407,7 @@ public static class GradingCommands
   public static Task<object?> CreateFeatureLineAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetOptionalString(parameters, "name");
-    var layer = PluginRuntime.GetOptionalString(parameters, "layer") ?? "0";
+    var layer = PluginRuntime.GetOptionalString(parameters, "layer");
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
 
     if (pointsNode == null || pointsNode.Count < 2)
@@ -453,7 +440,10 @@ public static class GradingCommands
         pointCollection.Add(pt);
       }
 
-      var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, database.CurrentSpaceId, OpenMode.ForWrite);
+      // Model space by name, not the current space: on a layout tab the line landed in paper space, where nothing finds it.
+      var layerId = LookupUtils.GetLayerId(database, transaction, layer);
+      var modelSpaceId = CivilObjectUtils.GetRequiredObject<BlockTable>(transaction, database.BlockTableId, OpenMode.ForRead)[BlockTableRecord.ModelSpace];
+      var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, modelSpaceId, OpenMode.ForWrite);
       using var sourcePolyline = new Polyline3d(Poly3dType.SimplePoly, pointCollection, false);
       var sourceId = modelSpace.AppendEntity(sourcePolyline);
       transaction.AddNewlyCreatedDBObject(sourcePolyline, true);
@@ -468,7 +458,7 @@ public static class GradingCommands
       {
         CivilObjectUtils.TrySetName(fl, name);
       }
-      CivilObjectUtils.TrySetLayer(fl, layer, database, transaction);
+      ((Autodesk.AutoCAD.DatabaseServices.Entity)fl).LayerId = layerId;
 
       return new Dictionary<string, object?>
       {

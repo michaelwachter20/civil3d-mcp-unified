@@ -21,7 +21,7 @@ public static class ScriptSandbox
   {
     (@"System\.Diagnostics\.Process|\bProcess\s*\.\s*Start\b|\bProcessStartInfo\b", "starting processes"),
     (@"System\.Net\b|\bHttpClient\b|\bWebClient\b|\bTcpClient\b|\bTcpListener\b|\bSocket\b|System\.IO\.Pipes", "network or IPC access"),
-    (@"System\.Reflection|\bAssembly\s*\.\s*Load|\bAssemblyLoadContext\b|\bBindingFlag|\bActivator\s*\.|\bMethodInfo\b|\bType\s*\.\s*GetType\s*\(|\.\s*GetType\s*\(\s*\)\s*\.\s*(GetMethod|GetProperty|GetField|GetMember|InvokeMember)", "reflection or dynamic loading"),
+    (@"System\.Reflection|\bAssembly\s*\.\s*Load|\bAssemblyLoadContext\b|\bBindingFlag|\bActivator\s*\.|\bMethodInfo\b|\bType\s*\.\s*GetType\s*\(|\.\s*(GetMethod|GetProperty|GetField|GetMember|GetConstructor|InvokeMember|DynamicInvoke|CreateDelegate|Invoke)\s*\(", "reflection or dynamic loading"),
     (@"System\.Runtime\.InteropServices|\bDllImport\b|\bLibraryImport\b|\bMarshal\s*\.|\bunsafe\b|\bfixed\s*\(", "native interop or unsafe code"),
     (@"\bEnvironment\s*\.\s*(Exit|FailFast|SetEnvironmentVariable)\b", "terminating or reconfiguring the host"),
     (@"Microsoft\.Win32|\bRegistry(Key)?\s*\.", "registry access"),

@@ -327,6 +327,9 @@ try
     System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
     Assert(StationMath.SampleLineName(1262.5) == "SL-1262.5" && StationMath.SampleLineName(1250) == "SL-1250",
       $"Sample line names use a dot: {StationMath.SampleLineName(1262.5)}");
+    Assert(StationMath.SampleLineName("SLG", 100.001) != StationMath.SampleLineName("SLG", 100.004)
+      && StationMath.SampleLineName("SLG", 100) != StationMath.SampleLineName("SLG2", 100),
+      "Sample line names differ between close stations and between groups.");
   }
   finally
   {

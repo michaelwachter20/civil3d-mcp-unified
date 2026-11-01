@@ -249,7 +249,7 @@ const canonicalSurfaceInputShape = {
   majorInterval: z.number().optional(),
   baseSurface: z.string().optional(),
   comparisonSurface: z.string().optional(),
-  method: z.enum(["tin_volume", "average_end_area", "prismoidal"]).optional(),
+  method: z.enum(["tin_volume", "average_end_area", "prismoidal", "grid", "points", "transect"]).optional(),
   format: z.enum(["summary", "detailed"]).optional(),
   boundary: z.array(Point2DSchema).optional(),
   ranges: z.array(z.object({ min: z.number(), max: z.number() })).optional(),
@@ -1020,7 +1020,7 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
       inputShape: {
         baseSurface: z.string(),
         comparisonSurface: z.string(),
-        method: z.enum(["tin_volume", "average_end_area", "prismoidal"]).optional(),
+        method: z.enum(["tin_volume", "average_end_area", "prismoidal", "grid", "points", "transect"]).optional(),
       },
       supportedActions: ["volume_calculate"],
       resolveAction: (rawArgs) => ({

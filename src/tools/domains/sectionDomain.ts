@@ -31,9 +31,6 @@ const SectionListSampleLinesResponseSchema = z.object({
 
 /**
  * The section at one sample line: per sampled surface, matching lists of offsets and elevations.
- * NOTE: the plugin's getSectionData always answers with an empty `surfaces` list (it finds the sample line but never
- * reads its sections), so this only confirms the sample line exists; view_export is the action that reads section
- * points.
  */
 const SectionDataResponseSchema = z.object({
   station: z.number(),
@@ -77,7 +74,7 @@ const SectionCreateSampleLinesArgsSchema = z.object({
   interval: z.number().optional(),
   leftWidth: z.number(),
   rightWidth: z.number(),
-  surfaces: z.array(z.string()),
+  surfaces: z.array(z.string()).default([]),
 }).superRefine((value, ctx) => {
   if (!value.stations && value.interval === undefined) {
     ctx.addIssue({
@@ -100,7 +97,7 @@ const SectionViewCreateArgsSchema = z.object({
   insertionPoint: z.tuple([z.number(), z.number()]),
   style: z.string().optional(),
   bandSetStyle: z.string().optional(),
-  leftOffset: z.number().nonnegative().optional(),
+  leftOffset: z.number().optional(),
   rightOffset: z.number().nonnegative().optional(),
   stationStart: z.number().optional(),
   stationEnd: z.number().optional(),
@@ -179,7 +176,7 @@ const canonicalSectionInputShape = {
   insertionPoint: z.tuple([z.number(), z.number()]).optional(),
   style: z.string().optional(),
   bandSetStyle: z.string().optional(),
-  leftOffset: z.number().nonnegative().optional(),
+  leftOffset: z.number().optional(),
   rightOffset: z.number().nonnegative().optional(),
   stationStart: z.number().optional(),
   stationEnd: z.number().optional(),
@@ -386,7 +383,7 @@ export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         insertionPoint: z.tuple([z.number(), z.number()]),
         style: z.string().optional(),
         bandSetStyle: z.string().optional(),
-        leftOffset: z.number().nonnegative().optional(),
+        leftOffset: z.number().optional(),
         rightOffset: z.number().nonnegative().optional(),
         stationStart: z.number().optional(),
         stationEnd: z.number().optional(),

@@ -2,6 +2,8 @@ using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using Pipe = Autodesk.Civil.DatabaseServices.Pipe;
+using Structure = Autodesk.Civil.DatabaseServices.Structure;
 
 namespace Civil3DMcpPlugin;
 
@@ -107,9 +109,9 @@ public static class PipeHydraulicsCommands
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
     var designFlow = PluginRuntime.GetOptionalDouble(parameters, "designFlow");
     var manningsN = PluginRuntime.GetOptionalDouble(parameters, "manningsN") ?? 0.013;
-    var minCoverDepth = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth") ?? 2.0;
-    var minVelocity = PluginRuntime.GetOptionalDouble(parameters, "minVelocity") ?? 2.0;
-    var maxVelocity = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity") ?? 10.0;
+    var minCoverDepth = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth");
+    var minVelocity = PluginRuntime.GetOptionalDouble(parameters, "minVelocity");
+    var maxVelocity = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity");
     var minSlope = PluginRuntime.GetOptionalDouble(parameters, "minSlope") ?? 0.5;
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -118,6 +120,12 @@ public static class PipeHydraulicsCommands
       var units = CivilObjectUtils.LinearUnits(database);
       var pipes = GetPipeData(network, transaction);
       var structures = GetStructureData(network, transaction);
+
+      // The defaults are the usual feet and ft/s limits, so a metric drawing gets them in metres.
+      var toDrawingUnits = database.Insunits == UnitsValue.Meters ? 0.3048 : 1.0;
+      var minCoverLimit = minCoverDepth ?? 2.0 * toDrawingUnits;
+      var minVelocityLimit = minVelocity ?? 2.0 * toDrawingUnits;
+      var maxVelocityLimit = maxVelocity ?? 10.0 * toDrawingUnits;
 
       var results = new List<Dictionary<string, object?>>();
       var violations = new List<Dictionary<string, object?>>();
@@ -214,20 +222,16 @@ public static class PipeHydraulicsCommands
       var depth = rimElevation - sumpElevation;
 
       // Get connected pipes and their inverts
-      var connectedPipeIds = GetChildObjectIds(structure, "GetConnectedPipeIds", "ConnectedPipeIds", "ConnectedPipes");
       var connectedPipes = new List<Dictionary<string, object?>>();
-      foreach (var pipeId in connectedPipeIds)
+      foreach (var pipeId in ConnectedPipeIds(structure))
       {
-        if (pipeId == ObjectId.Null) continue;
-        var pipe = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, pipeId, OpenMode.ForRead);
-        var invertIn = GetAnyDouble(pipe, "StartInvertElevation", "InvertIn", "StartInnerElevation") ?? 0.0;
-        var invertOut = GetAnyDouble(pipe, "EndInvertElevation", "InvertOut", "EndInnerElevation") ?? 0.0;
+        var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, pipeId, OpenMode.ForRead);
         connectedPipes.Add(new Dictionary<string, object?>
         {
-          ["name"] = CivilObjectUtils.GetName(pipe) ?? pipeId.Handle.ToString(),
-          ["invertIn"] = Math.Round(invertIn, 3),
-          ["invertOut"] = Math.Round(invertOut, 3),
-          ["diameter"] = Math.Round(GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 0.0, 3),
+          ["name"] = pipe.Name,
+          ["invertIn"] = Math.Round(InvertIn(pipe), 3),
+          ["invertOut"] = Math.Round(InvertOut(pipe), 3),
+          ["diameter"] = Math.Round(pipe.InnerDiameterOrWidth, 3),
         });
       }
 
@@ -290,6 +294,22 @@ public static class PipeHydraulicsCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Structure '{structureName}' was not found.");
   }
 
+  /// <summary>A pipe's start invert: its end points are on the centerline, half the inner height above the invert.</summary>
+  private static double InvertIn(Pipe pipe) => pipe.StartPoint.Z - pipe.InnerHeight / 2;
+
+  private static double InvertOut(Pipe pipe) => pipe.EndPoint.Z - pipe.InnerHeight / 2;
+
+  private static IEnumerable<ObjectId> ConnectedPipeIds(DBObject structure)
+  {
+    if (structure is Structure civilStructure)
+    {
+      for (var index = 0; index < civilStructure.ConnectedPipesCount; index++)
+      {
+        yield return civilStructure.get_ConnectedPipe(index);
+      }
+    }
+  }
+
   private static List<PipeInfo> GetPipeData(DBObject network, Transaction transaction)
   {
     var results = new List<PipeInfo>();
@@ -298,8 +318,8 @@ public static class PipeHydraulicsCommands
       var pipe = CivilObjectUtils.GetRequiredObject<DBObject>(transaction, objectId, OpenMode.ForRead);
       var startPt = GetPointProperty(pipe, "StartPoint", "PointAtStart");
       var endPt = GetPointProperty(pipe, "EndPoint", "PointAtEnd");
-      var invertIn = GetAnyDouble(pipe, "StartInvertElevation", "InvertIn", "StartInnerElevation") ?? startPt?.Z ?? 0.0;
-      var invertOut = GetAnyDouble(pipe, "EndInvertElevation", "InvertOut", "EndInnerElevation") ?? endPt?.Z ?? 0.0;
+      var invertIn = pipe is Pipe startOf ? InvertIn(startOf) : startPt?.Z ?? 0.0;
+      var invertOut = pipe is Pipe endOf ? InvertOut(endOf) : endPt?.Z ?? 0.0;
       var length = GetAnyDouble(pipe, "Length3D", "Length2D", "Length") ?? 0.0;
       // In percent from the pipe's ends (PipeMath.SlopePercent): Civil 3D's own Slope value isn't documented as a
       // percent or a ratio.
@@ -320,7 +340,7 @@ public static class PipeHydraulicsCommands
       var rim = GetAnyDouble(structure, "RimElevation", "SurfaceElevation", "Elevation") ?? 0.0;
       var sumpDepth = GetAnyDouble(structure, "SumpDepth") ?? 0.0;
       var sump = GetAnyDouble(structure, "SumpElevation") ?? (rim - sumpDepth);
-      var pipeIds = GetChildObjectIds(structure, "GetConnectedPipeIds", "ConnectedPipeIds", "ConnectedPipes")
+      var pipeIds = ConnectedPipeIds(structure)
         .Select(id => ResolveObjectName(transaction, id) ?? id.Handle.ToString()).ToList();
       results.Add(new StructureInfo(CivilObjectUtils.GetName(structure) ?? objectId.Handle.ToString(), rim, sump, pipeIds));
     }

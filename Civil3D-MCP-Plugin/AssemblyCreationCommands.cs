@@ -13,6 +13,10 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class AssemblyCreationCommands
 {
+  // A stock subassembly's Side parameter.
+  private const int SideRight = 0;
+  private const int SideLeft = 1;
+
   public static Task<object?> ListAssembliesAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -57,7 +61,7 @@ public static class AssemblyCreationCommands
         ["name"] = assembly.Name,
         ["handle"] = CivilObjectUtils.GetHandle(assembly),
         ["subassemblyCount"] = GetSubassemblyIds(assembly).Count,
-        ["style"] = GetStyleName(assembly, transaction),
+        ["style"] = GetStyleName(assembly, transaction) ?? string.Empty,
         ["type"] = assembly.Type.ToString(),
         ["subassemblies"] = GetSubassemblies(assembly, transaction),
         ["usedByCorridors"] = usedByCorridors,
@@ -117,20 +121,30 @@ public static class AssemblyCreationCommands
       foreach (var requestedSide in requestedSides)
       {
         var subassemblyName = $"{subassemblyType}-{requestedSide}-{Guid.NewGuid():N}";
+        // The stock catalog's macros are "Subassembly.BasicLane"; the short name is what people write.
+        var macro = subassemblyType.Contains('.') ? subassemblyType : "Subassembly." + subassemblyType;
         var subassemblyId = civilDoc.SubassemblyCollection.ImportStockSubassembly(
           subassemblyName,
-          subassemblyType,
+          macro,
           assembly.Location);
-        assembly.AddSubassembly(subassemblyId);
-
-        var subassembly = CivilObjectUtils.GetRequiredObject<AcDbObject>(transaction, subassemblyId, OpenMode.ForWrite);
-        if (!Civil3DCompatibility.TrySetProperty(subassembly, "Side", requestedSide))
+        var subassembly = CivilObjectUtils.GetRequiredObject<Subassembly>(transaction, subassemblyId, OpenMode.ForWrite);
+        var sideParameter = subassembly.ParamsLong.FirstOrDefault(parameter => parameter.Key == "Side");
+        if (sideParameter == null)
         {
           throw new JsonRpcDispatchException(
             "CIVIL3D.API_ERROR",
-            $"Stock subassembly '{subassemblyType}' does not expose a writable Side parameter. No implicit side was assumed.");
+            $"Stock subassembly '{subassemblyType}' has no Side parameter. No implicit side was assumed.");
         }
-        ApplySubassemblyParameters(subassembly, subParams);
+
+        sideParameter.Value = requestedSide.Equals("Left", StringComparison.OrdinalIgnoreCase) ? SideLeft : SideRight;
+        var unknown = subParams.Keys.Except(ApplySubassemblyParameters(subassembly, subParams), StringComparer.OrdinalIgnoreCase).ToList();
+        if (unknown.Count > 0)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+            $"Stock subassembly '{subassemblyType}' has no parameter {string.Join(", ", unknown)}. Its parameters: {string.Join(", ", ParameterValues(subassembly).Keys)}.");
+        }
+
+        assembly.AddSubassembly(subassemblyId);
 
         created.Add(new Dictionary<string, object?>
         {
@@ -221,7 +235,13 @@ public static class AssemblyCreationCommands
     var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
     if (values == null) return result;
     foreach (var pair in values)
-      result[pair.Key] = pair.Value?.GetValue<object>();
+      result[pair.Key] = pair.Value?.GetValueKind() switch
+      {
+        System.Text.Json.JsonValueKind.Number => pair.Value.GetValue<double>(),
+        System.Text.Json.JsonValueKind.True => true,
+        System.Text.Json.JsonValueKind.False => false,
+        _ => pair.Value?.ToString(),
+      };
     return result;
   }
 
@@ -254,10 +274,48 @@ public static class AssemblyCreationCommands
     var updated = new List<string>();
     foreach (var pair in parameters)
     {
-      if (Civil3DCompatibility.TrySetProperty(subassembly, pair.Key, pair.Value))
+      if (subassembly is Subassembly stock && SetStockParameter(stock, pair.Key, pair.Value))
+        updated.Add(pair.Key);
+      else if (Civil3DCompatibility.TrySetProperty(subassembly, pair.Key, pair.Value))
         updated.Add(pair.Key);
     }
     return updated;
+  }
+
+  /// <summary>Sets one of a stock subassembly's own parameters (Width, Slope...), which live in its Params lists, not in properties.</summary>
+  private static bool SetStockParameter(Subassembly subassembly, string key, object? value)
+  {
+    var number = subassembly.ParamsDouble.FirstOrDefault(parameter => string.Equals(parameter.Key, key, StringComparison.OrdinalIgnoreCase));
+    if (number != null)
+    {
+      number.Value = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+      return true;
+    }
+
+    var whole = subassembly.ParamsLong.FirstOrDefault(parameter => string.Equals(parameter.Key, key, StringComparison.OrdinalIgnoreCase));
+    if (whole != null)
+    {
+      whole.Value = Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture);
+      return true;
+    }
+
+    var text = subassembly.ParamsString.FirstOrDefault(parameter => string.Equals(parameter.Key, key, StringComparison.OrdinalIgnoreCase));
+    if (text != null)
+    {
+      text.Value = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+      return true;
+    }
+
+    return false;
+  }
+
+  private static Dictionary<string, object?> ParameterValues(Subassembly subassembly)
+  {
+    var values = new Dictionary<string, object?>();
+    foreach (var parameter in subassembly.ParamsDouble) values[parameter.Key] = parameter.Value;
+    foreach (var parameter in subassembly.ParamsLong) values[parameter.Key] = parameter.Value;
+    foreach (var parameter in subassembly.ParamsString) values[parameter.Key] = parameter.Value;
+    return values;
   }
 
   private static string? GetStyleName(Assembly assembly, Transaction transaction)
@@ -276,6 +334,20 @@ public static class AssemblyCreationCommands
 
   private static Dictionary<string, object?> ToSubassemblySummary(AcDbObject subassembly)
   {
+    if (subassembly is Subassembly stock)
+    {
+      var side = stock.ParamsLong.FirstOrDefault(parameter => parameter.Key == "Side")?.Value;
+      return new Dictionary<string, object?>
+      {
+        ["name"] = stock.Name,
+        ["handle"] = CivilObjectUtils.GetHandle(stock),
+        ["type"] = stock.GetType().Name,
+        ["className"] = stock.GetType().Name,
+        ["side"] = side == SideLeft ? "left" : side == SideRight ? "right" : "none",
+        ["parameters"] = ParameterValues(stock),
+      };
+    }
+
     return new Dictionary<string, object?>
     {
       ["name"] = CivilObjectUtils.GetName(subassembly) ?? subassembly.Handle.ToString(),

@@ -33,7 +33,7 @@ public static class CostEstimationCommands
     var payItemsNode = parameters?["payItems"] as JsonArray;
     var payItems = ParsePayItems(payItemsNode);
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var quantityLines = new List<Dictionary<string, object?>>();
 
@@ -109,7 +109,7 @@ public static class CostEstimationCommands
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "At least one pay item with a unit price is required to generate a cost estimate.");
     }
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var lineItems = new List<Dictionary<string, object?>>();
       double subtotal = 0;

@@ -60,6 +60,25 @@ public static class SurfaceCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
+      if (IsEmpty(surface))
+      {
+        return new Dictionary<string, object?>
+        {
+          ["name"] = surface.Name,
+          ["handle"] = CivilObjectUtils.GetHandle(surface),
+          ["type"] = MapSurfaceType(surface),
+          ["style"] = CivilObjectUtils.GetName(transaction.GetObject(surface.StyleId, OpenMode.ForRead)) ?? string.Empty,
+          ["layer"] = surface.Layer,
+          ["statistics"] = EmptyStatistics(),
+          ["boundingBox"] = new Dictionary<string, object?> { ["minX"] = 0.0, ["minY"] = 0.0, ["maxX"] = 0.0, ["maxY"] = 0.0 },
+          ["units"] = CivilObjectUtils.LinearUnits(database),
+          ["isReference"] = surface.IsReferenceObject,
+          ["dependentAlignments"] = new List<string>(),
+          ["dependentCorridors"] = new List<string>(),
+          ["note"] = "This surface has no points yet.",
+        };
+      }
+
       var generalProperties = surface.GetGeneralProperties();
       var terrainProperties = GetTerrainProperties(surface);
       var extents = surface.GeometricExtents;
@@ -95,6 +114,30 @@ public static class SurfaceCommands
       };
     });
   }
+
+  /// <summary>Whether a surface has no points: its statistics and extents throw then ("no point or triangle").</summary>
+  private static bool IsEmpty(CivilSurface surface)
+  {
+    try
+    {
+      return surface.GetGeneralProperties().NumberOfPoints == 0;
+    }
+    catch (InvalidOperationException)
+    {
+      return true;
+    }
+  }
+
+  private static Dictionary<string, object?> EmptyStatistics() => new()
+  {
+    ["minimumElevation"] = 0.0,
+    ["maximumElevation"] = 0.0,
+    ["meanElevation"] = 0.0,
+    ["area2d"] = 0.0,
+    ["area3d"] = 0.0,
+    ["numberOfPoints"] = 0,
+    ["numberOfTriangles"] = 0,
+  };
 
   /// <summary>Elevation of surface <c>name</c> at (<c>x</c>, <c>y</c>). A point outside the surface is
   /// CIVIL3D.API_ERROR, not a null elevation.</summary>
@@ -163,6 +206,15 @@ public static class SurfaceCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
+      if (IsEmpty(surface))
+      {
+        var empty = EmptyStatistics();
+        empty["surfaceName"] = surface.Name;
+        empty["analysisType"] = analysisType;
+        empty["note"] = "This surface has no points yet.";
+        return empty;
+      }
+
       var generalProperties = surface.GetGeneralProperties();
       var terrainProperties = GetTerrainProperties(surface);
       return new Dictionary<string, object?>
@@ -187,13 +239,24 @@ public static class SurfaceCommands
     var name = PluginRuntime.GetRequiredString(parameters, "name");
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      // Civil 3D would quietly make "EG (1)" and leave the caller adding points to the wrong surface.
+      foreach (ObjectId existingId in civilDoc.GetSurfaceIds())
+      {
+        var existing = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, existingId, OpenMode.ForRead);
+        if (string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.CONFLICT", $"A surface named '{existing.Name}' is already in this drawing.");
+        }
+      }
+
       var styleId = LookupUtils.GetSurfaceStyleId(civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
+      var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
+      var layerId = LookupUtils.GetLayerId(database, transaction, layerName);
       var surfaceId = CreateTinSurface(name, styleId);
       var surface = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, surfaceId, OpenMode.ForWrite);
-      var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
       if (!string.IsNullOrWhiteSpace(layerName))
       {
-        surface.Layer = layerName;
+        surface.LayerId = layerId;
       }
 
       var description = PluginRuntime.GetOptionalString(parameters, "description");
@@ -243,15 +306,19 @@ public static class SurfaceCommands
       {
         throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Adding TIN vertices is not supported for surface type '{surface.GetType().Name}'.");
       }
+      var pointsBefore = IsEmpty(surface) ? 0 : surface.GetGeneralProperties().NumberOfPoints;
       tinSurface.AddVertices(points);
 
       SetSurfaceDescription(surface, description);
       RebuildSurfaceIfAvailable(surface);
 
+      // A point on the XY of an existing vertex isn't added, and Civil 3D doesn't say so.
+      var added = surface.GetGeneralProperties().NumberOfPoints - pointsBefore;
       return new Dictionary<string, object?>
       {
         ["surfaceName"] = surface.Name,
-        ["pointsAdded"] = points.Count,
+        ["pointsAdded"] = added,
+        ["pointsIgnored"] = points.Count - added,
         ["description"] = surface.Description,
       };
     });
@@ -365,7 +432,7 @@ public static class SurfaceCommands
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
     var comparisonSurfaceName = PluginRuntime.GetRequiredString(parameters, "comparisonSurface");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var comparisonSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
@@ -399,7 +466,7 @@ public static class SurfaceCommands
     var comparisonSurfaceName = PluginRuntime.GetRequiredString(parameters, "comparisonSurface");
     var method = PluginRuntime.GetOptionalString(parameters, "method") ?? "tin_volume";
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var comparisonSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
@@ -433,7 +500,7 @@ public static class SurfaceCommands
     var comparisonSurfaceName = PluginRuntime.GetRequiredString(parameters, "comparisonSurface");
     var format = PluginRuntime.GetOptionalString(parameters, "format") ?? "summary";
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var comparisonSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
@@ -525,6 +592,7 @@ public static class SurfaceCommands
       double fillVolume = 0;
       double cutArea = 0;
       double fillArea = 0;
+      var cellsOffSurface = 0;
       var cellArea = gridSpacing * gridSpacing;
 
       for (var x = minX + gridSpacing / 2; x < maxX; x += gridSpacing)
@@ -545,6 +613,7 @@ public static class SurfaceCommands
           }
           catch
           {
+            cellsOffSurface++;
             continue;
           }
 
@@ -572,6 +641,10 @@ public static class SurfaceCommands
         ["cutArea"] = cutArea,
         ["fillArea"] = fillArea,
         ["regionBoundaryPointCount"] = boundary.Count,
+        ["cellsOffSurface"] = cellsOffSurface,
+        ["note"] = cellsOffSurface > 0
+          ? $"{cellsOffSurface} grid cells of about {gridSpacing:0.##} square fell outside a surface and aren't counted."
+          : null,
         ["units"] = new Dictionary<string, object?>
         {
           ["volume"] = $"{units}^3",
@@ -1210,8 +1283,8 @@ public static class SurfaceCommands
     return extracted;
   }
 
-  /// <summary>Volumes between two surfaces via a TIN volume surface created in the caller's transaction; in a read
-  /// the transaction is never committed, so the volume surface doesn't stay in the drawing.</summary>
+  /// <summary>Volumes between two surfaces via a TIN volume surface created in the caller's transaction, which
+  /// MeasureAsync never commits, so the volume surface doesn't stay in the drawing.</summary>
   private static VolumeSurfaceProperties GetVolumeProperties(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
     var volumeSurface = CreateTinVolumeSurface(civilDoc, transaction, baseSurface, comparisonSurface);
@@ -1220,7 +1293,7 @@ public static class SurfaceCommands
 
   private static TinVolumeSurface CreateTinVolumeSurface(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
-    var name = $"{baseSurface.Name}_{comparisonSurface.Name}_Volume";
+    var name = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
     var surfaceId = TinVolumeSurface.Create(name, baseSurface.ObjectId, comparisonSurface.ObjectId);
     return CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, surfaceId, OpenMode.ForRead);
   }

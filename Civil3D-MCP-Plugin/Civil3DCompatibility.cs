@@ -73,7 +73,7 @@ internal static class Civil3DCompatibility
 
     try
     {
-      return property.GetValue(target);
+      return ReadableProperty(property).GetValue(target);
     }
     catch
     {
@@ -352,6 +352,31 @@ internal static class Civil3DCompatibility
     }
 
     return null;
+  }
+
+  /// <summary>A property of an AutoCAD COM object: those have no .NET properties to find, only named calls.</summary>
+  public static object? GetComProperty(object? target, string propertyName)
+  {
+    return target?.GetType().InvokeMember(propertyName, BindingFlags.GetProperty, null, target, null);
+  }
+
+  /// <summary>
+  /// The declaration of <paramref name="property"/> that has a getter. A class can override only the setter of a
+  /// virtual property, and reflection then hides the base's getter: every Civil 3D style overrides Name that way, so its
+  /// name read as null, and each named style looked like it wasn't in the drawing.
+  /// </summary>
+  private static PropertyInfo ReadableProperty(PropertyInfo property)
+  {
+    for (var type = property.DeclaringType?.BaseType; !property.CanRead && type != null; type = type.BaseType)
+    {
+      var inherited = type.GetProperty(property.Name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+      if (inherited?.CanRead == true)
+      {
+        return inherited;
+      }
+    }
+
+    return property;
   }
 
   private static PropertyInfo? ResolveProperty(Type type, string propertyName, bool isStatic)

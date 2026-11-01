@@ -2,8 +2,29 @@
 
 ## v2.4.1 — 2026-11-01
 
-From a review of the code against Project Analyzer and Civil 3D's own API list. Nothing here has been tried in Civil 3D
-yet: docs/LIVE-TEST-PLAN.md is the plan for that.
+From a review of the code against Project Analyzer and Civil 3D's own API list, then a day of live testing in Civil 3D
+2027 (docs/LIVE-TEST-PLAN.md), which found most of what follows.
+
+- **Tools that failed on every use now work:** a named style or parts list was always refused, because style names read
+  as empty; volumes between two surfaces, and so earthwork and cost, failed for want of a document lock; listing pipe
+  networks failed; the parts catalog was empty; `sample_elevations` couldn't get past its own schema; a second sample
+  line group on an alignment always failed; profile views, offset alignments, labels, stock subassemblies, viewport
+  scale and corridor region add, region delete and targets didn't work.
+
+- **Wrong answers put right:** sight distance K (3.7 and 8.5 at 30 mph, now 19 and 37), tangents QC called zero-length,
+  pipe inverts (they were centerlines), pipe cover (0 for every pipe), K in profile QC, point totals, surface profiles
+  called layouts, entities out of station order, superelevation reported on curves with none.
+
+- **Safer:** a duplicate point number no longer opens a window that stalls every request (`ifNumberExists` decides, and
+  a window waiting for an answer is named in health, command_line and busy errors); UTF-8 point files keep their
+  characters; an alignment a corridor uses can't be deleted; the script sandbox blocks reflection on any receiver; a
+  misspelled layer is refused everywhere; a surface name in use is refused rather than made "EG (1)".
+
+- **Redo works:** reads now use open-close transactions, which leave Civil 3D's redo list alone. A script run between
+  undo and redo still empties it. An approval now covers a call whose points leave z to its default. `new` starts from
+  the normal template, not an empty one. Errors Civil 3D raises say "Civil 3D refused this" and give its reason.
+
+- **Still refused, because Civil 3D's API has no way:** grading groups, parcel creation.
 
 - **New scripts no longer eat Civil 3D's memory.** Every new C# script kept about 460 MB until a day's testing reached 19
   GB and ran a 7 GB computer out of memory. Half was the loaded assemblies read again because each script changed their

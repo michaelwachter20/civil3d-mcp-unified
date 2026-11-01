@@ -43,7 +43,6 @@ public static class CorridorCommands
   /// One corridor by <c>name</c>: style, layer, state, its baselines (alignment, profile and regions with assembly
   /// and station range), corridor surfaces and the number of feature line codes. Read only.
   /// </summary>
-  // NOTE: each region's "frequency" is always 0: the assembly insertion frequency is never read.
   public static Task<object?> GetCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -63,7 +62,7 @@ public static class CorridorCommands
             ["assemblyName"] = CivilObjectUtils.GetName(transaction.GetObject(region.AssemblyId, OpenMode.ForRead)) ?? string.Empty,
             ["startStation"] = region.StartStation,
             ["endStation"] = region.EndStation,
-            ["frequency"] = 0,
+            ["frequency"] = region.AppliedAssemblySetting.FrequencyAlongTangents,
           });
         }
 
@@ -100,9 +99,16 @@ public static class CorridorCommands
   /// drawing active by then makes the job fail with nothing changed. Cancelling only works before
   /// <c>Corridor.Rebuild()</c> starts or is noticed after it returns, because Civil 3D's rebuild can't be interrupted.
   /// </summary>
-  public static Task<object?> RebuildCorridorAsync(JsonObject? parameters)
+  public static async Task<object?> RebuildCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
+
+    // Checked here, or a misspelled name answers "queued" and fails unseen in the background.
+    await CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      CivilObjectUtils.FindCorridorByName(civilDoc, transaction, name, OpenMode.ForRead);
+      return null;
+    });
 
     // Create the job up front so the caller gets a jobId immediately — they
     // poll civil3d_job(status, jobId) until the background rebuild finishes.
@@ -189,12 +195,12 @@ public static class CorridorCommands
       }
     }, CancellationToken.None);
 
-    return Task.FromResult<object?>(new Dictionary<string, object?>
+    return new Dictionary<string, object?>
     {
       ["jobId"] = job.JobId,
       ["state"] = "running",
       ["message"] = $"Corridor '{name}' rebuild queued. Poll civil3d_job with action='status' to track progress.",
-    });
+    };
   }
 
   /// <summary>The corridor surfaces of corridor <c>name</c>: name, the built surface's handle (null if not built) and boundary names. Read only.</summary>
@@ -239,7 +245,7 @@ public static class CorridorCommands
     var corridorSurfaceName = PluginRuntime.GetRequiredString(parameters, "corridorSurface");
     var referenceSurfaceName = PluginRuntime.GetRequiredString(parameters, "referenceSurface");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var corridor = CivilObjectUtils.FindCorridorByName(civilDoc, transaction, name, OpenMode.ForRead);
       var corridorSurface = FindCorridorSurfaceByName(corridor, corridorSurfaceName, transaction);
@@ -304,12 +310,9 @@ public static class CorridorCommands
 
   /// <summary>
   /// Unadjusted cut, fill and net volume of <paramref name="comparisonSurface"/> against
-  /// <paramref name="baseSurface"/>, from a TIN volume surface with a throwaway name. It is created inside the read
-  /// transaction, which is never committed, so the temporary surface is rolled back and the drawing keeps nothing.
+  /// <paramref name="baseSurface"/>, from a TIN volume surface with a throwaway name. It is created inside
+  /// CivilExecution.MeasureAsync's transaction, which is never committed, so the drawing keeps nothing.
   /// </summary>
-  // NOTE: this creates an object inside CivilExecution.ReadAsync, which runs without a document lock and relies on
-  // the uncommitted transaction to discard it; if Civil 3D insists on a lock for TinVolumeSurface.Create it would
-  // fail with a lock violation (QuantityCommands.cs uses the same pattern).
   private static Dictionary<string, object?> ComputeVolumeBetweenSurfaces(
     Database database,
     Transaction transaction,

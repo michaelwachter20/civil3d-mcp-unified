@@ -231,6 +231,10 @@ public static class PlanProductionCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var layout = FindLayoutByName(database, transaction, layoutName);
+      if (layout.ModelType)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A viewport goes on a layout tab, not on Model.");
+      }
 
       // Create viewport in paper space
       var viewport = new Viewport
@@ -284,8 +288,8 @@ public static class PlanProductionCommands
       var viewport = FindViewport(database, transaction, layout, viewportHandle);
 
       viewport.UpgradeOpen();
+      // Setting this makes the scale custom by itself; setting StandardScale to CustomScale as well is refused.
       viewport.CustomScale = 1.0 / scale;
-      viewport.StandardScale = StandardScaleType.CustomScale;
 
       return new Dictionary<string, object?>
       {

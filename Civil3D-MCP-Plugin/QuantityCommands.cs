@@ -37,7 +37,7 @@ public static class QuantityCommands
     var comparisonSurfaceName = PluginRuntime.GetRequiredString(parameters, "comparisonSurface");
     var corridorName = PluginRuntime.GetOptionalString(parameters, "corridorName");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
@@ -319,7 +319,7 @@ public static class QuantityCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var groupResults = new List<Dictionary<string, object?>>();
-      var totalPoints = 0;
+      var totalPoints = civilDoc.CogoPoints.Count;
 
       foreach (ObjectId groupId in civilDoc.PointGroups)
       {
@@ -331,7 +331,7 @@ public static class QuantityCommands
 
         var count = group.GetPointNumbers().Length;
 
-        totalPoints += count;
+        // Groups overlap, so adding them up counts a point once per group it is in.
         groupResults.Add(new Dictionary<string, object?>
         {
           ["name"] = groupName,
@@ -520,7 +520,7 @@ public static class QuantityCommands
     if (startStation.HasValue || endStation.HasValue || !string.IsNullOrWhiteSpace(PluginRuntime.GetOptionalString(parameters, "alignmentName")))
       throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Station-clipped earthwork requires sample lines/QTO. The managed TinVolumeSurface API computes whole-surface volume only; no station-volume approximation was used.");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var designSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurfaceName, OpenMode.ForRead);

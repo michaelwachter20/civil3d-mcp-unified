@@ -142,7 +142,8 @@ public static class ProfileCommands
 
       var samples = new List<Dictionary<string, object?>>();
 
-      foreach (var station in StationMath.IntervalStations(from, to, interval))
+      // A layout profile with no PVIs yet has nothing to sample.
+      foreach (var station in profile.PVIs.Count == 0 ? Enumerable.Empty<double>() : StationMath.IntervalStations(from, to, interval))
       {
         samples.Add(new Dictionary<string, object?>
         {
@@ -254,7 +255,7 @@ public static class ProfileCommands
       ["name"] = profile.Name,
       ["handle"] = CivilObjectUtils.GetHandle(profile),
       ["type"] = MapProfileType(profile.ProfileType.ToString()),
-      ["style"] = string.Empty,
+      ["style"] = profile.StyleName,
       ["startStation"] = profile.StartingStation,
       ["endStation"] = profile.EndingStation,
       ["minElevation"] = extents.Min,
@@ -298,6 +299,17 @@ public static class ProfileCommands
 
   private static double ReadProfileElevation(Profile profile, double station)
   {
+    if (profile.PVIs.Count == 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Profile '{profile.Name}' has no PVIs yet.");
+    }
+
+    if (station < profile.StartingStation - 0.001 || station > profile.EndingStation + 0.001)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Station {station} is off profile '{profile.Name}', which runs from {profile.StartingStation} to {profile.EndingStation}.");
+    }
+
     try
     {
       return profile.ElevationAt(station);
@@ -324,13 +336,12 @@ public static class ProfileCommands
     }
   }
 
-  /// <summary>Civil 3D's profile type name mapped to "surface", "superimposed" or (anything else) "layout".</summary>
-  // NOTE: this looks for "surface" in the ProfileType enum name; if surface profiles report as "EG" (existing
-  // ground), as the enum names them, they are reported as "layout" here.
+  /// <summary>Civil 3D's profile type name mapped to "surface" (the enum calls those EG, existing ground),
+  /// "superimposed" or (anything else) "layout".</summary>
   private static string MapProfileType(string? value)
   {
     var text = value?.ToLowerInvariant() ?? string.Empty;
-    if (text.Contains("surface"))
+    if (text == "eg" || text.Contains("surface"))
     {
       return "surface";
     }

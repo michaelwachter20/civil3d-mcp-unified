@@ -3,8 +3,8 @@
 For a day at Civil 3D 2027. Everything runs on throwaway drawings and a made-up job. Nothing here touches a real job or
 a real drawing. An automated session never starts Civil 3D: a person opens it and turns the connection on.
 
-Written from a review of the code against the plugin's source and the names in Civil 3D's own API. **None of it has run
-in Civil 3D yet**, so "expected" means what should happen, and part 5 lists what a review says will fail.
+Written from a review of the code against the plugin's source and the names in Civil 3D's own API, and first run on
+2026-11-01: part 5 gives the results.
 
 Mark each test **pass**, **fail** (with what happened) or **skipped**. A crash of Civil 3D stops the session: note the
 test, restart, and go on with the next one.
@@ -168,33 +168,27 @@ Shared setup, made once with the tools below: 12 points numbered 1-12 with descr
 
 Also try a locked layer and a frozen layer for point delete and label add: only the target should change.
 
-## 5. Expected to fail: fix these with Civil 3D open
+## 5. Results of the first live day (2026-11-01, Civil 3D 2027)
 
-From the review. Each is confirmed by reading the code or Civil 3D's API list unless marked. Their fixes depend on how
-Civil 3D behaves, so they wait for a live session. Check each, then fix or retire it.
+Parts 2 and 4 ran on a blank drawing; every fix was retested live.
 
-| Tool | Problem |
+Part 5 of this plan used to list what a review expected to fail. All of it is fixed and proven unless listed here.
+
+| Still open | Why |
 |---|---|
-| Corridor `region_delete` | Says deleted, removes nothing |
-| Corridor `target_mapping_set` / `get` | Success with 0 applied; null names |
-| Corridor `region_add` | Always fails |
-| Pipe `catalog_list` | Always empty, so `size_network` fails |
-| Profile `view_create`, `automate_profile_view`; alignment `offset_create` | No matching API call; always fail |
-| Grading groups, criteria | No API; always empty, or fail |
-| Parcel `create` | Always fails with a misleading message; report vertices always empty |
-| Labels | Surface, pipe and structure styles read from the wrong place; alignment station labels; several types don't exist |
-| Pipe QC and hydraulics | Reads a setting rather than actual cover; `minCoverDepth` ignored; inverts 0.0; no connected pipes; limits unchanged in metric drawings; slope units disagree |
-| Quantity `surface_volume` | Ignores `region` |
-| `dependentCorridors` | Always empty; deletes don't check |
-| Point delete | Opens earlier points for write, so a locked layer blocks another point (suspected) |
-| Feature lines on a layout tab | Land in paper space and can't be found |
-| Misspelled layer | One path still creates it; a misspelled surface in sections samples nothing |
-| `add_structure` | No name input; rim and sump default to 0 |
-| Alignment `create` | `type: "offset"` ignored; curves added, so input vertices aren't on it |
-| Sections | `leftOffset` can't be negative; `surfaces` required though shown optional |
-| Surface volumes | Net sign differs between two answers; off-surface cells skipped silently |
-| Advertised but always refused | `add_spiral`, `widen_transition`, `set_grade`, `sheet_set_create`, `sheet_publish_pdf`, `sheet_set_export`, survey |
-| Earlier list | Lot-line adjust; section data with no surfaces; corridor region frequency; surface profiles; plan production viewport; corridor volume temporary surface |
+| Grading groups, parcel `create` | Civil 3D's API has no call for them; the tools say so |
+| `add_spiral`, `widen_transition`, `set_grade`, `sheet_set_create`, `sheet_publish_pdf`, survey writes | Refused, plainly |
+| `watershed_add` | Says when nothing was added; no working call found yet |
+| Surface delete | Doesn't check what depends on the surface |
+| Parcel report vertices, `lot_line_adjust` | Need a parcel drawn by hand; not run |
+| Point windows (2.9 to 2.12), undo after a person's command (2.24), a person-held lock (3.27) | Need someone at Civil 3D |
+| Parts 3.20 to 3.44 with the drawing open, metric drawing, several drawings, view following | Not run yet |
+
+Civil 3D facts learned, worth knowing before testing again:
+
+- It starts on a blank Drawing1, not the last drawing: check the active drawing before any write.
+- AI Connection is off at every start.
+- A new script costs nothing after the first (about 450 MB, once). Read `memoryUsageMb` from `civil3d_health` as you go.
 
 ## 6. The test job
 

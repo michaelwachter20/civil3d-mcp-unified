@@ -57,7 +57,9 @@ public static class SightDistanceCommands
     var ssdFeet = ssdMetres * 3.28084;
 
     // Min K-value for crest curve (AASHTO):  K = L / A,  SSD ≈ √(SSD² / 658) for H1=1.08m, H2=0.60m
-    var (kcrest, ksag) = InterpolateKValues(speedKmh);
+    // Stopping sight distance K in the units asked in: feet at mph, metres at km/h, as the Green Book's tables give them.
+    var mph = string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
+    var (ksag, kcrest) = ProfileEditCommands.MinimumK(mph ? speedKmh / 1.60934 : speedKmh, metric: !mph);
 
     double requiredSightDistance;
     string sightTypeLabel;
@@ -138,7 +140,6 @@ public static class SightDistanceCommands
     var speedKmh = designSpeed;
     var friction = InterpolateFriction(speedKmh);
     var ssdMetres = 0.278 * speedKmh * 2.5 + (speedKmh * speedKmh) / (254.0 * friction);
-    var (kcrestMin, _) = InterpolateKValues(speedKmh);
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -148,6 +149,9 @@ public static class SightDistanceCommands
       var endSta = stationEnd ?? (startSta + alignmentLength);
 
       var profileId = FindProfileId(alignment, transaction, profileName);
+      // K on a profile is in the drawing's units, so the limit is too.
+      var metricDrawing = database.Insunits == UnitsValue.Meters;
+      var (_, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / 1.60934, metricDrawing);
       var violations = new List<Dictionary<string, object?>>();
       var checkedCount = 0;
 

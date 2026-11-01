@@ -92,11 +92,30 @@ public static class SectionCommands
       var sectionSources = group.GetSectionSources();
       var requestedSurfaces = (PluginRuntime.GetParameter(parameters, "surfaces") as JsonArray)?.Select(node => node?.GetValue<string>()).Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+      var sourceNames = new List<string>();
       foreach (SectionSource source in sectionSources)
       {
         var sourceObject = transaction.GetObject(source.SourceId, OpenMode.ForRead);
         var sourceName = CivilObjectUtils.GetName(sourceObject);
         source.IsSampled = requestedSurfaces.Count == 0 || (sourceName != null && requestedSurfaces.Contains(sourceName));
+        if (sourceName != null)
+        {
+          sourceNames.Add(sourceName);
+        }
+      }
+
+      // Unrefused, a misspelled surface gives a group that samples nothing.
+      foreach (var requested in requestedSurfaces)
+      {
+        if (!sourceNames.Contains(requested, StringComparer.OrdinalIgnoreCase))
+        {
+          throw LookupUtils.NotFound("Surface", requested, sourceNames);
+        }
+      }
+
+      if (leftWidth <= 0 && rightWidth <= 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A sample line needs a width on at least one side.");
       }
 
       var stations = new List<double>();
@@ -107,6 +126,10 @@ public static class SectionCommands
       else if (interval.HasValue && interval.Value > 0)
       {
         stations.AddRange(StationMath.IntervalStations(alignment.StartingStation, alignment.EndingStation, interval.Value));
+        if (alignment.EndingStation - stations[^1] > 0.001)
+        {
+          stations.Add(alignment.EndingStation);
+        }
       }
       else
       {
@@ -116,6 +139,7 @@ public static class SectionCommands
       var createdStations = new List<double>();
       foreach (var station in stations.Distinct().OrderBy(value => value))
       {
+        AlignmentCommands.RequireStation(alignment, station);
         double x1 = 0;
         double y1 = 0;
         double x2 = 0;
@@ -127,7 +151,7 @@ public static class SectionCommands
           new(x1, y1),
           new(x2, y2),
         };
-        SampleLine.Create(StationMath.SampleLineName(station), groupId, points);
+        SampleLine.Create(StationMath.SampleLineName(group.Name, station), groupId, points);
         createdStations.Add(station);
       }
 
@@ -146,8 +170,6 @@ public static class SectionCommands
   /// <c>alignmentName</c> and returns its station and the drawing's units. CIVIL3D.OBJECT_NOT_FOUND when the
   /// alignment has no groups, the group isn't there or no sample line is at that station. Read only.
   /// </summary>
-  // NOTE: "surfaces" in the answer is always an empty list: the section data at the sample line is never read, so
-  // the caller learns only that the sample line exists (exportSectionData is the path that reads section points).
   public static Task<object?> GetSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -181,10 +203,25 @@ public static class SectionCommands
           throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sample line at station {station} was not found.");
         }
 
+        var surfaces = new List<Dictionary<string, object?>>();
+        foreach (ObjectId sectionId in sampleLine.GetSectionIds())
+        {
+          var section = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Section>(transaction, sectionId, OpenMode.ForRead);
+          var offsets = new List<double>();
+          var elevations = new List<double>();
+          foreach (SectionPoint point in section.SectionPoints)
+          {
+            offsets.Add(point.Location.X);
+            elevations.Add(point.Location.Y);
+          }
+
+          surfaces.Add(new Dictionary<string, object?> { ["surfaceName"] = section.SourceName, ["offsets"] = offsets, ["elevations"] = elevations });
+        }
+
         return new Dictionary<string, object?>
         {
           ["station"] = sampleLine.Station,
-          ["surfaces"] = new List<object>(),
+          ["surfaces"] = surfaces,
           ["units"] = new Dictionary<string, object?>
           {
             ["horizontal"] = CivilObjectUtils.LinearUnits(database),

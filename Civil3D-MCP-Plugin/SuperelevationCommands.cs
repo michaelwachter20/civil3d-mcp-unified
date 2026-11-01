@@ -49,7 +49,9 @@ public static class SuperelevationCommands
         ["pivotPoint"] = null,
         ["superelevationType"] = alignment.SuperelevationType.ToString(),
         ["curveCount"] = curves.Count,
-        ["hasSuperelevation"] = curves.Count > 0,
+        // Every curve is listed whether or not it was ever designed, with its start and end as critical stations;
+        // calculated superelevation adds the transition stations between them.
+        ["hasSuperelevation"] = alignment.SuperelevationCriticalStations.Count > curves.Count * 2,
         ["managedApiLimit"] = "Civil 3D does not expose wizard attainment, crown, or pivot settings through the managed API.",
       };
 

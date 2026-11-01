@@ -20,6 +20,18 @@ public static class CivilObjectUtils
     return dbObject.Handle.ToString();
   }
 
+  /// <summary>
+  /// An alignment entity's length. Not every kind of entity has a Length to read, and 0 made QC call sound tangents
+  /// zero-length, so the stations it spans answer when it doesn't.
+  /// </summary>
+  public static double EntityLength(object? entity)
+  {
+    var length = GetPropertyValue<double?>(entity, "Length") ?? 0;
+    return length > 0
+      ? length
+      : (GetPropertyValue<double?>(entity, "EndStation") ?? 0) - (GetPropertyValue<double?>(entity, "StartStation") ?? 0);
+  }
+
   public static string? GetName(object? value)
   {
     if (value == null)
