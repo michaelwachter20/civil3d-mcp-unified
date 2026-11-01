@@ -652,6 +652,10 @@ function findFile(db: DatabaseSync, file: string): FileRow {
   const candidates = db.prepare(`SELECT ${columns} FROM files WHERE name = ? COLLATE NOCASE OR path LIKE ? ESCAPE '!' LIMIT 11`)
     .all(baseName(wanted), `%\\${escapeLike(wanted)}`) as unknown as FileRow[];
   if (candidates.length === 1) return candidates[0];
+  // A moved file keeps its old row beside the new one: the name means the file as it is now.
+  const moved = db.prepare("SELECT 1 FROM props WHERE file_id = ? AND key = 'moved_to'");
+  const current = candidates.filter((row) => !moved.get(row.id));
+  if (current.length === 1) return current[0];
   if (candidates.length > 1) {
     throw knowledgeError("CIVIL3D.INVALID_INPUT", `Several files match '${file}': ${candidates.slice(0, 10).map((row) => row.path).join("; ")}. Give the path.`);
   }

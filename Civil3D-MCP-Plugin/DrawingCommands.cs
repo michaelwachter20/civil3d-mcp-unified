@@ -259,7 +259,16 @@ public static class DrawingCommands
         readOnly = true;
       }
 
-      var document = manager.Open(path, readOnly);
+      Document document;
+      try
+      {
+        document = manager.Open(path, readOnly);
+      }
+      catch (Exception exception) when (exception is not JsonRpcDispatchException)
+      {
+        // A damaged drawing answers only "Invalid execution context".
+        throw new JsonRpcDispatchException("CIVIL3D.FILE_IO_ERROR", $"Civil 3D couldn't open {Path.GetFileName(path)} ({exception.Message}). The drawing may be damaged: try RECOVER on it in Civil 3D.");
+      }
       manager.MdiActiveDocument = document;
       return Task.FromResult<object?>(new Dictionary<string, object?>
       {

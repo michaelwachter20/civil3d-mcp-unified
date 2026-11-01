@@ -24,6 +24,13 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   undo and redo still empties it. An approval now covers a call whose points leave z to its default. `new` starts from
   the normal template, not an empty one. Errors Civil 3D raises say "Civil 3D refused this" and give its reason.
 
+- **Pipes where they belong:** `add_pipe` between structures laid the pipe at rim height, and the connection dragged the
+  structures to it. Its invert now sits on each sump, and the structures stay put. A rim you give holds on a network with
+  a reference surface. `add_pipe` and `add_structure` take a `name`.
+
+- **The sandbox reads what a script compiles to,** so `using F = System.IO.File;` can't step around it. Every skill's
+  template now compiles.
+
 - **Still refused, because Civil 3D's API has no way:** grading groups, parcel creation.
 
 - **New scripts no longer eat Civil 3D's memory.** Every new C# script kept about 460 MB until a day's testing reached 19

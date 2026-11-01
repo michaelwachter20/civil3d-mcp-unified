@@ -102,15 +102,20 @@ internal static class ScriptEngine
     }
 
     var entry = Cache.GetOrAdd(hash, key => new Lazy<CompiledScript>(() => CompileCore(code, key), LazyThreadSafetyMode.ExecutionAndPublication));
+    CompiledScript compiled;
     try
     {
-      return entry.Value;
+      compiled = entry.Value;
     }
     catch
     {
       Cache.TryRemove(hash, out _);
       throw;
     }
+
+    // On every call, cached or not: the same code can be allowed in a write and refused in a read.
+    ScriptSymbolCheck.Validate(compiled.Script.GetCompilation(), writeMode);
+    return compiled;
   }
 
   public static void ClearCache() => Cache.Clear();

@@ -294,6 +294,14 @@ public static class PipeNetworkCommands
       var location = new Point3d(x, y, rimElevation);
       var createdStructureId = AddStructureToNetwork(network, transaction, location, partName, rimElevation, sumpDepth);
       var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, createdStructureId, OpenMode.ForWrite);
+      if (requestedRim.HasValue)
+      {
+        // A network with a reference surface moves the rim back to the surface unless told not to.
+        structure.AutomaticRimSurfaceAdjustment = false;
+        structure.RimElevation = rimElevation;
+        structure.RimToSumpHeight = sumpDepth;
+      }
+
       if (!string.IsNullOrWhiteSpace(structureName))
       {
         structure.Name = structureName;
@@ -337,8 +345,13 @@ public static class PipeNetworkCommands
 
       var startPoint = ReadPoint(parameters, "startPoint");
       var endPoint = ReadPoint(parameters, "endPoint");
+      var pipeName = PluginRuntime.GetOptionalString(parameters, "name");
       var createdPipeId = AddPipeToNetwork(network, transaction, partName, diameter, startPoint, endPoint, startStructureId, endStructureId);
-      var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, createdPipeId, OpenMode.ForRead);
+      var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, createdPipeId, OpenMode.ForWrite);
+      if (!string.IsNullOrWhiteSpace(pipeName))
+      {
+        pipe.Name = pipeName;
+      }
 
       return new Dictionary<string, object?>
       {
@@ -667,10 +680,19 @@ public static class PipeNetworkCommands
     var createdId = ObjectId.Null;
     network.AddLinePipe(part.FamilyId, part.SizeId, new LineSegment3d(start, end), ref createdId, applyRules: false);
     var pipe = CivilObjectUtils.GetRequiredObject<Pipe>(transaction, createdId, OpenMode.ForWrite);
+
+    // An end taken from a structure lies on its sump, invert on the sump: its end points are the pipe's centerline.
+    var halfHeight = pipe.InnerHeight / 2;
+    if (startPoint == null)
+      pipe.StartPoint = start + new Vector3d(0, 0, halfHeight);
+    if (endPoint == null)
+      pipe.EndPoint = end + new Vector3d(0, 0, halfHeight);
+
+    // Forcing a connection moves the structure to the pipe, rim and all, so only an end the caller placed is forced.
     if (startStructureId != ObjectId.Null)
-      pipe.ConnectToStructure(ConnectorPositionType.Start, startStructureId, force: true);
+      pipe.ConnectToStructure(ConnectorPositionType.Start, startStructureId, force: startPoint != null);
     if (endStructureId != ObjectId.Null)
-      pipe.ConnectToStructure(ConnectorPositionType.End, endStructureId, force: true);
+      pipe.ConnectToStructure(ConnectorPositionType.End, endStructureId, force: endPoint != null);
     if (diameter.HasValue && Math.Abs(pipe.InnerDiameterOrWidth - diameter.Value) > 1.0e-6)
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Part size '{partName}' has inner diameter/width {pipe.InnerDiameterOrWidth}, not the requested {diameter.Value}. The pipe was not committed.");
     return createdId;
@@ -925,6 +947,7 @@ public static class PipeNetworkCommands
   {
     if (structureId.IsNull)
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Provide {endpointName}Point or {endpointName}Structure; an origin point will not be assumed.");
-    return CivilObjectUtils.GetRequiredObject<Structure>(transaction, structureId, OpenMode.ForRead).Location;
+    var structure = CivilObjectUtils.GetRequiredObject<Structure>(transaction, structureId, OpenMode.ForRead);
+    return new Point3d(structure.Location.X, structure.Location.Y, structure.SumpElevation);
   }
 }

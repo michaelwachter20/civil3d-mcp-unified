@@ -14,7 +14,7 @@ var settings = CivilDoc.Settings.DrawingSettings;
 // Count objects
 var surfaceCount = CivilDoc.GetSurfaceIds().Count;
 var alignmentCount = CivilDoc.GetAlignmentIds().Count;
-var corridorCount = CivilDoc.GetCorridorIds().Count;
+var corridorCount = CivilDoc.CorridorCollection.Cast<ObjectId>().Count();
 var siteCount = CivilDoc.GetSiteIds().Count;
 var pipeNetworkCount = CivilDoc.GetPipeNetworkIds().Count;
 var pointCount = CivilDoc.CogoPoints.Count;

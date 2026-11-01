@@ -152,6 +152,7 @@ const PipeAddPipeArgsSchema = z.object({
   startStructure: z.string().optional(),
   endStructure: z.string().optional(),
   partName: z.string(),
+  name: z.string().optional(),
   diameter: z.number().optional(),
 }).superRefine((value, ctx) => {
   if (!value.startPoint && !value.startStructure) {
@@ -547,6 +548,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         startStructure: args.startStructure,
         endStructure: args.endStructure,
         partName: args.partName,
+        name: args.name,
         diameter: args.diameter,
       })),
     },
