@@ -1501,7 +1501,8 @@ use the default loopback endpoint.
 | [tools.generated.md](./docs/tools.generated.md) | Release-checked canonical and alias catalog generated from the runtime manifest |
 | [tools.md](./docs/tools.md) | Extended parameter and workflow reference |
 | [CHANGELOG.md](./CHANGELOG.md) | Release history |
-| [ROADMAP.md](./ROADMAP.md) | Production-readiness phases and live-validation evidence |
+| [ROADMAP.md](./ROADMAP.md) | Phases, live-validation evidence and what needs working on |
+| [LIVE-TEST-PLAN.md](./docs/LIVE-TEST-PLAN.md) | Every test for a day at Civil 3D, on a made-up job |
 
 ---
 

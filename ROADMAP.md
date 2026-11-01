@@ -339,7 +339,7 @@ panned, zoomed out, and stayed put as expected across three writes.
 
 ### Fork phase C - Re-validate on 2027
 
-Status: Partly done. Reviewed 2026-10-31.
+Status: Partly done. Reviewed 2026-11-01.
 
 Live-tested on Civil 3D 2027 (English, build 13.9.1308): code execution, saved scripts, `MCPRUN`, `acad_command`, undo
 grouping, read context and view following.
@@ -356,74 +356,55 @@ Still to do, all at a PC with Civil 3D open:
 
 ### Fork phase D - Script robustness
 
-Status: Partly done. Reviewed 2026-10-31.
-
-Done:
+Status: Complete in automated tests. Reviewed 2026-11-01.
 
 - Scripts compile in Release mode. Debug-mode script code crashed the .NET 10 runtime, the `clrjit.dll` crash this
   phase set out to find.
 - `MCPRUN` no longer blocks on `.GetAwaiter().GetResult()`.
-
-Still to do:
-
-- Guard against runaway scripts: inject `CancellationToken` checks into loop
-  bodies before compiling, so the timeout can stop a tight loop. Today such a loop freezes Civil 3D.
-- Convert the original barbosaihan skill templates from placeholder names to `Args`. 12 of the 37 skills have no `Args`,
-  and templates such as `create_tin_surface` still hold values like `SURFACE_NAME_HERE`.
+- Runaway scripts: every loop checks the cancellation token (`ScriptLoopGuard`), so the timeout stops a tight loop.
+  Proven by compiling and running endless scripts outside Civil 3D; to be proven inside it (LIVE-TEST-PLAN 2.30).
+- Skill templates take their values from `Args`. They have never been compiled against Civil 3D's assemblies
+  (LIVE-TEST-PLAN 2.35).
 
 ### Fork phase E - CI and housekeeping
 
-Status: Partly done. Reviewed 2026-10-31.
+Status: Complete. Reviewed 2026-11-01.
 
-Done:
-
-- 2.4.0 released. The Node checks in CI run on Windows, like the Release workflow, because job paths are Windows paths.
-
-Still to do:
-
-- Make the self-hosted `Civil3D-2027` plugin workflow manual-only (or register a
-  runner). It still runs on pull requests, which then wait indefinitely for a machine that doesn't exist.
-- Move the workflows off the action versions that run on Node 20, which GitHub has deprecated.
+- The Node checks run on Windows, like the Release workflow, because job paths are Windows paths.
+- The self-hosted plugin workflow is manual-only; the Actions are on current versions (first run on the next push).
 
 ### Fork phase F - Knowing the job, shared with the suite
 
-Status: Complete in automated tests (555 tests, plus the suite test of all three programs on one database). Not
+Status: Complete in automated tests (566 tests, plus the suite test of all three programs on one database). Not
 live-tested in Civil 3D.
 
 - The learned-knowledge base: preferences, lessons, skills, scripts and good practices, each checked for job data
   before saving, kept in the suite's shared folder.
 - `civil3d_project_notes`: the job's SQLite database, shared with Project Analyzer and TBC MCP, with `overview`,
   `search`, `file`, `entity`, `timeline`, `locate`, `latest`, `checks` and `changes`, and User Knowledge documents.
-- Safe sharing: read-only opens, a clear answer when the database is busy or damaged, daily checked backups of
-  databases this tool created, and a lock around changes to knowledge files.
-- `civil3d_drawing action=open` opens an open drawing first, then the latest version from the job's database.
+- Safe sharing: read-only opens, a clear answer when the database is busy, damaged or being rebuilt, daily checked
+  backups of databases this tool created, and a lock around changes to knowledge files.
+- `civil3d_drawing action=open` opens an open drawing first, then the latest version from the job's database, and asks
+  when one name means different drawings.
 
 ### Fork phase G - Guards
 
-Status: Complete in automated tests. The first two items below are still to be tried in Civil 3D.
+Status: Complete in automated tests. Not live-tested in Civil 3D.
 
 - Points come in through `import_file`; any other way of making points asks the user in a window in Civil 3D.
-- Misspelled style, layer and site names are refused.
-- `transform` on every point needs `allPoints: true`; report files need approval; a sampling interval of zero or less
-  is refused.
+- Misspelled style, layer and site names are refused (a review suspects one layer path still creates the layer).
+- `transform` on every point needs `allPoints: true`; report files and `extract_contours` need approval; a sampling
+  interval of zero or less is refused; `delete_pvi` needs a PVI at the station; `save` protects the template.
 
 ## What needs working on
 
-In order. Reviewed 2026-10-31, against the code and 2.4.0.
+In order. Reviewed 2026-11-01, against the code and 2.4.1. Details and every test are in
+[docs/LIVE-TEST-PLAN.md](docs/LIVE-TEST-PLAN.md).
 
-1. **Try 2.4.0 in Civil 3D** (needs a person at Civil 3D):
-   - `import_file`, and the window that asks before making points;
-   - the `open` action, including a drawing someone else has open;
-   - the misspelled-name refusal.
-2. **Results that are wrong or incomplete.** Each is marked `NOTE` in the code. Fix them with Civil 3D open, because the
-   answer depends on how Civil 3D behaves:
-   - lot-line adjust probably never moves anything (`parcelDomain.ts`);
-   - section data always comes back with no surfaces (`SectionCommands.cs`);
-   - each corridor region reports an insertion frequency of 0 (`CorridorCommands.cs`);
-   - surface profiles may not be recognized (`ProfileCommands.cs`);
-   - plan production falls back to the first viewport and sets the sheet's alignment by guessing property names
-     (`planProductionDomain.ts`);
-   - the corridor volume check makes a temporary surface during a read (`CorridorCommands.cs`, `corridorDomain.ts`).
-3. **Phase C:** the live suites and the upstream fixed tools on 2027.
-4. **Phase D:** the runaway-script guard, then the skill templates.
-5. **Phase E:** the plugin workflow's trigger and the action versions.
+1. **The live test day** (needs a person at Civil 3D): the automated suites, then parts 2 to 4 of the plan.
+2. **What a review says doesn't work** (LIVE-TEST-PLAN part 5). Most can't be fixed safely without Civil 3D open: corridor
+   region and target mapping, the pipe catalog and QC, profile views, offset alignments, grading groups, parcel `create`,
+   labels, `dependentCorridors`, and the actions advertised but always refused. Fix each or stop advertising it.
+3. **Phase C:** the Docker path, and the upstream fixed tools on 2027.
+4. **Smaller ones noticed:** the reference-only line isn't on `files` and `read` of User Knowledge; notes on a moved
+   file's old id stay with the old id; OneDrive placeholders may be refused by `FileBoundary` (suspected).
