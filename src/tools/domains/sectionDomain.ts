@@ -36,6 +36,8 @@ const SectionDataResponseSchema = z.object({
   station: z.number(),
   surfaces: z.array(z.object({
     surfaceName: z.string(),
+    pointCount: z.number().optional(),
+    thinned: z.boolean().optional(),
     offsets: z.array(z.number()),
     elevations: z.array(z.number()),
   })),
@@ -58,6 +60,7 @@ const SectionGetDataArgsSchema = z.object({
   alignmentName: z.string(),
   sampleLineGroupName: z.string(),
   station: z.number(),
+  maxPoints: z.number().int().positive().optional(),
 });
 
 /**
@@ -167,6 +170,7 @@ const canonicalSectionInputShape = {
   alignmentName: z.string().optional(),
   sampleLineGroupName: z.string().optional(),
   station: z.number().optional(),
+  maxPoints: z.number().int().positive().optional(),
   groupName: z.string().optional(),
   stations: z.array(z.number()).optional(),
   interval: z.number().optional(),
@@ -226,6 +230,7 @@ export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
           alignmentName: args.alignmentName,
           sampleLineGroupName: args.sampleLineGroupName,
           station: args.station,
+          maxPoints: args.maxPoints ?? null,
         }),
       ),
     },

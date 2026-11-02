@@ -170,11 +170,34 @@ public static class SectionCommands
   /// <c>alignmentName</c> and returns its station and the drawing's units. CIVIL3D.OBJECT_NOT_FOUND when the
   /// alignment has no groups, the group isn't there or no sample line is at that station. Read only.
   /// </summary>
+  /// <summary>
+  /// Most points to return per surface unless asked: one real station came to 197,000 characters, enough to fill an AI's
+  /// whole working memory. Evenly spread, so breaks between them can be missed: `thinned` says when, and maxPoints gets all.
+  /// </summary>
+  private const int DefaultSectionPoints = 200;
+
+  /// <summary>
+  /// What a section was cut from. When that surface has since been removed, Civil 3D throws on being asked, though the
+  /// section's own points are all there: 137 of 2,170 on one real drawing. So one of those mustn't lose the whole station.
+  /// </summary>
+  private static string SectionSource(Autodesk.Civil.DatabaseServices.Section section)
+  {
+    try
+    {
+      return section.SourceName;
+    }
+    catch (Autodesk.Civil.CivilException)
+    {
+      return $"{section.Name} (its source surface is gone)";
+    }
+  }
+
   public static Task<object?> GetSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var sampleLineGroupName = PluginRuntime.GetRequiredString(parameters, "sampleLineGroupName");
     var station = PluginRuntime.GetRequiredDouble(parameters, "station");
+    var maxPoints = PluginRuntime.GetOptionalInt(parameters, "maxPoints") ?? DefaultSectionPoints;
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -215,7 +238,15 @@ public static class SectionCommands
             elevations.Add(point.Location.Y);
           }
 
-          surfaces.Add(new Dictionary<string, object?> { ["surfaceName"] = section.SourceName, ["offsets"] = offsets, ["elevations"] = elevations });
+          var kept = StationMath.EvenIndices(offsets.Count, maxPoints);
+          surfaces.Add(new Dictionary<string, object?>
+          {
+            ["surfaceName"] = SectionSource(section),
+            ["pointCount"] = offsets.Count,
+            ["thinned"] = kept.Count < offsets.Count,
+            ["offsets"] = kept.Select(index => offsets[index]).ToList(),
+            ["elevations"] = kept.Select(index => elevations[index]).ToList(),
+          });
         }
 
         return new Dictionary<string, object?>
@@ -521,7 +552,7 @@ public static class SectionCommands
           foreach (SectionPoint point in section.SectionPoints)
           {
             csv.Append(sampleLine.Station.ToString("G17", CultureInfo.InvariantCulture))
-              .Append(',').Append(EscapeCsv(section.SourceName))
+              .Append(',').Append(EscapeCsv(SectionSource(section)))
               .Append(',').Append(point.Location.X.ToString("G17", CultureInfo.InvariantCulture));
             if (includeElevations)
               csv.Append(',').Append(point.Location.Y.ToString("G17", CultureInfo.InvariantCulture));

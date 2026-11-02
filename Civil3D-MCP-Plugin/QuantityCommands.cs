@@ -42,7 +42,7 @@ public static class QuantityCommands
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
 
-      CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, compSurface.ObjectId);
+      CivilObjectUtils.RequireDifferentSurfaces(baseSurface, compSurface);
       var temporaryName = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
       var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, compSurface.ObjectId);
       var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
@@ -526,7 +526,7 @@ public static class QuantityCommands
     {
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var designSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurfaceName, OpenMode.ForRead);
-      CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, designSurface.ObjectId);
+      CivilObjectUtils.RequireDifferentSurfaces(baseSurface, designSurface);
       var volumeId = TinVolumeSurface.Create($"MCP_TMP_EARTHWORK_{Guid.NewGuid():N}", baseSurface.ObjectId, designSurface.ObjectId);
       var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeId, OpenMode.ForRead);
       var volumes = volumeSurface.GetVolumeProperties();

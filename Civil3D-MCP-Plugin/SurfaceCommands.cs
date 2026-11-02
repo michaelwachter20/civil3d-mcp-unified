@@ -151,7 +151,7 @@ public static class SurfaceCommands
   }
 
   /// <summary>Whether a surface has no points: its statistics and extents throw then ("no point or triangle").</summary>
-  private static bool IsEmpty(CivilSurface surface)
+  internal static bool IsEmpty(CivilSurface surface)
   {
     try
     {
@@ -964,6 +964,11 @@ public static class SurfaceCommands
       if (method == "grid")
       {
         var gridSpacing = PluginRuntime.GetRequiredDouble(parameters, "gridSpacing");
+        if (IsEmpty(surface))
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Surface '{name}' has no points yet, so there's nothing to sample.");
+        }
+
         var extents = CivilObjectUtils.GetPropertyValue<Extents3d?>(surface, "GeometricExtents");
         if (extents == null)
         {
@@ -1205,8 +1210,12 @@ public static class SurfaceCommands
     _ => null,
   };
 
-  private static int? GetTriangleCount(CivilSurface surface) =>
-    surface is TinSurface tinSurface ? tinSurface.GetTinProperties().NumberOfTriangles : null;
+  private static int? GetTriangleCount(CivilSurface surface) => surface switch
+  {
+    TinSurface tinSurface => tinSurface.GetTinProperties().NumberOfTriangles,
+    TinVolumeSurface volumeSurface => volumeSurface.GetTinProperties().NumberOfTriangles,
+    _ => null,
+  };
 
   private static ObjectId CreateTinSurface(string name, ObjectId styleId) => TinSurface.Create(name, styleId);
 
@@ -1327,7 +1336,7 @@ public static class SurfaceCommands
 
   private static TinVolumeSurface CreateTinVolumeSurface(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
-    CivilObjectUtils.RequireDifferentSurfaces(baseSurface.ObjectId, comparisonSurface.ObjectId);
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurface, comparisonSurface);
     var name = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
     var surfaceId = TinVolumeSurface.Create(name, baseSurface.ObjectId, comparisonSurface.ObjectId);
     return CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, surfaceId, OpenMode.ForRead);

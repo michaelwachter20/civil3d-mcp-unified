@@ -15,12 +15,30 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class CivilObjectUtils
 {
-  /// <summary>Civil 3D answers a volume between a surface and itself with "Fail to create a surface".</summary>
-  public static void RequireDifferentSurfaces(ObjectId baseSurface, ObjectId comparisonSurface)
+  /// <summary>Civil 3D answers a volume between a surface and itself, with an empty one, or with one somewhere else
+  /// entirely, with "Fail to create a surface".</summary>
+  public static void RequireDifferentSurfaces(Autodesk.Civil.DatabaseServices.Surface baseSurface, Autodesk.Civil.DatabaseServices.Surface comparisonSurface)
   {
-    if (baseSurface == comparisonSurface)
+    if (baseSurface.ObjectId == comparisonSurface.ObjectId)
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A volume needs two different surfaces: these are the same one.");
+    }
+
+    foreach (var surface in new[] { baseSurface, comparisonSurface })
+    {
+      if (SurfaceCommands.IsEmpty(surface))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Surface '{surface.Name}' has no points yet, so a volume can't be worked out with it.");
+      }
+    }
+
+    var first = baseSurface.GeometricExtents;
+    var second = comparisonSurface.GeometricExtents;
+    if (first.MaxPoint.X < second.MinPoint.X || second.MaxPoint.X < first.MinPoint.X
+      || first.MaxPoint.Y < second.MinPoint.Y || second.MaxPoint.Y < first.MinPoint.Y)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"Surfaces '{baseSurface.Name}' and '{comparisonSurface.Name}' don't overlap, so there's no volume between them. Check that both are in the same coordinates.");
     }
   }
 

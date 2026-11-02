@@ -20,6 +20,16 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   a crash, and now 1.1 s. `check_profile` went from 34 s to under a second and `sample_elevations` from 6 s to 0.6 s.
   `check_profile` now reports a steep tangent once, not at both ends. A timeout says Civil 3D may still be working.
 
+- **What a real job drawing found:** tried on a 105 MB drawing with an 852,000 point volume surface, ten surfaces and 1,463
+  points, every read took under a second but one 11 s volume. `check_surface` failed on an empty surface, and volumes with
+  one said only "Fail to create a surface": both now say what's wrong. Volume surfaces report their triangles. One
+  station's section came to 197,000 characters, so `get_section_data` returns 200 points per surface unless told
+  otherwise, and `point list` 500. `assembly list` said no assembly was used by any corridor. A section whose source
+  surface had been removed lost the whole station's answer, and a volume between surfaces that don't overlap said only
+  "Fail to create a surface"; both are handled. `civil3d_health` names a window Civil 3D is waiting on.
+
+- **Corridor targets are proven:** a lane set to follow an offset alignment moved from 12 ft to exactly 20 ft.
+
 - **A long call can't look like a crash:** native Civil 3D calls can't be stopped, so a long one can't be cut short, but it
   no longer goes unexplained. `civil3d_health` answers within seconds during a freeze, where it used to hang, and says
   what's running. New requests are refused at once while a call has run past a minute, naming it, rather than timing out

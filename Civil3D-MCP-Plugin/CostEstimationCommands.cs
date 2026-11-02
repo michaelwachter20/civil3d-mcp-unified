@@ -238,7 +238,7 @@ public static class CostEstimationCommands
   {
     var baseSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurface, OpenMode.ForRead);
     var desSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, designSurface, OpenMode.ForRead);
-    CivilObjectUtils.RequireDifferentSurfaces(baseSurf.ObjectId, desSurf.ObjectId);
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurf, desSurf);
     var temporaryName = $"MCP_TMP_COST_VOLUME_{Guid.NewGuid():N}";
     var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurf.ObjectId, desSurf.ObjectId);
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);

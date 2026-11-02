@@ -17,6 +17,18 @@ public static class StationMath
   /// every 10 would lose its last station. A station within a millionth of an interval of the end counts as the end.
   /// Empty when the interval isn't a positive number or the end is before the start.
   /// </summary>
+  /// <summary>
+  /// Which of <paramref name="count"/> items to keep to show at most <paramref name="most"/>: evenly spread, the first
+  /// and last always in. A real section can have over a thousand points on one surface.
+  /// </summary>
+  public static List<int> EvenIndices(int count, int most)
+  {
+    if (count <= most) return Enumerable.Range(0, count).ToList();
+    if (most <= 1) return new List<int> { 0 };
+
+    return Enumerable.Range(0, most).Select(index => (int)Math.Round(index * (count - 1) / (double)(most - 1))).Distinct().ToList();
+  }
+
   public static List<double> IntervalStations(double start, double end, double interval)
   {
     var stations = new List<double>();

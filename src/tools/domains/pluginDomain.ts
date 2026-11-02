@@ -17,6 +17,8 @@ const HealthResponseSchema = z.object({
   currentOperationDurationMs: z.number().nullable(),
   memoryUsageMb: z.number(),
   freeCommitMb: z.number().optional(),
+  activeCommands: z.string().optional(),
+  waitingDialog: z.string().nullable().optional(),
   mainThreadResponsive: z.boolean().optional(),
   note: z.string().nullable().optional(),
   logFilePath: z.string(),

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GEOMETRY_DOMAIN_DEFINITION } from "../src/tools/domains/geometryDomain.js";
 import { PLAN_PRODUCTION_DOMAIN_DEFINITION } from "../src/tools/domains/planProductionDomain.js";
+import { SECTION_DOMAIN_DEFINITION } from "../src/tools/domains/sectionDomain.js";
 import { SURVEY_DOMAIN_DEFINITION } from "../src/tools/domains/surveyDomain.js";
 import { findManifestAction, findManifestActionByCall } from "../src/tools/toolManifest.js";
 
@@ -26,6 +27,14 @@ describe("the full sweep's fixes", () => {
     };
     const parsed = z.object(tool.inputShape).parse(input);
     expect(SURVEY_DOMAIN_DEFINITION.actions.setup_add.inputSchema.parse(parsed)).toMatchObject(input);
+  });
+
+  it("lets a section's point limit through every tool that shows it", () => {
+    const input = { action: "get_section_data", alignmentName: "Elm", sampleLineGroupName: "SL", station: 100, maxPoints: 5000 };
+    for (const tool of SECTION_DOMAIN_DEFINITION.exposures.filter((exposure) => exposure.supportedActions.includes("get_section_data"))) {
+      expect(z.object(tool.inputShape).partial().passthrough().parse(input)).toMatchObject({ maxPoints: 5000 });
+      expect(Object.keys(tool.inputShape)).toContain("maxPoints");
+    }
   });
 
   it("takes either a figure or a network to insert, not both", () => {

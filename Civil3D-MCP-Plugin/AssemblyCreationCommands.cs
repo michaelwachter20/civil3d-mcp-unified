@@ -21,12 +21,25 @@ public static class AssemblyCreationCommands
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
+      var regions = new List<(ObjectId Assembly, string Corridor)>();
+      foreach (ObjectId corridorId in civilDoc.CorridorCollection)
+      {
+        var corridor = CivilObjectUtils.GetRequiredObject<Corridor>(transaction, corridorId, OpenMode.ForRead);
+        foreach (var baseline in corridor.Baselines)
+        {
+          foreach (BaselineRegion region in baseline.BaselineRegions)
+          {
+            regions.Add((region.AssemblyId, corridor.Name));
+          }
+        }
+      }
+
       var assemblies = civilDoc.AssemblyCollection
         .Select(id => CivilObjectUtils.GetRequiredObject<Assembly>(transaction, id, OpenMode.ForRead))
         .Select(assembly =>
         {
           var summary = ToAssemblySummary(assembly);
-          summary["usedByCorridors"] = new List<string>();
+          summary["usedByCorridors"] = regions.Where(region => region.Assembly == assembly.ObjectId).Select(region => region.Corridor).Distinct().ToList();
           return summary;
         })
         .ToList();

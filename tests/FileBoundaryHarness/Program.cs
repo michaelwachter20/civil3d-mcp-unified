@@ -314,6 +314,12 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
+  // A section keeps its ends and thins evenly (StationMath.EvenIndices).
+  Assert(StationMath.EvenIndices(5, 200).SequenceEqual(new[] { 0, 1, 2, 3, 4 }), "A short section is left alone.");
+  var thinned = StationMath.EvenIndices(1377, 200);
+  Assert(thinned.Count == 200 && thinned[0] == 0 && thinned[^1] == 1376 && thinned.SequenceEqual(thinned.OrderBy(index => index)), "A long one keeps its ends, in order.");
+  Assert(StationMath.EvenIndices(0, 200).Count == 0, "No points gives none.");
+
   // A long call and low memory are answered, not waited on (HostGuard).
   Assert(HostGuard.BusyRefusal(null, 999_000) == null, "Nothing running refuses nothing.");
   Assert(HostGuard.BusyRefusal("checkStoppingDistance", 59_000) == null, "A call under a minute lets the next one wait.");

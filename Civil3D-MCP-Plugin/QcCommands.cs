@@ -587,6 +587,29 @@ public static class QcCommands
         var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
         var findings = new List<Dictionary<string, object?>>();
 
+        // A surface defined but with nothing in it yet is common in real drawings, and Civil 3D throws when asked its
+        // properties, so this is a finding and not a failure.
+        if (SurfaceCommands.IsEmpty(surface))
+        {
+          findings.Add(new Dictionary<string, object?>
+          {
+            ["severity"] = "error",
+            ["type"] = "surface_no_points",
+            ["surfaceName"] = name,
+            ["message"] = $"Surface '{name}' has no data points.",
+          });
+          return new Dictionary<string, object?>
+          {
+            ["surfaceName"] = name,
+            ["numberOfPoints"] = 0,
+            ["numberOfTriangles"] = 0,
+            ["minElevation"] = null,
+            ["maxElevation"] = null,
+            ["findings"] = findings,
+            ["totalViolations"] = findings.Count,
+          };
+        }
+
         var generalProperties = CivilObjectUtils.InvokeMethod(surface, "GetGeneralProperties");
         var minElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MinimumElevation") ?? 0;
         var maxElevation = CivilObjectUtils.GetPropertyValue<double?>(generalProperties, "MaximumElevation") ?? 0;

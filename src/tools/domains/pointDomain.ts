@@ -242,7 +242,8 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("listCogoPoints", {
           groupName: args.groupName,
-          limit: args.limit,
+          // Every point of a real job is hundreds of KB. totalCount says how many there are; limit and offset page them.
+          limit: args.limit ?? 500,
           offset: args.offset,
         }),
       ),
