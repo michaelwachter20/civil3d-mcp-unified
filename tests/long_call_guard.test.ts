@@ -41,7 +41,7 @@ describe("what keeps a long profile from freezing Civil 3D", () => {
     const code = plugin("PluginRuntime.cs");
     const start = code.indexOf("internal static void QueueHostOperation");
     const body = code.slice(start, code.indexOf("internal static void StartHostOperation"));
-    expect(body).toContain("HostGuard.MemoryRefusal");
+    expect(body).toContain("HostGuard.CheckMemory");
     expect(body).toContain("HostGuard.BusyRefusal");
   });
 });
