@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.Civil.DatabaseServices;
+using CivilProfile = Autodesk.Civil.DatabaseServices.Profile;
 
 namespace Civil3DMcpPlugin;
 
@@ -13,6 +15,9 @@ public static class SightDistanceCommands
 {
   private const double KmhPerMph = 1.60934;
   private const double FeetPerMetre = 3.28084;
+
+  /// <summary>One vertical curve: the stations it runs between, its K, and whether it's a sag.</summary>
+  private readonly record struct VerticalCurve(double Start, double End, double K, bool Sag);
 
   // ─── calculateSightDistance ──────────────────────────────────────────────────
 
@@ -89,7 +94,7 @@ public static class SightDistanceCommands
         {
           var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName!);
           var profileId = FindProfileId(alignment, transaction, profileName!);
-          var curve = profileId != ObjectId.Null ? CurveAtStation(transaction, profileId, checkStation.Value) : null;
+          var curve = CurveAtStation(ReadVerticalCurves(transaction, profileId), checkStation.Value);
           // A profile's K is in the drawing's units, whichever units the speed came in.
           var (sagLimit, crestLimit) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedMph, metricDrawing);
 
@@ -133,7 +138,7 @@ public static class SightDistanceCommands
       var startSta = stationStart ?? CivilObjectUtils.GetPropertyValue<double?>(alignment, "StartingStation") ?? 0.0;
       var endSta = stationEnd ?? (startSta + alignmentLength);
 
-      var profileId = FindProfileId(alignment, transaction, profileName);
+      var curves = ReadVerticalCurves(transaction, FindProfileId(alignment, transaction, profileName));
       var (ksagMin, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / KmhPerMph, metricDrawing);
       var violations = new List<Dictionary<string, object?>>();
       var checkedCount = 0;
@@ -141,7 +146,7 @@ public static class SightDistanceCommands
       for (double sta = startSta; sta <= endSta; sta += stationInterval)
       {
         checkedCount++;
-        if ((profileId != ObjectId.Null ? CurveAtStation(transaction, profileId, sta) : null) is not { } curve) continue;
+        if (CurveAtStation(curves, sta) is not { } curve) continue;
         var required = curve.Sag ? ksagMin : kcrestMin;
         if (curve.K < required)
         {
@@ -183,7 +188,7 @@ public static class SightDistanceCommands
       ? !metricDrawing
       : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
 
-  private static ObjectId FindProfileId(DBObject alignment, Transaction transaction, string profileName)
+  private static ObjectId FindProfileId(Autodesk.AutoCAD.DatabaseServices.DBObject alignment, Transaction transaction, string profileName)
   {
     var profileIds = CivilObjectUtils.InvokeMethod(alignment, "GetProfileIds") as IEnumerable;
     if (profileIds == null) return ObjectId.Null;
@@ -200,40 +205,46 @@ public static class SightDistanceCommands
   }
 
   /// <summary>
-  /// The K of the vertical curve at a station and whether it's a sag; null on a tangent or a flat curve. Civil 3D's
-  /// classes are ProfileParabolaSymmetric, ProfileParabolaAsymmetric and ProfileCircular, none with "curve" in the name.
+  /// A profile's vertical curves, read once. Walking the entities for every station held Civil 3D for 20 minutes on a
+  /// 6.5 mile ground profile, which has an entity for each surface triangle it crosses: 1,370 stations times 9,662
+  /// entities at 0.09 ms each. Null grades are a tangent. A flat curve has no K, so it's left out.
   /// </summary>
-  private static (double K, bool Sag)? CurveAtStation(Transaction transaction, ObjectId profileId, double station)
+  private static List<VerticalCurve> ReadVerticalCurves(Transaction transaction, ObjectId profileId)
   {
-    try
+    var curves = new List<VerticalCurve>();
+    if (profileId == ObjectId.Null) return curves;
+
+    var profile = (CivilProfile)transaction.GetObject(profileId, OpenMode.ForRead, false, true);
+    foreach (ProfileEntity entity in profile.Entities)
     {
-      var profile = transaction.GetObject(profileId, OpenMode.ForRead, false, true);
-      var entities = CivilObjectUtils.GetPropertyValue<object>(profile, "Entities");
-      if (entities is not IEnumerable enumerable) return null;
-
-      foreach (var entity in enumerable)
+      (double In, double Out)? grades = entity switch
       {
-        if (entity == null) continue;
-        var startSta = CivilObjectUtils.GetPropertyValue<double?>(entity, "StartStation") ?? 0;
-        var endSta = CivilObjectUtils.GetPropertyValue<double?>(entity, "EndStation") ?? 0;
-        if (station < startSta || station > endSta) continue;
+        ProfileParabolaSymmetric curve => (curve.GradeIn, curve.GradeOut),
+        ProfileParabolaAsymmetric curve => (curve.GradeIn, curve.GradeOut),
+        ProfileCircular curve => (curve.GradeIn, curve.GradeOut),
+        _ => null,
+      };
+      if (grades is not { } grade) continue;
 
-        var entityType = entity.GetType().Name;
-        if (entityType.IndexOf("parabola", StringComparison.OrdinalIgnoreCase) < 0
-          && entityType.IndexOf("circular", StringComparison.OrdinalIgnoreCase) < 0
-          && entityType.IndexOf("curve", StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-        var length = CivilObjectUtils.GetPropertyValue<double?>(entity, "Length") ?? 0;
-        var gradeIn = CivilObjectUtils.GetPropertyValue<double?>(entity, "GradeIn")
-                   ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "StartGrade") ?? 0;
-        var gradeOut = CivilObjectUtils.GetPropertyValue<double?>(entity, "GradeOut")
-                    ?? CivilObjectUtils.GetPropertyValue<double?>(entity, "EndGrade") ?? 0;
-        // Civil 3D gives grades as ratios (0.02 = 2%); K is per percent.
-        var a = Math.Abs(gradeOut - gradeIn) * 100;
-        if (a > 1e-10 && length > 0) return (length / a, gradeOut > gradeIn);
+      // Civil 3D gives grades as ratios (0.02 = 2%); K is per percent.
+      var a = Math.Abs(grade.Out - grade.In) * 100;
+      if (a > 1e-10 && entity.Length > 0)
+      {
+        curves.Add(new VerticalCurve(entity.StartStation, entity.EndStation, entity.Length / a, grade.Out > grade.In));
       }
-      return null;
     }
-    catch { return null; }
+
+    return curves;
+  }
+
+  /// <summary>The curve a station is on, or null on a tangent.</summary>
+  private static VerticalCurve? CurveAtStation(List<VerticalCurve> curves, double station)
+  {
+    foreach (var curve in curves)
+    {
+      if (station >= curve.Start && station <= curve.End) return curve;
+    }
+
+    return null;
   }
 }

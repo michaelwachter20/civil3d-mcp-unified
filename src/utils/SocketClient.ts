@@ -76,7 +76,7 @@ export class ApplicationClientConnection {
     this.socket.on("data", (data: Buffer) => {
       this.receivedBytes += data.length;
       if (this.receivedBytes > MAX_RESPONSE_BYTES) {
-        const error = new Error(`Civil 3D response exceeds ${MAX_RESPONSE_BYTES} bytes.`);
+        const error = new Error(`Civil 3D's answer is over ${MAX_RESPONSE_BYTES} bytes, too big to take: ask for less (a limit, a wider interval, one object).`);
         this.rejectPendingRequests(error);
         this.buffer = "";
         this.receivedBytes = 0;
@@ -209,7 +209,7 @@ export class ApplicationClientConnection {
         if (pending) {
           this.responseCallbacks.delete(requestId);
           log.warn("Command timed out", { method: command, requestId, timeoutMs: COMMAND_TIMEOUT_MS });
-          pending.reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`));
+          pending.reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}. Civil 3D may still be working on it and show as Not Responding until it finishes: wait, and don't run it again or end Civil 3D.`));
         }
       }, COMMAND_TIMEOUT_MS);
 

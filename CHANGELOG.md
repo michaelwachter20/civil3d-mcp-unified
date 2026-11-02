@@ -15,6 +15,18 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   `DataShortcutManager` with no window, and can make a new project. `stage_storage` measures the surface's contours and
   stops at the rim. `resize_pressure_pipe` swaps the part.
 
+- **Long ground profiles no longer freeze Civil 3D:** a ground profile has a piece for every surface triangle it crosses,
+  and `stopping_distance_check` re-read them all at each station: 20 minutes frozen on a 6.5 mile road, which looked like
+  a crash, and now 1.1 s. `check_profile` went from 34 s to under a second and `sample_elevations` from 6 s to 0.6 s.
+  `check_profile` now reports a steep tangent once, not at both ends. A timeout says Civil 3D may still be working.
+
+- **One huge answer can't end the session:** an answer sent as text and as structured content could pass the client's
+  10 MiB limit, which drops the connection. Past 2 MiB the caller gets the answer's shape and where the rest is kept.
+  `profile get` lists the first 500 entities unless told otherwise, in station order.
+
+- **Curve types were wrong:** every symmetric parabola was reported as asymmetric, because "ParabolaSymmetric" has
+  "asymmetric" in it, and every circular curve as a tangent.
+
 - **Survey is real now:** the old tools called something that doesn't exist, so they said "not initialized" even with
   survey data there. `civil3d_survey` now goes through Civil 3D's survey COM interface: make a database in feet, survey
   feet or metres, networks, control and non-control points, setups with their shots, figures, and insert a figure or

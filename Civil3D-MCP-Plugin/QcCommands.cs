@@ -212,10 +212,25 @@ public static class QcCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Checks profile <c>profileName</c> of alignment <c>alignmentName</c> PVI by PVI: grades in and out above
+  /// Checks profile <c>profileName</c> of alignment <c>alignmentName</c>: tangents and curve ends with a grade above
   /// <c>maxGrade</c>, and vertical curves whose K value is below <c>minKValue</c>. Grades are compared as the API gives
   /// them (a fraction, e.g. 0.06 for 6 %), so pass <c>maxGrade</c> the same way.
   /// </summary>
+  private readonly record struct EntityGrades(bool Tangent, double Start, double End, double Length, double GradeIn, double GradeOut);
+
+  private static EntityGrades ReadGrades(ProfileEntity entity)
+  {
+    var (tangent, gradeIn, gradeOut) = entity switch
+    {
+      ProfileTangent line => (true, line.Grade, line.Grade),
+      ProfileParabolaSymmetric curve => (false, curve.GradeIn, curve.GradeOut),
+      ProfileParabolaAsymmetric curve => (false, curve.GradeIn, curve.GradeOut),
+      ProfileCircular curve => (false, curve.GradeIn, curve.GradeOut),
+      _ => (false, 0.0, 0.0),
+    };
+    return new EntityGrades(tangent, entity.StartStation, entity.EndStation, entity.Length, gradeIn, gradeOut);
+  }
+
   public static Task<object?> QcCheckProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -231,71 +246,51 @@ public static class QcCommands
         var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForRead);
         var findings = new List<Dictionary<string, object?>>();
 
-        // Iterate PVIs
-        var pviCollection = CivilObjectUtils.GetPropertyValue<object>(profile, "PVIs");
-        if (pviCollection is IEnumerable pviEnumerable)
+        // By entity, not by PVI. Reading PVIs takes about 4 ms each, by index or by enumerating, so 9,662 of them on a
+        // 6.5 mile ground profile took 34 s; the same profile's entities take under a second.
+        // Civil 3D lists them in the order they were made, not along the road.
+        var entities = profile.Entities.Cast<ProfileEntity>().Select(ReadGrades).OrderBy(entity => entity.Start).ToList();
+        void CheckGrade(double grade, double station, string where)
         {
-          var pviList = pviEnumerable.Cast<object?>().Where(p => p != null).ToList();
-          for (var i = 0; i < pviList.Count; i++)
+          if (!maxGrade.HasValue || Math.Abs(grade) <= maxGrade.Value) return;
+          findings.Add(new Dictionary<string, object?>
           {
-            var pvi = pviList[i];
-            var station = CivilObjectUtils.GetPropertyValue<double?>(pvi, "Station") ?? 0;
-            var elevation = CivilObjectUtils.GetPropertyValue<double?>(pvi, "Elevation") ?? 0;
-            var gradeIn = CivilObjectUtils.GetPropertyValue<double?>(pvi, "GradeIn") ?? 0;
-            var gradeOut = CivilObjectUtils.GetPropertyValue<double?>(pvi, "GradeOut") ?? 0;
-            // K is the curve's length per percent of grade change; a PVI has no value for it, only its curve's length.
-            var curveLength = CivilObjectUtils.GetPropertyValue<double?>(CivilObjectUtils.GetPropertyValue<object>(pvi, "VerticalCurve"), "Length") ?? 0;
-            var gradeChangePercent = Math.Abs(gradeOut - gradeIn) * 100;
-            var kValue = gradeChangePercent > 0 ? curveLength / gradeChangePercent : 0;
+            ["severity"] = "warning",
+            ["type"] = "profile_grade_exceeds_maximum",
+            ["station"] = station,
+            ["grade"] = grade,
+            ["maxGrade"] = maxGrade,
+            ["message"] = $"{where} at station {station:F2}: grade {grade:P2} exceeds maximum {maxGrade:P2}.",
+          });
+        }
 
-            if (maxGrade.HasValue)
-            {
-              var absGradeIn = Math.Abs(gradeIn);
-              var absGradeOut = Math.Abs(gradeOut);
-              if (absGradeIn > maxGrade.Value)
-              {
-                findings.Add(new Dictionary<string, object?>
-                {
-                  ["severity"] = "warning",
-                  ["type"] = "profile_grade_exceeds_maximum",
-                  ["pviIndex"] = i,
-                  ["station"] = station,
-                  ["gradeIn"] = gradeIn,
-                  ["maxGrade"] = maxGrade,
-                  ["message"] = $"PVI {i} at station {station:F2}: incoming grade {gradeIn:P2} exceeds maximum {maxGrade:P2}.",
-                });
-              }
-              if (absGradeOut > maxGrade.Value)
-              {
-                findings.Add(new Dictionary<string, object?>
-                {
-                  ["severity"] = "warning",
-                  ["type"] = "profile_grade_exceeds_maximum",
-                  ["pviIndex"] = i,
-                  ["station"] = station,
-                  ["gradeOut"] = gradeOut,
-                  ["maxGrade"] = maxGrade,
-                  ["message"] = $"PVI {i} at station {station:F2}: outgoing grade {gradeOut:P2} exceeds maximum {maxGrade:P2}.",
-                });
-              }
-            }
+        for (var i = 0; i < entities.Count; i++)
+        {
+          var entity = entities[i];
+          if (entity.Tangent)
+          {
+            CheckGrade(entity.GradeIn, entity.Start, "Tangent");
+            continue;
+          }
 
-            if (minKValue.HasValue && curveLength > 0)
+          // Curve to curve has no tangent to carry the grade between them.
+          if (i == 0 || !entities[i - 1].Tangent) CheckGrade(entity.GradeIn, entity.Start, "Curve start");
+          if (i == entities.Count - 1 || !entities[i + 1].Tangent) CheckGrade(entity.GradeOut, entity.End, "Curve end");
+
+          // K is the curve's length per percent of grade change.
+          var gradeChangePercent = Math.Abs(entity.GradeOut - entity.GradeIn) * 100;
+          if (minKValue.HasValue && gradeChangePercent > 0 && entity.Length / gradeChangePercent < minKValue.Value)
+          {
+            var kValue = entity.Length / gradeChangePercent;
+            findings.Add(new Dictionary<string, object?>
             {
-              if (kValue < minKValue.Value)
-              {
-                findings.Add(new Dictionary<string, object?>
-                {
-                  ["severity"] = "warning",
-                  ["type"] = "profile_k_value_below_minimum",
-                  ["pviIndex"] = i,
-                  ["station"] = station,
-                  ["kValue"] = kValue,
-                  ["minKValue"] = minKValue,
-                  ["message"] = $"PVI {i} at station {station:F2}: K-value {kValue:F2} is below minimum {minKValue:F2}.",
-                });
-              }
-            }
+              ["severity"] = "warning",
+              ["type"] = "profile_k_value_below_minimum",
+              ["station"] = entity.Start,
+              ["kValue"] = kValue,
+              ["minKValue"] = minKValue,
+              ["message"] = $"Curve at station {entity.Start:F2}: K-value {kValue:F2} is below minimum {minKValue:F2}.",
+            });
           }
         }
 

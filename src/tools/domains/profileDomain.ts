@@ -52,6 +52,7 @@ const ProfileDetailResponseSchema = z.object({
   minElevation: z.number(),
   maxElevation: z.number(),
   entityCount: z.number(),
+  entitiesTruncated: z.boolean().optional(),
   entities: z.array(ProfileEntitySchema),
   pviCount: z.number(),
   units: z.object({
@@ -115,6 +116,7 @@ const ProfileGetArgsSchema = z.object({
   action: z.literal("get"),
   alignmentName: z.string(),
   profileName: z.string(),
+  entityLimit: z.number().int().positive().optional(),
 });
 
 const ProfileGetElevationArgsSchema = z.object({
@@ -315,6 +317,7 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("getProfile", {
           alignmentName: args.alignmentName,
           profileName: args.profileName,
+          entityLimit: args.entityLimit ?? null,
         }),
       ),
     },
@@ -421,6 +424,7 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
           await appClient.sendCommand("getProfile", {
             alignmentName: args.alignmentName,
             profileName: args.profileName,
+            entityLimit: 20000,
           }),
         );
 

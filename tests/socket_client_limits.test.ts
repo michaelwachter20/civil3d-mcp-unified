@@ -38,7 +38,7 @@ describe("ApplicationClientConnection response limits", () => {
       });
 
       await expect(client.sendCommand("getLargeReport", {})).rejects.toThrow(
-        "response exceeds 64 bytes",
+        "over 64 bytes",
       );
       expect(client.responseCallbacks.size).toBe(0);
     } finally {

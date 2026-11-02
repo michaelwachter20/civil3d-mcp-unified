@@ -2,6 +2,7 @@ import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { approvalPolicy, getActiveDrawingFingerprint, hasApprovalRisk } from "./approvalPolicy.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
+import { fitAnswer } from "./largeAnswer.js";
 import { maybeStoreReportResource } from "./reportResourceStore.js";
 import { idempotencyStore } from "./idempotencyStore.js";
 import { createLogger } from "../utils/logger.js";
@@ -162,7 +163,8 @@ function inferRpcErrorCode(domainCode: string): number {
 /**
  * Runs one call: resolve and validate the action, refuse an idempotencyKey on a non-retryable action, enforce
  * approval with the raw arguments (the token is bound to exactly what the client sent), execute, validate the
- * response, and keep a large or report-like answer as an MCP resource. With an idempotencyKey the result is shared
+ * response, keep a large or report-like answer as an MCP resource, and cut an answer too big to send to its shape
+ * (largeAnswer.ts). With an idempotencyKey the result is shared
  * between identical calls on the same drawing (idempotencyStore.ts); approvalToken and the key itself are left out
  * of the signature.
  */
@@ -220,10 +222,11 @@ async function executeExposure(
       : response;
     const serializedResponse = JSON.stringify(validatedResponse, null, 2);
     const reportResource = maybeStoreReportResource(actionName, serializedResponse);
+    const answer = fitAnswer(validatedResponse, serializedResponse, reportResource?.uri);
 
     return {
       content: [
-        { type: "text" as const, text: serializedResponse },
+        { type: "text" as const, text: answer.text },
         ...(reportResource ? [{
           type: "resource_link" as const,
           uri: reportResource.uri,
@@ -233,7 +236,7 @@ async function executeExposure(
           size: reportResource.size,
         }] : []),
       ],
-      structuredContent: { action: actionName, result: validatedResponse },
+      structuredContent: { action: actionName, result: answer.result },
     };
   };
 

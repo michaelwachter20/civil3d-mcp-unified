@@ -41,20 +41,23 @@ public static class ProfileCommands
   }
 
   /// <summary>
-  /// One profile in detail: type, style, layer, station and elevation ranges, PVI count and every entity (tangent,
-  /// parabola, asymmetric parabola or circular curve) with its stations, elevations, length and, for tangents,
-  /// grade. Read only.
+  /// One profile in detail: type, style, layer, station and elevation ranges, PVI count and its first
+  /// <c>entityLimit</c> entities (tangent, parabola, asymmetric parabola or circular curve) with their stations,
+  /// elevations, length and, for tangents, grade. A ground profile has an entity for every surface triangle it crosses,
+  /// so it can have tens of thousands. Read only.
   /// </summary>
   public static Task<object?> GetProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var profileName = PluginRuntime.GetRequiredString(parameters, "profileName");
+    var entityLimit = PluginRuntime.GetOptionalInt(parameters, "entityLimit") ?? DefaultEntityLimit;
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForRead);
-      var entities = ReadProfileEntities(profile);
+      var entities = ReadProfileEntities(profile, entityLimit);
+      var entityCount = profile.Entities.Count;
 
       return new Dictionary<string, object?>
       {
@@ -67,7 +70,8 @@ public static class ProfileCommands
         ["endStation"] = profile.EndingStation,
         ["minElevation"] = GetElevationExtents(profile).Min,
         ["maxElevation"] = GetElevationExtents(profile).Max,
-        ["entityCount"] = entities.Count,
+        ["entityCount"] = entityCount,
+        ["entitiesTruncated"] = entityCount > entities.Count,
         ["entities"] = entities,
         ["pviCount"] = CountPvis(profile),
         ["units"] = new Dictionary<string, object?>
@@ -108,6 +112,7 @@ public static class ProfileCommands
 
   // The most samples one sampleProfileElevations call returns.
   private const int MaxProfileSamples = 100_000;
+  private const int DefaultEntityLimit = 500;
 
   /// <summary>
   /// Elevation and grade every <c>interval</c> from <c>startStation</c> to <c>endStation</c> (default: the profile's
@@ -148,7 +153,7 @@ public static class ProfileCommands
         samples.Add(new Dictionary<string, object?>
         {
           ["station"] = station,
-          ["elevation"] = ReadProfileElevation(profile, station),
+          ["elevation"] = ElevationOnProfile(profile, station),
           ["grade"] = ReadProfileGrade(profile, station),
         });
       }
@@ -263,16 +268,18 @@ public static class ProfileCommands
     };
   }
 
-  private static List<Dictionary<string, object?>> ReadProfileEntities(Profile profile)
+  private static List<Dictionary<string, object?>> ReadProfileEntities(Profile profile, int limit)
   {
     var entities = new List<Dictionary<string, object?>>();
     var index = 0;
-    foreach (ProfileEntity entity in profile.Entities)
+
+    // Civil 3D lists them in the order they were made: a curve added last comes after the tangent beyond it.
+    foreach (var entity in profile.Entities.Cast<ProfileEntity>().OrderBy(item => item.StartStation).Take(limit))
     {
       entities.Add(new Dictionary<string, object?>
       {
         ["index"] = index++,
-        ["type"] = MapProfileEntityType(entity.EntityType.ToString()),
+        ["type"] = MapProfileEntityType(entity.EntityType),
         ["startStation"] = entity.StartStation,
         ["endStation"] = entity.EndStation,
         ["startElevation"] = entity.StartElevation,
@@ -304,6 +311,15 @@ public static class ProfileCommands
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Profile '{profile.Name}' has no PVIs yet.");
     }
 
+    return ElevationOnProfile(profile, station);
+  }
+
+  /// <summary>
+  /// Elevation at a station of a profile known to have PVIs. Counting them takes 5 ms on a long ground profile, so a
+  /// loop asks once.
+  /// </summary>
+  private static double ElevationOnProfile(Profile profile, double station)
+  {
     if (station < profile.StartingStation - 0.001 || station > profile.EndingStation + 0.001)
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
@@ -355,24 +371,15 @@ public static class ProfileCommands
   }
 
   /// <summary>Civil 3D's profile entity type name mapped to the tool's names: tangent, parabola, asymmetric_parabola, circular_curve.</summary>
-  private static string MapProfileEntityType(string value)
+  private static string MapProfileEntityType(ProfileEntityType value)
   {
-    var text = value.ToLowerInvariant();
-    if (text.Contains("asymmetric"))
+    // By exact name: "ParabolaSymmetric" has "asymmetric" in it, read without the capitals.
+    return value switch
     {
-      return "asymmetric_parabola";
-    }
-
-    if (text.Contains("parabola"))
-    {
-      return "parabola";
-    }
-
-    if (text.Contains("curve"))
-    {
-      return "circular_curve";
-    }
-
-    return "tangent";
+      ProfileEntityType.ParabolaAsymmetric => "asymmetric_parabola",
+      ProfileEntityType.ParabolaSymmetric => "parabola",
+      ProfileEntityType.Circular => "circular_curve",
+      _ => "tangent",
+    };
   }
 }

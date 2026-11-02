@@ -187,6 +187,10 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 
 Civil 3D facts learned, worth knowing before testing again:
 
+- Reading a long ground profile is slow in odd places: `PVIs.Count` takes 5 ms, each PVI 4 ms by index or by enumerating,
+  and enumerating `Entities` 0.09 ms each. Read them once. A call past 120 s times out for the client while Civil 3D
+  carries on, showing Not Responding: that looks like a crash, so check for a dump before calling it one.
+- `Entities` come in the order they were made, not by station.
 - Survey COM holds metres whatever the database's units, and a COM object still alive keeps the data it read: without a
   collection between calls, a read misses the write before it every time.
 - A drawing with no coordinate system has the code ".", and assigning one can change its foot to the survey foot.

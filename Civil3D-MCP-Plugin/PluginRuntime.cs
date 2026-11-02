@@ -162,7 +162,8 @@ public static class PluginRuntime
     var timer = System.Diagnostics.Stopwatch.StartNew();
     try
     {
-      PluginLog.Debug("Dispatch", $"-> {method} [{CurrentRequestId.Value ?? "no-id"}]");
+      // At Info, so that after a crash the log's last line says what was running.
+      PluginLog.Info("Dispatch", $"-> {method} [{CurrentRequestId.Value ?? "no-id"}]");
       var result = await CommandDispatcher.DispatchAsync(method, parameters, cancellationToken);
       PluginLog.Debug("Dispatch", $"<- {method} [{CurrentRequestId.Value ?? "no-id"}] ok durationMs={timer.ElapsedMilliseconds}");
       return JsonRpcProtocol.SerializeResult(id, result);
