@@ -9,8 +9,8 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * GradingCommands.cs; domainRuntime.ts turns the definition into validated, approval-checked MCP tools. Every action
  * forwards to one plugin method; nothing is worked out in Node.
  *
- * Gradings inside a group are picked by handle (from `list`), groups and feature lines by name. Coordinates are in
- * drawing units.
+ * Civil 3D's API doesn't reach grading groups or gradings, so `group_list` only counts gradings and the other group and
+ * grading actions refuse, naming what to use instead. Criteria and feature lines work. Coordinates are in drawing units.
  */
 
 /** A point in drawing units; a missing elevation becomes 0. */
@@ -396,7 +396,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_grading",
       displayName: "Civil 3D Grading",
-      description: "Lists, inspects, creates, deletes, and analyzes Civil 3D grading groups, gradings, and feature lines through a single domain tool.",
+      description: "Works with Civil 3D feature lines and grading criteria. Civil 3D's API doesn't reach grading groups or gradings: group_list only counts gradings, and the other group and grading actions refuse.",
       inputShape: canonicalGradingInputShape,
       supportedActions: [
         "group_list",

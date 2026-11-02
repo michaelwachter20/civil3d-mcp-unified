@@ -11,13 +11,13 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 internal static class LandCom
 {
-  private const string ProgIdPrefix = "AeccXUiLand.AeccApplication.";
+  private const string LandProgIdPrefix = "AeccXUiLand.AeccApplication.";
 
   /// <summary>The COM site of this name in the active drawing, which has been checked to exist.</summary>
-  public static dynamic FindSite(string siteName) => FindByName(LandApplication().ActiveDocument.Sites, siteName, "Site");
+  public static dynamic FindSite(string siteName) => FindByName(Application(LandProgIdPrefix).ActiveDocument.Sites, siteName, "Site");
 
   /// <summary>The COM surface of this name in the active drawing, which has been checked to exist.</summary>
-  public static dynamic FindSurface(string surfaceName) => FindByName(LandApplication().ActiveDocument.Surfaces, surfaceName, "Surface");
+  public static dynamic FindSurface(string surfaceName) => FindByName(Application(LandProgIdPrefix).ActiveDocument.Surfaces, surfaceName, "Surface");
 
   private static dynamic FindByName(dynamic collection, string name, string kind)
   {
@@ -31,15 +31,15 @@ internal static class LandCom
   }
 
   /// <summary>
-  /// Civil 3D's COM application. The name carries a version (13.9 for Civil 3D 2027) that has no published rule, so it
+  /// One of Civil 3D's COM applications. The name carries a version (13.9 for Civil 3D 2027) that has no published rule, so it
   /// comes from the registry, newest first: with two releases installed, the running one is the one that answers.
   /// </summary>
-  private static dynamic LandApplication()
+  public static dynamic Application(string progIdPrefix)
   {
     dynamic acad = AcadApplication.AcadApplication;
     var names = Registry.ClassesRoot.GetSubKeyNames()
-      .Where(name => name.StartsWith(ProgIdPrefix, StringComparison.OrdinalIgnoreCase))
-      .OrderByDescending(name => Version.TryParse(name[ProgIdPrefix.Length..], out var version) ? version : new Version());
+      .Where(name => name.StartsWith(progIdPrefix, StringComparison.OrdinalIgnoreCase))
+      .OrderByDescending(name => Version.TryParse(name[progIdPrefix.Length..], out var version) ? version : new Version());
 
     foreach (var name in names)
     {

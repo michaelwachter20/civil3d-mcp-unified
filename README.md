@@ -511,8 +511,8 @@ Alternatively, `npm run release:publish` builds and publishes from your PC using
 - **Quantity takeoff** — earthwork, corridor materials, pipe lengths, parcel areas, CSV export
 - **Cost estimation** — pay items, material costs, construction estimates
 - **Hydrology** — flow path tracing, watershed delineation, Rational Method runoff, time of concentration
-- **Grading** — feature lines, grading groups, grading criteria, surface generation
-- **COGO/Survey** — inverse, traverse, curve solve, survey figures, LandXML import
+- **Grading** — feature lines and grading criteria (Civil 3D's API doesn't reach grading groups)
+- **COGO/Survey** — inverse, traverse, curve solve, survey databases, networks, points, setups, observations and figures
 - **Storm & Sanitary Analysis (SSA)** integration and detention basin sizing
 - **Intersection design** and corridor target mapping
 - **Sight distance** calculations and AASHTO stopping sight distance checks

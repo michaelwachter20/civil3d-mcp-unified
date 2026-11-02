@@ -10,8 +10,9 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  *
  * Every action forwards to one plugin method. Create and reference finish in the plugin, through Civil 3D's
  * DataShortcutManager, with no window: `projectFolder` is a project in the working folder, or a full path, and create
- * makes it if it's new. Sync queues SynchronizeReferences to run after the answer. Create_reference and promote answer
- * "manual_step_required" with the Toolspace steps; the AI must pass that on rather than report them as done.
+ * makes it if it's new. Create_reference references an object straight from a saved drawing, with no project. Sync
+ * queues SynchronizeReferences to run after the answer. Promote has no call in Civil 3D, so it answers
+ * "manual_step_required" with the Toolspace steps; the AI must pass that on rather than report it as done.
  */
 
 /** Object types Civil 3D can share as data shortcuts. */

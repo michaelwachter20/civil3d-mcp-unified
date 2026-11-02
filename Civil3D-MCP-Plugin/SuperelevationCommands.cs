@@ -12,7 +12,8 @@ namespace Civil3DMcpPlugin;
 /// Civil 3D API notes:
 ///   Alignment.SuperelevationCurves exposes calculated curve groups and their
 ///   typed critical stations. Wizard calculation settings are not exposed by
-///   the managed API and therefore are never inferred.
+///   the managed API and therefore are never inferred, but a reviewed table can be
+///   entered one critical station at a time.
 /// </summary>
 public static class SuperelevationCommands
 {
@@ -78,7 +79,85 @@ public static class SuperelevationCommands
 
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D does not expose the superelevation wizard calculation settings through its managed API. Use the Civil 3D wizard or import reviewed superelevation data; no alignment data was modified.");
+      "Civil 3D has no call that runs the superelevation wizard. Use the wizard, or enter a reviewed table with set_station; no alignment data was modified.");
+  }
+
+  // -------------------------------------------------------------------------
+  // setSuperelevationStation
+  // -------------------------------------------------------------------------
+
+  /// <summary>
+  /// Sets the cross slopes at one critical station, adding the station if it isn't one yet. Slopes are percent, as the
+  /// table reads them. A road without a median has no inner lanes, so a side's slope goes on whichever segments it has.
+  /// </summary>
+  public static Task<object?> SetSuperelevationStationAsync(JsonObject? parameters)
+  {
+    var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
+    var station = PluginRuntime.GetRequiredDouble(parameters, "station");
+    var typeName = PluginRuntime.GetOptionalString(parameters, "stationType") ?? nameof(SuperelevationCriticalStationType.Manual);
+    if (!Enum.TryParse<SuperelevationCriticalStationType>(typeName, true, out var stationType))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{typeName}' isn't a critical station type: {string.Join(", ", Enum.GetNames<SuperelevationCriticalStationType>())}.");
+    }
+
+    var slopes = new (string Name, SuperelevationCrossSegmentType[] Segments)[]
+    {
+      ("leftLaneSlope", [SuperelevationCrossSegmentType.LeftOutLaneCrossSlope, SuperelevationCrossSegmentType.LeftInLaneCrossSlope]),
+      ("rightLaneSlope", [SuperelevationCrossSegmentType.RightOutLaneCrossSlope, SuperelevationCrossSegmentType.RightInLaneCrossSlope]),
+      ("leftShoulderSlope", [SuperelevationCrossSegmentType.LeftOutShoulderCrossSlope, SuperelevationCrossSegmentType.LeftInShoulderCrossSlope]),
+      ("rightShoulderSlope", [SuperelevationCrossSegmentType.RightOutShoulderCrossSlope, SuperelevationCrossSegmentType.RightInShoulderCrossSlope]),
+    }
+      .Select(slope => (slope.Segments, Percent: PluginRuntime.GetOptionalDouble(parameters, slope.Name)))
+      .Where(slope => slope.Percent.HasValue)
+      .ToList();
+    if (slopes.Count == 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Give at least one of leftLaneSlope, rightLaneSlope, leftShoulderSlope, rightShoulderSlope.");
+    }
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      const double tolerance = 0.001;
+      var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
+      if (station < alignment.StartingStation || station > alignment.EndingStation)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Station {station} is off alignment '{alignmentName}' ({alignment.StartingStation} to {alignment.EndingStation}).");
+      }
+
+      alignment.UpgradeOpen();
+      var stations = alignment.SuperelevationCriticalStations;
+      var added = !stations.IsCriticalStation(station, tolerance);
+      if (added) stations.Add(station, stationType);
+      var critical = stations.GetCriticalStationAt(station, tolerance);
+
+      var written = 0;
+      foreach (var (segments, percent) in slopes)
+      {
+        foreach (var segment in segments)
+        {
+          try
+          {
+            critical.SetSlope(segment, percent!.Value / 100.0);
+            written++;
+          }
+          catch (InvalidOperationException)
+          {
+            // This road has no such segment.
+          }
+        }
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["alignmentName"] = alignmentName,
+        ["station"] = critical.Station,
+        ["stationType"] = critical.StationType.ToString(),
+        ["added"] = added,
+        ["segmentsWritten"] = written,
+        ["leftOutLaneSlope"] = TryGetSlopePercent(critical, SuperelevationCrossSegmentType.LeftOutLaneCrossSlope),
+        ["rightOutLaneSlope"] = TryGetSlopePercent(critical, SuperelevationCrossSegmentType.RightOutLaneCrossSlope),
+      };
+    });
   }
 
   // -------------------------------------------------------------------------

@@ -627,9 +627,8 @@ public static class PipeNetworkCommands
       ["material"] = pipe.Material,
       ["centerlineStartElevation"] = pipe.StartPoint.Z,
       ["centerlineEndElevation"] = pipe.EndPoint.Z,
-      ["invertIn"] = null,
-      ["invertOut"] = null,
-      ["invertNote"] = "The Civil 3D managed Pipe API does not expose endpoint invert elevations directly; centerline elevations are returned instead.",
+      ["invertIn"] = PipeHydraulicsCommands.InvertIn(pipe),
+      ["invertOut"] = PipeHydraulicsCommands.InvertOut(pipe),
     };
   }
 

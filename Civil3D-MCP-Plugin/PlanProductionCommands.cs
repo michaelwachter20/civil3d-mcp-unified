@@ -9,18 +9,9 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Handlers for Plan Production / Sheets MCP tools.
 ///
-/// Civil 3D API notes (reflection-based late binding):
-///   AeccSheetSet      -- collection of sheets for a plan production workflow
-///   AeccSheet         -- individual sheet (layout reference + viewport metadata)
-///   AeccPlanProductionHelper -- static factory for plan/profile sheet creation
-///
-/// The API surface lives in AeccDbMgd.dll. We access it via reflection so the
-/// plugin builds without a direct assembly reference and tolerates minor
-/// version differences between Civil 3D releases.
-///
-/// Sheet sets are stored as named objects in the Civil document's
-/// database or as a collection on the CivilDocument. Common property/method
-/// names tried: SheetSets, SheetSetCollection, GetSheetSetIds(), PlanProductionSheetSets.
+/// A sheet set is a .dst file, not an object in the drawing, so everything about one goes through SheetSetCom. Sheets
+/// made by Create View Frames are ordinary layouts; their view frames are in the drawing and keep the alignment they
+/// were made from.
 ///
 /// PDF publishing uses Autodesk.AutoCAD.PlottingServices (PlotInfo, PlotEngine,
 /// PlotSettings) which is available in all AutoCAD-platform products.
@@ -31,15 +22,43 @@ public static class PlanProductionCommands
   // listSheetSets
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// The .dst files beside the active drawing and one folder up, where a sheet set usually sits. A sheet set isn't
+  /// tied to a drawing, so there is no asking Civil 3D which ones belong to this job.
+  /// </summary>
   public static Task<object?> ListSheetSetsAsync()
   {
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.OnActiveDocumentAsync<object?>(doc =>
     {
-      var sheetSets = EnumerateSheetSets(civilDoc, transaction)
-        .Select(ss => ToSheetSetSummary(ss, transaction))
-        .ToList();
+      var folders = new List<string>();
+      if (Path.IsPathRooted(doc.Name))
+      {
+        var folder = Path.GetDirectoryName(doc.Name)!;
+        folders.Add(folder);
+        if (Path.GetDirectoryName(folder) is { } parent) folders.Add(parent);
+      }
 
-      return new Dictionary<string, object?> { ["sheetSets"] = sheetSets };
+      var sheetSets = new List<object?>();
+      foreach (var file in folders.SelectMany(folder => Directory.GetFiles(folder, "*.dst")))
+      {
+        try
+        {
+          var info = SheetSetCom.Read(file);
+          sheetSets.Add(new Dictionary<string, object?>
+          {
+            ["name"] = info["name"],
+            ["path"] = file,
+            ["description"] = info["description"],
+            ["sheetCount"] = ((System.Collections.ICollection)info["sheets"]!).Count,
+          });
+        }
+        catch (System.Runtime.InteropServices.COMException exception)
+        {
+          sheetSets.Add(new Dictionary<string, object?> { ["path"] = file, ["error"] = exception.Message });
+        }
+      }
+
+      return new Dictionary<string, object?> { ["searched"] = folders, ["sheetSets"] = sheetSets };
     });
   }
 
@@ -49,28 +68,8 @@ public static class PlanProductionCommands
 
   public static Task<object?> GetSheetSetInfoAsync(JsonObject? parameters)
   {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-    if (name.EndsWith(".dst", StringComparison.OrdinalIgnoreCase))
-    {
-      return CivilExecution.OnActiveDocumentAsync<object?>(_ => SheetSetCom.Read(FileBoundary.ResolveImportPath(name, ".dst")));
-    }
-
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var sheetSet = FindSheetSetByName(civilDoc, transaction, name);
-
-      var sheets = GetSheetIds(sheetSet, transaction)
-        .Select(id => ToSheetSummary(transaction.GetObject(id, OpenMode.ForRead)))
-        .ToList();
-
-      return new Dictionary<string, object?>
-      {
-        ["name"] = GetName(sheetSet) ?? name,
-        ["handle"] = GetHandleString(sheetSet),
-        ["description"] = GetAnyString(sheetSet, "Description", "Desc"),
-        ["sheets"] = sheets,
-      };
-    });
+    var path = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "name"));
+    return CivilExecution.OnActiveDocumentAsync<object?>(_ => SheetSetCom.Read(path));
   }
 
   // -------------------------------------------------------------------------
@@ -167,17 +166,29 @@ public static class PlanProductionCommands
   // getSheetProperties
   // -------------------------------------------------------------------------
 
+  /// <summary>One sheet of a .dst file, by its name or number.</summary>
   public static Task<object?> GetSheetPropertiesAsync(JsonObject? parameters)
   {
-    var sheetSetName = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
+    var path = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
     var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    return CivilExecution.OnActiveDocumentAsync<object?>(_ =>
     {
-      var sheetSet = FindSheetSetByName(civilDoc, transaction, sheetSetName);
-      var sheet = FindSheetByName(sheetSet, transaction, sheetName);
+      var sheets = SheetSetCom.Sheets(path);
+      var sheet = sheets.FirstOrDefault(item => string.Equals(item.Name, sheetName, StringComparison.OrdinalIgnoreCase)
+          || string.Equals(item.Number, sheetName, StringComparison.OrdinalIgnoreCase))
+        ?? throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+          $"No sheet '{sheetName}' in this set. It has: {string.Join(", ", sheets.Select(item => item.Name))}.");
 
-      return ToSheetDetail(sheet, transaction, doc.Database);
+      return new Dictionary<string, object?>
+      {
+        ["name"] = sheet.Name,
+        ["number"] = sheet.Number,
+        ["title"] = sheet.Title,
+        ["layout"] = sheet.Layout,
+        ["drawing"] = sheet.Drawing,
+        ["doNotPlot"] = sheet.DoNotPlot,
+      };
     });
   }
 
@@ -187,32 +198,10 @@ public static class PlanProductionCommands
 
   public static Task<object?> SetSheetTitleBlockAsync(JsonObject? parameters)
   {
-    var sheetSetName = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
-    var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
-    var titleBlockPath = FileBoundary.ResolveReferencePath(
-      PluginRuntime.GetRequiredString(parameters, "titleBlockPath"),
-      ".dwg", ".dwt");
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var sheetSet = FindSheetSetByName(civilDoc, transaction, sheetSetName);
-      var sheet = FindSheetByName(sheetSet, transaction, sheetName);
-
-      // Try setting TitleBlockPath, TitleBlock, TemplatePath on the sheet
-      if (!TrySetStringProperty(sheet, titleBlockPath, "TitleBlockPath", "TitleBlock", "TemplatePath", "BlockPath"))
-      {
-        throw new JsonRpcDispatchException(
-          "CIVIL3D.API_ERROR",
-          $"Sheet '{sheetName}' does not expose a writable title-block property. No update was made.");
-      }
-
-      return new Dictionary<string, object?>
-      {
-        ["sheetName"] = sheetName,
-        ["titleBlock"] = titleBlockPath,
-        ["updated"] = true,
-      };
-    });
+    _ = PluginRuntime.GetRequiredString(parameters, "sheetName");
+    throw new JsonRpcDispatchException(
+      "CIVIL3D.API_ERROR",
+      "A sheet has no title block setting: the title block is a block on the sheet's layout. Insert or swap it on the layout. Nothing was changed.");
   }
 
   // -------------------------------------------------------------------------
@@ -234,41 +223,10 @@ public static class PlanProductionCommands
 
   public static Task<object?> UpdatePlanProfileSheetAlignmentAsync(JsonObject? parameters)
   {
-    var sheetSetName = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
-    var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
-    var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
-    var profileName = PluginRuntime.GetOptionalString(parameters, "profileName");
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var sheetSet = FindSheetSetByName(civilDoc, transaction, sheetSetName);
-      var sheet = FindSheetByName(sheetSet, transaction, sheetName);
-      var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
-
-      // Open sheet for write if it is a DBObject
-      if (sheet is DBObject dbObj)
-      {
-        dbObj.UpgradeOpen();
-        TrySetObjectIdPropertyOnObj(dbObj, alignment.ObjectId, "AlignmentId", "ReferenceAlignmentId");
-
-        if (!string.IsNullOrWhiteSpace(profileName))
-        {
-          var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName!, OpenMode.ForRead);
-          TrySetObjectIdPropertyOnObj(dbObj, profile.ObjectId, "ProfileId", "ReferenceProfileId");
-        }
-      }
-      else
-      {
-        TrySetObjectIdPropertyOnObj(sheet, alignment.ObjectId, "AlignmentId", "ReferenceAlignmentId");
-      }
-
-      return new Dictionary<string, object?>
-      {
-        ["sheetName"] = sheetName,
-        ["alignmentName"] = alignmentName,
-        ["updated"] = true,
-      };
-    });
+    _ = PluginRuntime.GetRequiredString(parameters, "alignmentName");
+    throw new JsonRpcDispatchException(
+      "CIVIL3D.API_ERROR",
+      "A view frame's alignment can't be changed once it's made (ViewFrame.AlignmentId is read-only). Make new view frames with Create View Frames. Nothing was changed.");
   }
 
   // -------------------------------------------------------------------------
@@ -457,181 +415,6 @@ public static class PlanProductionCommands
   // Private helpers
   // =========================================================================
 
-  private static IEnumerable<DBObject> EnumerateSheetSets(object civilDoc, Transaction transaction)
-  {
-    // Try multiple property/method names for the sheet set collection
-    foreach (var memberName in new[] { "SheetSets", "SheetSetCollection", "PlanProductionSheetSets" })
-    {
-      var collection = GetNamedMember(civilDoc, memberName);
-      if (collection == null) continue;
-
-      foreach (var id in CivilObjectUtils.ToObjectIds(collection))
-      {
-        if (id != ObjectId.Null)
-          yield return transaction.GetObject(id, OpenMode.ForRead);
-      }
-
-      foreach (var item in EnumerateObjects(collection))
-      {
-        if (item is DBObject dbObj) yield return dbObj;
-      }
-    }
-
-    // Fallback: search the NamedObjectsDictionary for AeccSheetSet entries
-    var database = CivilObjectUtils.GetDatabase(civilDoc);
-    var nod = (DBDictionary)transaction.GetObject(
-      database.NamedObjectsDictionaryId,
-      OpenMode.ForRead);
-
-    foreach (DictionaryEntry entry in nod)
-    {
-      if (entry.Value is ObjectId oid && oid != ObjectId.Null)
-      {
-        DBObject? obj = null;
-        try { obj = transaction.GetObject(oid, OpenMode.ForRead); } catch (Exception ex) { PluginLog.Swallow("PlanProduction", "read dictionary entry", ex); }
-        if (obj != null && obj.GetType().Name.Contains("SheetSet"))
-          yield return obj;
-      }
-    }
-  }
-
-  private static IEnumerable<DBObject> EnumerateSheetSets(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction)
-  {
-    foreach (var memberName in new[] { "SheetSets", "SheetSetCollection", "PlanProductionSheetSets" })
-    {
-      var collection = GetNamedMember(civilDoc, memberName);
-      if (collection == null) continue;
-
-      foreach (var id in CivilObjectUtils.ToObjectIds(collection))
-      {
-        if (id != ObjectId.Null)
-          yield return transaction.GetObject(id, OpenMode.ForRead);
-      }
-
-      foreach (var item in EnumerateObjects(collection))
-      {
-        if (item is DBObject dbObj) yield return dbObj;
-      }
-    }
-  }
-
-  private static DBObject FindSheetSetByName(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, string name)
-  {
-    foreach (var sheetSet in EnumerateSheetSets(civilDoc, transaction))
-    {
-      if (string.Equals(GetName(sheetSet), name, StringComparison.OrdinalIgnoreCase))
-        return sheetSet;
-    }
-
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sheet set '{name}' was not found.");
-  }
-
-  private static IEnumerable<ObjectId> GetSheetIds(object sheetSet, Transaction transaction)
-  {
-    // Try GetSheetIds method, then Sheets / SheetIds properties
-    var result = CivilObjectUtils.InvokeMethod(sheetSet, "GetSheetIds");
-    if (result != null)
-    {
-      foreach (var id in CivilObjectUtils.ToObjectIds(result))
-        if (id != ObjectId.Null) yield return id;
-      yield break;
-    }
-
-    foreach (var memberName in new[] { "Sheets", "SheetIds", "SheetCollection", "GetSheets" })
-    {
-      var value = GetNamedMember(sheetSet, memberName)
-        ?? CivilObjectUtils.InvokeMethod(sheetSet, memberName);
-      if (value == null) continue;
-
-      foreach (var id in CivilObjectUtils.ToObjectIds(value))
-        if (id != ObjectId.Null) yield return id;
-
-      foreach (var item in EnumerateObjects(value))
-      {
-        if (item is DBObject dbObj) yield return dbObj.ObjectId;
-      }
-    }
-  }
-
-  private static DBObject FindSheetByName(DBObject sheetSet, Transaction transaction, string name)
-  {
-    foreach (var id in GetSheetIds(sheetSet, transaction))
-    {
-      var sheet = transaction.GetObject(id, OpenMode.ForRead);
-      if (string.Equals(GetName(sheet), name, StringComparison.OrdinalIgnoreCase))
-        return sheet;
-    }
-
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sheet '{name}' was not found.");
-  }
-
-  private static Dictionary<string, object?> ToSheetSetSummary(DBObject sheetSet, Transaction transaction)
-  {
-    var sheetCount = GetSheetIds(sheetSet, transaction).Count();
-    return new Dictionary<string, object?>
-    {
-      ["name"] = GetName(sheetSet),
-      ["handle"] = GetHandleString(sheetSet),
-      ["description"] = GetAnyString(sheetSet, "Description", "Desc"),
-      ["sheetCount"] = sheetCount,
-    };
-  }
-
-  private static Dictionary<string, object?> ToSheetSummary(DBObject sheet)
-  {
-    return new Dictionary<string, object?>
-    {
-      ["name"] = GetName(sheet),
-      ["number"] = GetAnyString(sheet, "Number", "SheetNumber") ?? "",
-      ["handle"] = GetHandleString(sheet),
-      ["layoutName"] = GetAnyString(sheet, "LayoutName", "Layout"),
-    };
-  }
-
-  private static Dictionary<string, object?> ToSheetDetail(DBObject sheet, Transaction transaction, Autodesk.AutoCAD.DatabaseServices.Database database)
-  {
-    double? viewportScale = null;
-    var scaleVal = CivilObjectUtils.GetPropertyValue<double?>(sheet, "ViewportScale")
-      ?? CivilObjectUtils.GetPropertyValue<double?>(sheet, "Scale");
-    if (scaleVal.HasValue && scaleVal.Value > 0) viewportScale = scaleVal.Value;
-
-    string? alignmentName = null;
-    var alignmentId = GetFirstObjectId(sheet, "AlignmentId", "ReferenceAlignmentId");
-    if (alignmentId != ObjectId.Null)
-    {
-      try
-      {
-        var obj = transaction.GetObject(alignmentId, OpenMode.ForRead);
-        alignmentName = CivilObjectUtils.GetName(obj);
-      }
-      catch (Exception ex) { PluginLog.Swallow("PlanProduction", "resolve alignment name", ex); }
-    }
-
-    string? profileName = null;
-    var profileId = GetFirstObjectId(sheet, "ProfileId", "ReferenceProfileId");
-    if (profileId != ObjectId.Null)
-    {
-      try
-      {
-        var obj = transaction.GetObject(profileId, OpenMode.ForRead);
-        profileName = CivilObjectUtils.GetName(obj);
-      }
-      catch (Exception ex) { PluginLog.Swallow("PlanProduction", "resolve profile name", ex); }
-    }
-
-    return new Dictionary<string, object?>
-    {
-      ["name"] = GetName(sheet),
-      ["number"] = GetAnyString(sheet, "Number", "SheetNumber") ?? "",
-      ["handle"] = GetHandleString(sheet),
-      ["layoutName"] = GetAnyString(sheet, "LayoutName", "Layout"),
-      ["viewportScale"] = viewportScale,
-      ["alignmentName"] = alignmentName,
-      ["profileName"] = profileName,
-      ["titleBlock"] = GetAnyString(sheet, "TitleBlockPath", "TitleBlock", "TemplatePath"),
-    };
-  }
-
   private static Layout FindLayoutByName(Autodesk.AutoCAD.DatabaseServices.Database database, Transaction transaction, string layoutName)
   {
     var layoutDict = (DBDictionary)transaction.GetObject(database.LayoutDictionaryId, OpenMode.ForRead);
@@ -687,119 +470,10 @@ public static class PlanProductionCommands
     viewport.ViewHeight = viewRecord.Height;
   }
 
-  private static string BuildDsdContent(
-    Autodesk.AutoCAD.DatabaseServices.Database database,
-    Transaction transaction,
-    IList<string> layoutNames,
-    string outputPath,
-    string? plotStyleTable)
-  {
-    var sb = new System.Text.StringBuilder();
-    sb.AppendLine("[DWF6Sheet:]");
-
-    int i = 1;
-    foreach (var layoutName in layoutNames)
-    {
-      try
-      {
-        var layout = FindLayoutByName(database, transaction, layoutName);
-        sb.AppendLine($"[DWF6Sheet:{layoutName}]");
-        sb.AppendLine($"DWG={database.Filename}");
-        sb.AppendLine($"Layout={layoutName}");
-        sb.AppendLine($"Setup=");
-        sb.AppendLine($"OriginalSheetPath={database.Filename}");
-        sb.AppendLine($"SheetRecordHandle={layout.Handle}");
-        sb.AppendLine($"PlotDevice=DWG To PDF.pc3");
-        if (!string.IsNullOrWhiteSpace(plotStyleTable))
-          sb.AppendLine($"PlotStyleTable={plotStyleTable}");
-        sb.AppendLine($"PlotToFile=1");
-        sb.AppendLine($"OutputFile={outputPath}");
-        i++;
-      }
-      catch (Exception ex) { PluginLog.Swallow("PlanProduction", "build DSD layout entry", ex); }
-    }
-
-    sb.AppendLine("[Target]");
-    sb.AppendLine("Type=6");
-    sb.AppendLine($"DWF={outputPath}");
-
-    return sb.ToString();
-  }
-
   // -------------------------------------------------------------------------
   // General reflection helpers (mirror of PressureNetworkCommands pattern)
   // -------------------------------------------------------------------------
 
   private static string? GetName(object? value) => CivilObjectUtils.GetName(value);
 
-  private static string GetHandleString(object? value)
-  {
-    if (value is DBObject dbObj) return dbObj.Handle.ToString();
-    return CivilObjectUtils.GetStringProperty(value, "Handle") ?? "";
-  }
-
-  private static string? GetAnyString(object? value, params string[] propertyNames)
-  {
-    foreach (var name in propertyNames)
-    {
-      var v = CivilObjectUtils.GetStringProperty(value, name);
-      if (!string.IsNullOrWhiteSpace(v)) return v;
-    }
-    return null;
-  }
-
-  private static object? GetNamedMember(object? value, string memberName)
-  {
-    return Civil3DCompatibility.GetPropertyValue(value, memberName)
-      ?? Civil3DCompatibility.GetFieldValue(value, memberName);
-  }
-
-  private static IEnumerable<object> EnumerateObjects(object? collection)
-  {
-    if (collection is IEnumerable enumerable)
-      foreach (var item in enumerable)
-        if (item != null) yield return item;
-  }
-
-  private static bool TrySetStringProperty(object target, string value, params string[] propertyNames)
-  {
-    foreach (var name in propertyNames)
-    {
-      if (Civil3DCompatibility.TrySetProperty(target, name, value)) return true;
-    }
-
-    return false;
-  }
-
-  private static void TrySetObjectIdPropertyOnObj(object target, ObjectId objectId, params string[] propertyNames)
-  {
-    if (objectId == ObjectId.Null) return;
-    foreach (var name in propertyNames)
-    {
-      if (Civil3DCompatibility.TrySetProperty(target, name, objectId)) return;
-    }
-  }
-
-  private static ObjectId ExtractObjectId(object? result)
-  {
-    if (result is ObjectId id && id != ObjectId.Null) return id;
-    return CivilObjectUtils.GetPropertyValue<ObjectId>(result, "ObjectId");
-  }
-
-  private static ObjectId GetFirstObjectId(object target, params string[] propertyNames)
-  {
-    foreach (var propertyName in propertyNames)
-    {
-      var objectId = CivilObjectUtils.GetPropertyValue<ObjectId>(target, propertyName);
-      if (objectId != ObjectId.Null)
-        return objectId;
-    }
-
-    return ObjectId.Null;
-  }
-
-  private static void TryInvokeIfPresent(object target, string methodName, params object?[] args)
-  {
-    Civil3DCompatibility.TryInvokeMethod(target, methodName, out _, args);
-  }
 }

@@ -314,9 +314,9 @@ public static class PipeHydraulicsCommands
   }
 
   /// <summary>A pipe's start invert: its end points are on the centerline, half the inner height above the invert.</summary>
-  private static double InvertIn(Pipe pipe) => pipe.StartPoint.Z - pipe.InnerHeight / 2;
+  internal static double InvertIn(Pipe pipe) => pipe.StartPoint.Z - pipe.InnerHeight / 2;
 
-  private static double InvertOut(Pipe pipe) => pipe.EndPoint.Z - pipe.InnerHeight / 2;
+  internal static double InvertOut(Pipe pipe) => pipe.EndPoint.Z - pipe.InnerHeight / 2;
 
   private static IEnumerable<ObjectId> ConnectedPipeIds(DBObject structure)
   {

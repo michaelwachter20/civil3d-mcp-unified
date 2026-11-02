@@ -4,16 +4,15 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
 
 /**
  * The plan production domain: `civil3d_plan_production` and one alias per action (`civil3d_sheet_set_list`,
- * `civil3d_sheet_add`, `civil3d_sheet_publish_pdf`, ...). The plugin side is PlanProductionCommands.cs, which reaches
- * Civil 3D's sheet objects by reflection because the managed API doesn't document them; domainRuntime.ts turns these
- * definitions into validated, approval-checked MCP tools. Every action forwards to one plugin method; nothing runs in
- * Node.
+ * `civil3d_sheet_add`, `civil3d_sheet_publish_pdf`, ...). The plugin side is PlanProductionCommands.cs; domainRuntime.ts
+ * turns these definitions into validated, approval-checked MCP tools. Every action forwards to one plugin method;
+ * nothing runs in Node.
  *
- * A sheet set is a .dst file, handled by the plugin's SheetSetCom: `sheet_set_create` makes one, and `sheet_set_get_info`,
- * `sheet_add` and `sheet_set_export` take its path as the name. `sheet_set_export` plots with the same engine as
- * `sheet_publish_pdf`, which answers once the file exists. (The jobs domain's `publish_sheet_pdf` runs the same
- * `publishSheetPdf`.) `sheet_set_list`, `sheet_get_properties`, `sheet_set_title_block` and
- * `plan_profile_sheet_update_alignment` look for sheet sets inside the drawing, where there are none.
+ * A sheet set is a .dst file, handled by the plugin's SheetSetCom: `sheet_set_create` makes one, `sheet_set_list` finds
+ * the ones beside the drawing, and `sheet_set_get_info`, `sheet_get_properties`, `sheet_add` and `sheet_set_export` take
+ * its path as the name. `sheet_set_export` plots with the same engine as `sheet_publish_pdf`, which answers once the
+ * file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.) `sheet_set_title_block` and
+ * `plan_profile_sheet_update_alignment` always refuse: neither is a setting Civil 3D has, and each answer says what to do.
  */
 
 /** One sheet in a sheet set, as the list and info answers give it. */
@@ -24,22 +23,22 @@ const SheetSummarySchema = z.object({
   layoutName: z.string().nullable(),
 });
 
+/** One .dst file: only `path` and `error` when the file couldn't be read. */
 const SheetSetSummarySchema = z.object({
-  name: z.string(),
-  handle: z.string(),
-  description: z.string().nullable(),
-  sheetCount: z.number(),
+  path: z.string(),
+  name: z.string().optional(),
+  description: z.string().nullable().optional(),
+  sheetCount: z.number().optional(),
+  error: z.string().optional(),
 });
 
 const SheetDetailSchema = z.object({
   name: z.string(),
   number: z.string(),
-  handle: z.string(),
-  layoutName: z.string().nullable(),
-  viewportScale: z.number().nullable(),
-  alignmentName: z.string().nullable(),
-  profileName: z.string().nullable(),
-  titleBlock: z.string().nullable(),
+  title: z.string().nullable(),
+  layout: z.string().nullable(),
+  drawing: z.string().nullable(),
+  doNotPlot: z.boolean(),
 });
 
 const GenericPlanProductionResponseSchema = z.object({}).passthrough();
@@ -210,7 +209,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
     sheet_set_list: {
       action: "sheet_set_list",
       inputSchema: SheetSetListArgsSchema,
-      responseSchema: z.object({ sheetSets: z.array(SheetSetSummarySchema) }),
+      responseSchema: z.object({ searched: z.array(z.string()), sheetSets: z.array(SheetSetSummarySchema) }),
       capabilities: ["query", "inspect"],
       requiresActiveDrawing: true,
       safeForRetry: true,

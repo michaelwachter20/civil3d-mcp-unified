@@ -132,15 +132,23 @@ public static class DataShortcutCommands
     var (current, others) = Projects();
     if (current.Length > 0)
     {
-      // Civil 3D remembers the name across sessions but doesn't load the project until it's set: the manager then sees
-      // nothing published, and publishing fails with "Unknown error".
-      Shortcuts.SetCurrentProjectFolder(current);
+      LoadProject(current);
       return;
     }
 
     var choices = others.Count > 0 ? $" Its projects are: {string.Join(", ", others)}." : string.Empty;
     throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
       $"Nothing was started: no shortcut project is current in '{Shortcuts.GetWorkingFolder()}'.{choices} Name one with projectFolder; publishing makes it if it's new.");
+  }
+
+  /// <summary>
+  /// Civil 3D remembers the project across sessions but doesn't load it after a start: the manager then sees nothing,
+  /// and publishing fails with "Unknown error". Setting the project doesn't load it; setting the working folder does.
+  /// </summary>
+  private static void LoadProject(string current)
+  {
+    Shortcuts.SetWorkingFolder(Shortcuts.GetWorkingFolder());
+    Shortcuts.SetCurrentProjectFolder(current);
   }
 
   /// <summary>What the current project has published. The manager throws when it has nothing yet, rather than giving 0.</summary>
@@ -153,7 +161,7 @@ public static class DataShortcutCommands
       return items;
     }
 
-    Shortcuts.SetCurrentProjectFolder(current);
+    LoadProject(current);
     var valid = false;
     var manager = Shortcuts.CreateDataShortcutManager(ref valid);
     try
@@ -405,30 +413,49 @@ public static class DataShortcutCommands
     });
   }
 
-  /// <summary>Not automatable here: answers "manual_step_required" with how to create the reference in Civil 3D.</summary>
+  /// <summary>
+  /// References an object of a saved drawing by that file's path. The object must already be published to the current
+  /// project, because Civil 3D looks it up there. A second call changes nothing and answers with the same reference.
+  /// </summary>
   public static Task<object?> CreateDataShortcutReferenceAsync(JsonObject? parameters)
   {
-    var sourceFilePath = PluginRuntime.GetRequiredString(parameters, "sourceFilePath");
+    var sourceFilePath = FileBoundary.ResolveReferencePath(PluginRuntime.GetRequiredString(parameters, "sourceFilePath"), ".dwg");
     var objectName = PluginRuntime.GetRequiredString(parameters, "objectName");
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
 
-    return Task.FromResult<object?>(new Dictionary<string, object?>
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      ["sourceFilePath"] = sourceFilePath,
-      ["objectName"] = objectName,
-      ["objectType"] = objectType,
-      ["status"] = "manual_step_required",
-      ["dialogRequired"] = true,
-      ["notes"] = new List<string>
+      if (SheetSetCom.SameFile(doc.Name, sourceFilePath))
       {
-        "Direct source-file-based data shortcut reference creation is not fully automatable in the current native plugin.",
-        "Use the active project Data Shortcuts tree or the object-specific Create Reference command after confirming the correct project folder.",
-      },
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A drawing can't reference itself: open the drawing that needs the reference.");
+      }
+
+      var types = Enum.GetValues<Autodesk.Civil.DataShortcuts.DataShortcutEntityType>().Where(type => IsType(type, objectType)).ToList();
+      if (types.Count == 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{objectType}' isn't a kind of object data shortcuts carry.");
+      }
+
+      RequireShortcutFolder();
+      if (!PublishedItems().Any(item => string.Equals((string?)item["name"], objectName, StringComparison.OrdinalIgnoreCase)))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{objectName}' isn't published to project '{Projects().Current}': publish it from its drawing with data_shortcut_create first.");
+      }
+
+      var made = Shortcuts.CreateReference(database, sourceFilePath, objectName, types[0]);
+      return new Dictionary<string, object?>
+      {
+        ["status"] = "referenced",
+        ["sourceFilePath"] = sourceFilePath,
+        ["objectName"] = objectName,
+        ["objectType"] = objectType,
+        ["created"] = made.Cast<ObjectId>().Select(id => CivilObjectUtils.GetName(transaction.GetObject(id, OpenMode.ForRead))).ToList(),
+      };
     });
   }
 
-  /// <summary>Not automatable here: corridors can't be promoted at all, and other types answer "manual_step_required"
-  /// (promote from Toolspace).</summary>
+  /// <summary>Civil 3D has no call for this: corridors can't be promoted at all, and other types answer
+  /// "manual_step_required" (promote from Toolspace).</summary>
   public static Task<object?> PromoteDataShortcutAsync(JsonObject? parameters)
   {
     var shortcutName = PluginRuntime.GetRequiredString(parameters, "shortcutName");

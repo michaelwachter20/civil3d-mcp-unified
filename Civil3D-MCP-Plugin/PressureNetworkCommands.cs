@@ -240,7 +240,7 @@ public static class PressureNetworkCommands
     _ = PluginRuntime.GetRequiredString(parameters, "sourceNetwork");
     throw new JsonRpcDispatchException(
       "CIVIL3D.API_ERROR",
-      "Civil 3D does not expose a managed pressure-network merge operation. Component NetworkId values are read-only and were not reassigned; neither network was changed.");
+      "Pressure networks can't be merged from here: PressurePipeNetwork.AddPipe doesn't move a part, it leaves it listed in both networks while it still belongs to the first. Use Civil 3D's Connect command. Neither network was changed.");
   }
 
   // -------------------------------------------------------------------------
@@ -682,9 +682,16 @@ public static class PressureNetworkCommands
 
   private static IEnumerable<ObjectId> ToObjectIdsFlexible(object? value)
   {
-    foreach (var id in CivilObjectUtils.ToObjectIds(value))
+    var direct = CivilObjectUtils.ToObjectIds(value).ToList();
+    if (direct.Count > 0)
     {
-      yield return id;
+      // Walking the collection as well would give every id again: a network of 3 pipes reported 6.
+      foreach (var id in direct)
+      {
+        yield return id;
+      }
+
+      yield break;
     }
 
     if (value is IEnumerable enumerable)

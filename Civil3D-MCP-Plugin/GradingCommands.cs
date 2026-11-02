@@ -8,29 +8,34 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Handlers for Civil 3D Grading MCP tools.
 ///
-/// Civil 3D API notes (reflection-based late binding):
-///   AeccGradingGroup   -- container for one or more gradings, owns a surface
-///   AeccGrading        -- a single grading object (criteria + target)
-///   AeccGradingCriteria / AeccGradingCriteriaSet -- style/criteria definitions
-///
-/// We access the Grading API via reflection so the plugin builds without a
-/// direct AeccDbMgd.dll reference and tolerates minor version differences.
+/// Grading groups and gradings are out of reach: the .NET Grading class has no members, GradingGroup isn't public, a
+/// Site has no way to them, and the COM interfaces have none either. The tools count what's in the drawing and say so,
+/// because an empty list or "not found" would be false. Criteria and feature lines are ordinary objects.
 /// </summary>
 public static class GradingCommands
 {
+  private const string OutOfReach =
+    "Civil 3D's API doesn't reach grading groups or gradings, in .NET or COM. Use the Grading Creation Tools. A group's surface is an ordinary surface, so the surface tools can read it and its volumes. Nothing was changed.";
+
   // -------------------------------------------------------------------------
   // listGradingGroups
   // -------------------------------------------------------------------------
 
+  /// <summary>How many gradings are in model space; their groups can't be listed.</summary>
   public static Task<object?> ListGradingGroupsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      var groups = EnumerateGradingGroups(civilDoc, transaction)
-        .Select(g => ToGradingGroupSummary(g, transaction))
-        .ToList();
+      var modelSpace = (BlockTableRecord)transaction.GetObject(CivilObjectUtils.GetModelSpaceBlockId(database, transaction), OpenMode.ForRead);
+      var gradingClass = Autodesk.AutoCAD.Runtime.RXObject.GetClass(typeof(Autodesk.Civil.DatabaseServices.Grading));
+      var count = modelSpace.Cast<ObjectId>().Count(id => id.ObjectClass.IsDerivedFrom(gradingClass));
 
-      return new Dictionary<string, object?> { ["groups"] = groups };
+      return new Dictionary<string, object?>
+      {
+        ["groups"] = new List<object>(),
+        ["gradingCount"] = count,
+        ["note"] = "Civil 3D's API doesn't list grading groups, so this list is empty whether or not there are any: gradingCount is how many gradings the drawing has.",
+      };
     });
   }
 
@@ -38,248 +43,55 @@ public static class GradingCommands
   // getGradingGroup
   // -------------------------------------------------------------------------
 
-  public static Task<object?> GetGradingGroupAsync(JsonObject? parameters)
-  {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, name, OpenMode.ForRead);
-      return ToGradingGroupDetail(group, transaction);
-    });
-  }
+  public static Task<object?> GetGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createGradingGroup
   // -------------------------------------------------------------------------
 
-  public static Task<object?> CreateGradingGroupAsync(JsonObject? parameters)
-  {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-    var description = PluginRuntime.GetOptionalString(parameters, "description") ?? string.Empty;
-    var useProjection = PluginRuntime.GetOptionalBool(parameters, "useProjection") ?? false;
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var siteIds = civilDoc.GetSiteIds().Cast<ObjectId>();
-      var firstSiteId = siteIds.FirstOrDefault();
-
-      if (firstSiteId == ObjectId.Null)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "No site found in the drawing. Create a site first before adding a grading group.");
-      }
-
-      object? newGroupId = null;
-      if (newGroupId == null)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "Civil 3D's API can't create grading groups: use Create Grading Group on the Home ribbon. Add method not found.");
-      }
-
-      var newGroupObjectId = (ObjectId)newGroupId;
-      var newGroup = transaction.GetObject(newGroupObjectId, OpenMode.ForWrite);
-
-      Civil3DCompatibility.TrySetProperty(newGroup, "Description", description);
-
-      return new Dictionary<string, object?>
-      {
-        ["name"] = name,
-        ["handle"] = CivilObjectUtils.GetHandle(newGroup),
-        ["description"] = description,
-        ["created"] = true,
-      };
-    });
-  }
+  public static Task<object?> CreateGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // deleteGradingGroup
   // -------------------------------------------------------------------------
 
-  public static Task<object?> DeleteGradingGroupAsync(JsonObject? parameters)
-  {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, name, OpenMode.ForWrite);
-      group.Erase();
-
-      return new Dictionary<string, object?>
-      {
-        ["name"] = name,
-        ["deleted"] = true,
-      };
-    });
-  }
+  public static Task<object?> DeleteGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // getGradingGroupVolume
   // -------------------------------------------------------------------------
 
-  public static Task<object?> GetGradingGroupVolumeAsync(JsonObject? parameters)
-  {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, name, OpenMode.ForRead);
-
-      var cutVolume = CivilObjectUtils.GetDoubleProperty(group, "CutVolume");
-      var fillVolume = CivilObjectUtils.GetDoubleProperty(group, "FillVolume");
-      if (!cutVolume.HasValue || !fillVolume.HasValue)
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Grading group '{name}' does not expose readable cut/fill volumes. Zero volumes were not substituted.");
-      var netVolume = cutVolume.Value - fillVolume.Value;
-
-      return new Dictionary<string, object?>
-      {
-        ["groupName"] = name,
-        ["cutVolume"] = cutVolume.Value,
-        ["fillVolume"] = fillVolume.Value,
-        ["netVolume"] = netVolume,
-        ["units"] = new Dictionary<string, string> { ["volume"] = CivilObjectUtils.VolumeUnits(database) },
-      };
-    });
-  }
+  public static Task<object?> GetGradingGroupVolumeAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createSurfaceFromGradingGroup
   // -------------------------------------------------------------------------
 
-  public static Task<object?> CreateSurfaceFromGradingGroupAsync(JsonObject? parameters)
-  {
-    var name = PluginRuntime.GetRequiredString(parameters, "name");
-    var surfaceName = PluginRuntime.GetOptionalString(parameters, "surfaceName");
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, name, OpenMode.ForWrite);
-
-      // CreateSurface() or CreateSurface(surfaceName) depending on API version
-      object? resultId;
-      var invoked = surfaceName != null
-        ? Civil3DCompatibility.TryInvokeMethod(group, "CreateSurface", out resultId, surfaceName)
-        : Civil3DCompatibility.TryInvokeMethod(group, "CreateSurface", out resultId);
-      if (!invoked)
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "CreateSurface method not found on grading group.");
-
-      return new Dictionary<string, object?>
-      {
-        ["groupName"] = name,
-        ["surfaceCreated"] = true,
-        ["surfaceObjectId"] = resultId?.ToString(),
-      };
-    });
-  }
+  public static Task<object?> CreateSurfaceFromGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // listGradings
   // -------------------------------------------------------------------------
 
-  public static Task<object?> ListGradingsAsync(JsonObject? parameters)
-  {
-    var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
-
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, groupName, OpenMode.ForRead);
-      var gradings = GetGradingsFromGroup(group, transaction)
-        .Select(g => ToGradingSummary(g))
-        .ToList();
-
-      return new Dictionary<string, object?>
-      {
-        ["groupName"] = groupName,
-        ["gradings"] = gradings,
-      };
-    });
-  }
+  public static Task<object?> ListGradingsAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // getGrading
   // -------------------------------------------------------------------------
 
-  public static Task<object?> GetGradingAsync(JsonObject? parameters)
-  {
-    var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
-    var handle = PluginRuntime.GetRequiredString(parameters, "handle");
-
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, groupName, OpenMode.ForRead);
-      var grading = GetGradingsFromGroup(group, transaction)
-        .FirstOrDefault(g => CivilObjectUtils.GetHandle(g) == handle)
-        ?? throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Grading with handle '{handle}' not found in group '{groupName}'.");
-
-      return ToGradingDetail(grading);
-    });
-  }
+  public static Task<object?> GetGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createGrading
   // -------------------------------------------------------------------------
 
-  public static Task<object?> CreateGradingAsync(JsonObject? parameters)
-  {
-    var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
-    var featureLineName = PluginRuntime.GetRequiredString(parameters, "featureLineName");
-    var criteriaName = PluginRuntime.GetOptionalString(parameters, "criteriaName");
-    var side = PluginRuntime.GetOptionalString(parameters, "side") ?? "right"; // left | right | both
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, groupName, OpenMode.ForWrite);
-
-      // Find the feature line by name
-      var featureLine = FindFeatureLineByName(civilDoc, transaction, featureLineName, database)
-        ?? throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Feature line '{featureLineName}' not found.");
-
-      // Try to invoke AddGrading on the group
-      var featureLineId = featureLine.ObjectId;
-      object? gradingId;
-      var invoked = criteriaName != null
-        ? Civil3DCompatibility.TryInvokeMethod(group, "AddGrading", out gradingId, featureLineId, FindGradingCriteriaId(civilDoc, transaction, criteriaName), side)
-          || Civil3DCompatibility.TryInvokeMethod(group, "CreateGrading", out gradingId, featureLineId, FindGradingCriteriaId(civilDoc, transaction, criteriaName), side)
-        : Civil3DCompatibility.TryInvokeMethod(group, "AddGrading", out gradingId, featureLineId, side)
-          || Civil3DCompatibility.TryInvokeMethod(group, "CreateGrading", out gradingId, featureLineId, side);
-      if (!invoked)
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", "AddGrading/CreateGrading method not found on grading group.");
-
-      return new Dictionary<string, object?>
-      {
-        ["groupName"] = groupName,
-        ["featureLineName"] = featureLineName,
-        ["gradingHandle"] = gradingId?.ToString(),
-        ["created"] = true,
-      };
-    });
-  }
+  public static Task<object?> CreateGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // deleteGrading
   // -------------------------------------------------------------------------
 
-  public static Task<object?> DeleteGradingAsync(JsonObject? parameters)
-  {
-    var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
-    var handle = PluginRuntime.GetRequiredString(parameters, "handle");
-
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      var group = FindGradingGroupByName(civilDoc, transaction, groupName, OpenMode.ForRead);
-      var grading = GetGradingsFromGroup(group, transaction)
-        .FirstOrDefault(g => CivilObjectUtils.GetHandle(g) == handle)
-        ?? throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Grading with handle '{handle}' not found in group '{groupName}'.");
-
-      // Open for write and erase
-      var writableGrading = transaction.GetObject(grading.ObjectId, OpenMode.ForWrite);
-      writableGrading.Erase();
-
-      return new Dictionary<string, object?>
-      {
-        ["handle"] = handle,
-        ["deleted"] = true,
-      };
-    });
-  }
+  public static Task<object?> DeleteGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // listGradingCriteria
@@ -475,59 +287,6 @@ public static class GradingCommands
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private static IEnumerable<DBObject> EnumerateGradingGroups(
-    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
-    Transaction transaction)
-  {
-    foreach (ObjectId siteId in civilDoc.GetSiteIds())
-    {
-      var siteObj = transaction.GetObject(siteId, OpenMode.ForRead);
-      var gradingGroups = Civil3DCompatibility.GetPropertyValue(siteObj, "GradingGroups");
-
-      foreach (var groupId in CivilObjectUtils.ToObjectIds(gradingGroups))
-      {
-        yield return transaction.GetObject(groupId, OpenMode.ForRead);
-      }
-    }
-  }
-
-  private static DBObject FindGradingGroupByName(
-    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
-    Transaction transaction,
-    string name,
-    OpenMode mode)
-  {
-    foreach (ObjectId siteId in civilDoc.GetSiteIds())
-    {
-      var siteObj = transaction.GetObject(siteId, OpenMode.ForRead);
-      var gradingGroups = Civil3DCompatibility.GetPropertyValue(siteObj, "GradingGroups");
-
-      foreach (var groupId in CivilObjectUtils.ToObjectIds(gradingGroups))
-      {
-        var groupObj = transaction.GetObject(groupId, OpenMode.ForRead);
-        if (string.Equals(CivilObjectUtils.GetName(groupObj), name, StringComparison.OrdinalIgnoreCase))
-        {
-          return mode == OpenMode.ForWrite
-            ? transaction.GetObject(groupId, OpenMode.ForWrite)
-            : groupObj;
-        }
-      }
-    }
-
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Grading group '{name}' was not found.");
-  }
-
-  private static IEnumerable<DBObject> GetGradingsFromGroup(DBObject group, Transaction transaction)
-  {
-    var gradingIds = Civil3DCompatibility.GetPropertyValue(group, "GradingIds")
-      ?? Civil3DCompatibility.GetPropertyValue(group, "Gradings");
-
-    foreach (var id in CivilObjectUtils.ToObjectIds(gradingIds))
-    {
-      yield return transaction.GetObject(id, OpenMode.ForRead);
-    }
-  }
-
   private static IEnumerable<DBObject> EnumerateFeatureLines(
     Database database,
     Transaction transaction)
@@ -576,82 +335,6 @@ public static class GradingCommands
     return null;
   }
 
-  private static ObjectId FindGradingCriteriaId(
-    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
-    Transaction transaction,
-    string criteriaName)
-  {
-    var criteriaSets = Civil3DCompatibility.GetPropertyValue(civilDoc, "GradingCriteriaSets");
-
-    foreach (var setId in CivilObjectUtils.ToObjectIds(criteriaSets))
-    {
-      var setObj = transaction.GetObject(setId, OpenMode.ForRead);
-      var criteriaIds = Civil3DCompatibility.GetPropertyValue(setObj, "CriteriaIds")
-        ?? Civil3DCompatibility.GetPropertyValue(setObj, "Criteria");
-
-      foreach (var criteriaId in CivilObjectUtils.ToObjectIds(criteriaIds))
-      {
-        var criteriaObj = transaction.GetObject(criteriaId, OpenMode.ForRead);
-        if (string.Equals(CivilObjectUtils.GetName(criteriaObj), criteriaName, StringComparison.OrdinalIgnoreCase))
-        {
-          return criteriaId;
-        }
-      }
-    }
-
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Grading criteria '{criteriaName}' not found.");
-  }
-
-  private static Dictionary<string, object?> ToGradingGroupSummary(DBObject group, Transaction transaction)
-  {
-    var ids = Civil3DCompatibility.GetPropertyValue(group, "GradingIds")
-      ?? Civil3DCompatibility.GetPropertyValue(group, "Gradings");
-    var count = CivilObjectUtils.ToObjectIds(ids).Count();
-
-    return new Dictionary<string, object?>
-    {
-      ["name"] = CivilObjectUtils.GetName(group),
-      ["handle"] = CivilObjectUtils.GetHandle(group),
-      ["description"] = CivilObjectUtils.GetStringProperty(group, "Description"),
-      ["gradingCount"] = count,
-      ["isValid"] = CivilObjectUtils.GetBoolProperty(group, "IsValid"),
-    };
-  }
-
-  private static Dictionary<string, object?> ToGradingGroupDetail(DBObject group, Transaction transaction)
-  {
-    var gradings = GetGradingsFromGroup(group, transaction)
-      .Select(g => ToGradingSummary(g))
-      .ToList();
-
-    var cutVolume = CivilObjectUtils.GetDoubleProperty(group, "CutVolume");
-    var fillVolume = CivilObjectUtils.GetDoubleProperty(group, "FillVolume");
-
-    return new Dictionary<string, object?>
-    {
-      ["name"] = CivilObjectUtils.GetName(group),
-      ["handle"] = CivilObjectUtils.GetHandle(group),
-      ["description"] = CivilObjectUtils.GetStringProperty(group, "Description"),
-      ["gradingCount"] = gradings.Count,
-      ["cutVolume"] = cutVolume,
-      ["fillVolume"] = fillVolume,
-      ["netVolume"] = cutVolume.HasValue && fillVolume.HasValue ? cutVolume.Value - fillVolume.Value : null,
-      ["isValid"] = CivilObjectUtils.GetBoolProperty(group, "IsValid"),
-      ["gradings"] = gradings,
-    };
-  }
-
-  private static Dictionary<string, object?> ToGradingSummary(DBObject grading)
-  {
-    return new Dictionary<string, object?>
-    {
-      ["handle"] = CivilObjectUtils.GetHandle(grading),
-      ["name"] = CivilObjectUtils.GetName(grading),
-      ["criteriaName"] = CivilObjectUtils.GetStringProperty(grading, "CriteriaName"),
-      ["isValid"] = CivilObjectUtils.GetBoolProperty(grading, "IsValid"),
-    };
-  }
-
   private static Dictionary<string, object?> ToFeatureLineSummary(DBObject featureLine, Transaction transaction)
   {
     return new Dictionary<string, object?>
@@ -684,20 +367,6 @@ public static class GradingCommands
       ["minElevation"] = minElevation,
       ["maxElevation"] = maxElevation,
       ["units"] = CivilObjectUtils.LinearUnits(database),
-    };
-  }
-
-  private static Dictionary<string, object?> ToGradingDetail(DBObject grading)
-  {
-    return new Dictionary<string, object?>
-    {
-      ["handle"] = CivilObjectUtils.GetHandle(grading),
-      ["name"] = CivilObjectUtils.GetName(grading),
-      ["criteriaName"] = CivilObjectUtils.GetStringProperty(grading, "CriteriaName"),
-      ["side"] = CivilObjectUtils.GetStringProperty(grading, "Side"),
-      ["isValid"] = CivilObjectUtils.GetBoolProperty(grading, "IsValid"),
-      ["cutVolume"] = CivilObjectUtils.GetDoubleProperty(grading, "CutVolume"),
-      ["fillVolume"] = CivilObjectUtils.GetDoubleProperty(grading, "FillVolume"),
     };
   }
 

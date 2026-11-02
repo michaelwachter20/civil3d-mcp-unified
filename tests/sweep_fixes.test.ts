@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GEOMETRY_DOMAIN_DEFINITION } from "../src/tools/domains/geometryDomain.js";
 import { PLAN_PRODUCTION_DOMAIN_DEFINITION } from "../src/tools/domains/planProductionDomain.js";
+import { SURVEY_DOMAIN_DEFINITION } from "../src/tools/domains/surveyDomain.js";
 import { findManifestAction, findManifestActionByCall } from "../src/tools/toolManifest.js";
 
 /** What a sweep of every action in a live Civil 3D found, for the parts that can be checked without one. */
@@ -11,6 +12,28 @@ describe("the full sweep's fixes", () => {
     const input = { action: "create_3dpolyline", points: [{ x: 1, y: 2, z: 3 }, { x: 4, y: 5, z: 6 }] };
     const parsed = z.object(tool.inputShape).parse(input);
     expect(GEOMETRY_DOMAIN_DEFINITION.actions.create_3dpolyline.inputSchema.parse(parsed)).toMatchObject(input);
+  });
+
+  it("keeps a survey setup's shots through the tool's input shape", () => {
+    const tool = SURVEY_DOMAIN_DEFINITION.exposures[0];
+    const input = {
+      action: "setup_add",
+      databaseName: "Elm Street",
+      networkName: "Control",
+      stationPoint: 1,
+      backsightPoint: 2,
+      observations: [{ pointNumber: 3, angleDegrees: 90, distance: 100, description: "IP" }],
+    };
+    const parsed = z.object(tool.inputShape).parse(input);
+    expect(SURVEY_DOMAIN_DEFINITION.actions.setup_add.inputSchema.parse(parsed)).toMatchObject(input);
+  });
+
+  it("takes either a figure or a network to insert, not both", () => {
+    const schema = SURVEY_DOMAIN_DEFINITION.actions.add_to_drawing.inputSchema;
+    const base = { action: "add_to_drawing", databaseName: "Elm Street" };
+    expect(schema.safeParse({ ...base, figureName: "EP1" }).success).toBe(true);
+    expect(schema.safeParse(base).success).toBe(false);
+    expect(schema.safeParse({ ...base, figureName: "EP1", networkName: "Control" }).success).toBe(false);
   });
 
   it("still takes 2D points for a 2D polyline", () => {

@@ -202,7 +202,7 @@ describe("domain manifest migration", () => {
     expect(parcelReport).toBeDefined();
   });
 
-  it("advertises only supported managed-API survey queries", () => {
+  it("advertises what the survey interface can do and nothing else", () => {
     const survey = GENERATED_TOOL_CATALOG_ENTRIES.find((e) => e.toolName === "civil3d_survey");
     const databaseCreate = GENERATED_TOOL_CATALOG_ENTRIES.find((e) => e.toolName === "civil3d_survey_database_create");
     const figureList = GENERATED_TOOL_CATALOG_ENTRIES.find((e) => e.toolName === "civil3d_survey_figure_list");
@@ -214,10 +214,11 @@ describe("domain manifest migration", () => {
     expect(survey!.operations).toContain("database_list");
     expect(survey!.operations).toContain("figure_list");
     expect(survey!.operations).toContain("observation_list");
-    expect(survey!.operations).not.toContain("database_create");
+    expect(survey!.operations).toContain("database_create");
+    expect(survey!.operations).toContain("figure_create");
     expect(survey!.operations).not.toContain("network_adjust");
     expect(survey!.operations).not.toContain("landxml_import");
-    expect(survey!.safeForRetry).toBe(true);
+    expect(survey!.safeForRetry).toBe(false);
 
     expect(databaseCreate).toBeUndefined();
     expect(figureList).toBeDefined();

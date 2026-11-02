@@ -19,7 +19,7 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `civil3d_intersection` | alignment | list, get | listIntersections, getIntersection | yes |
 | `civil3d_intersection_get` | alignment | — | getIntersection | yes |
 | `civil3d_intersection_list` | alignment | — | listIntersections | yes |
-| `civil3d_superelevation` | alignment | get, set, report | getSuperelevation, setSuperelevation, generateSuperelevationReport | no |
+| `civil3d_superelevation` | alignment | get, set, set_station, report | getSuperelevation, setSuperelevation, setSuperelevationStation, generateSuperelevationReport | no |
 | `civil3d_superelevation_design_check` | alignment | — | checkSuperelevationDesign | yes |
 | `civil3d_superelevation_get` | alignment | — | getSuperelevation | yes |
 | `civil3d_superelevation_report` | alignment | — | generateSuperelevationReport | no |
@@ -204,7 +204,7 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `civil3d_surface_volume_calculate` | surface | — | calculateSurfaceVolume | yes |
 | `civil3d_surface_volume_report` | surface | — | getSurfaceVolumeReport | yes |
 | `civil3d_surface_watershed_add` | surface | — | addSurfaceWatershed | no |
-| `civil3d_survey` | survey | database_list, figure_list, figure_get, observation_list | listSurveyDatabases, listSurveyFigures, getSurveyFigure, listSurveyObservations | yes |
+| `civil3d_survey` | survey | database_list, database_create, network_list, network_create, point_list, point_add, setup_add, figure_list, figure_get, figure_create, observation_list, add_to_drawing | listSurveyDatabases, createSurveyDatabase, listSurveyNetworks, createSurveyNetwork, listSurveyPoints, addSurveyPoint, addSurveySetup, listSurveyFigures, getSurveyFigure, createSurveyFigure, listSurveyObservations, addSurveyToDrawing | no |
 | `civil3d_survey_database_list` | survey | — | listSurveyDatabases | yes |
 | `civil3d_survey_figure_get` | survey | — | getSurveyFigure | yes |
 | `civil3d_survey_figure_list` | survey | — | listSurveyFigures | yes |

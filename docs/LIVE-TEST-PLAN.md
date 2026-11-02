@@ -177,16 +177,19 @@ Part 5 of this plan used to list what a review expected to fail. All of it is fi
 | Still open | Why |
 |---|---|
 | Grading groups, `lot_line_adjust` | No route found: neither the .NET API nor COM offers them, and the tools say so |
-| `sheet_set_list`, `sheet_get_properties`, `sheet_set_title_block`, `plan_profile_sheet_update_alignment` | Written for sheet sets inside the drawing, which don't exist; they find none |
-| `sheet_set_create`, `sheet_set_export`, survey writes | Refused, plainly |
+| `sheet_set_title_block`, `plan_profile_sheet_update_alignment` | Refused, plainly: a title block is a block on the layout, and a view frame's alignment is read-only |
+| Survey network adjustment, LandXML import, shortcut promote | No call in the interface: the tools say so |
+| Merging pressure networks | `AddPipe` doesn't move a part: it lists it in both networks, so the tool refuses |
 | A drawing held by a real second user (3.27) | Passed on a held copy with a made-up `.dwl`, not with two people |
 | A damaged database (3.43), a held write lock (3.44) | Not run live; covered by the suite test |
 | DEM import | Civil 3D called both a generated .asc and a generated .tif invalid: needs a real DEM file |
-| Data shortcuts right after a start | A remembered project isn't loaded until another drawing is opened: publishing fails with Unknown error |
-| Grading groups, intersections, survey databases | No API creates them, so a person makes one first; only their reads and refusals have run |
+| Intersections | No API creates one, so a person makes one first; only the reads' refusals have run |
 
 Civil 3D facts learned, worth knowing before testing again:
 
+- Survey COM holds metres whatever the database's units, and a COM object still alive keeps the data it read: without a
+  collection between calls, a read misses the write before it every time.
+- A drawing with no coordinate system has the code ".", and assigning one can change its foot to the survey foot.
 - Offsets are negative left of an alignment, positive right.
 - An alignment made from a polyline takes its curve radius from the drawing's settings, not from the call.
 - A corridor surface can't be measured until the corridor has been rebuilt.

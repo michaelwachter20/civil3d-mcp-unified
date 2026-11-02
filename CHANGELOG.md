@@ -15,6 +15,27 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   `DataShortcutManager` with no window, and can make a new project. `stage_storage` measures the surface's contours and
   stops at the rim. `resize_pressure_pipe` swaps the part.
 
+- **Survey is real now:** the old tools called something that doesn't exist, so they said "not initialized" even with
+  survey data there. `civil3d_survey` now goes through Civil 3D's survey COM interface: make a database in feet, survey
+  feet or metres, networks, control and non-control points, setups with their shots, figures, and insert a figure or
+  network into the drawing as one undo step. Lengths and coordinates are in the database's units (COM holds metres, so a
+  foot entered as it stands landed 3.28 feet out), and a read no longer misses the write before it. Network adjustment
+  and LandXML import have no call in the interface and stay in the Survey tab.
+
+- **More tools that said Civil 3D couldn't:** `coordinate_system transform` works between any two systems by code, and
+  `info` gives the projection's numbers, matching a hand calculation of Florida East to 0.00003 ft. `get_catchment_flow_path`
+  reads the path and its segments. Pipe data has real inverts. `sheet_set_list` finds the .dst files beside the drawing,
+  and `sheet_get_properties` reads one. `data_shortcut_create_reference` is real, and `superelevation set_station` enters
+  a reviewed table one critical station at a time. `sheet_set_title_block` and `plan_profile_sheet_update_alignment` now
+  say why they can't, rather than looking for sheet sets inside the drawing.
+
+- **Shortcuts right after a start:** a remembered project wasn't loaded until another drawing was opened, so publishing
+  failed with "Unknown error". Setting the working folder loads it. `coordinate_system info` no longer fails on a drawing
+  with no coordinate system (Civil 3D answers "."), and `list_pressure_networks` no longer counts everything twice.
+
+- **Grading groups say what's true:** neither .NET nor COM reaches them, so `group_list` found none and the others said
+  "not found" even with groups in the drawing. `group_list` now counts gradings, and the rest refuse and name what to use.
+
 - **Answers checked by hand:** tools were run on objects solved on paper, in feet and in metres. Stopping sight distance
   used an old friction formula (842 ft at 70 mph; AASHTO's is 730), and passing was six times stopping (5,054 ft; AASHTO's
   is 1,200): both now match the published tables. Every catchment tool found nothing, because it called a method that

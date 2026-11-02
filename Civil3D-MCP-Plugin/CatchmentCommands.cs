@@ -238,51 +238,48 @@ public static class CatchmentCommands
     {
       var catchment = FindCatchmentByName(civilDoc, database, transaction, catchmentName, OpenMode.ForRead);
 
-      var flowPath = CivilObjectUtils.GetPropertyValue<object>(catchment, "FlowPath")
-        ?? CivilObjectUtils.InvokeMethod(catchment, "GetFlowPath");
-      if (flowPath == null)
+      List<Dictionary<string, double>> points;
+      List<Dictionary<string, object?>> segments;
+      double length;
+      try
       {
+        var flowPath = catchment.FlowPath;
+        length = catchment.FlowPathLength;
+        points = flowPath.GetPath().Cast<Point3d>()
+          .Select(point => new Dictionary<string, double> { ["x"] = point.X, ["y"] = point.Y, ["z"] = point.Z })
+          .ToList();
+        segments = flowPath.GetFlowSegments()
+          .Select(segment => new Dictionary<string, object?>
+          {
+            ["index"] = segment.Index,
+            ["type"] = segment.GetType().Name,
+            ["length"] = segment.Length,
+            ["slope"] = segment.Slope,
+            ["travelTime"] = segment.IsTravelTimeCalculated ? segment.TravelTime : null,
+          })
+          .ToList();
+      }
+      catch (Autodesk.Civil.CivilException)
+      {
+        // A catchment with no flow path hands back an object that throws when it's read.
         return new Dictionary<string, object?>
         {
           ["catchmentName"] = catchmentName,
           ["hasFlowPath"] = false,
+          ["pointCount"] = 0,
           ["points"] = new List<object>(),
+          ["segments"] = new List<object>(),
         };
-      }
-
-      // Extract flow path points via reflection since FlowPath might be an entity with geometry
-      var points = new List<Dictionary<string, double>>();
-      try
-      {
-        // Try to get points from the flow path object
-        var pointsCollection = Civil3DCompatibility.GetPropertyValue(flowPath, "Points");
-        if (pointsCollection != null)
-        {
-          if (pointsCollection is Point3dCollection pt3dCol)
-          {
-            foreach (Point3d pt in pt3dCol)
-            {
-              points.Add(new Dictionary<string, double>
-              {
-                ["x"] = pt.X,
-                ["y"] = pt.Y,
-                ["z"] = pt.Z,
-              });
-            }
-          }
-        }
-      }
-      catch
-      {
-        // Flow path geometry extraction failed — return empty
       }
 
       return new Dictionary<string, object?>
       {
         ["catchmentName"] = catchmentName,
-        ["hasFlowPath"] = true,
+        ["hasFlowPath"] = points.Count > 0,
+        ["length"] = length,
         ["pointCount"] = points.Count,
         ["points"] = points,
+        ["segments"] = segments,
       };
     });
   }
