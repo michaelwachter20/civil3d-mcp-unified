@@ -26,23 +26,37 @@ public static class DrawingCommands
   /// <summary>
   /// The health answer for civil3d_health: Civil 3D and plugin versions, whether a drawing is open, the host queue
   /// (operation in progress, depth, capacity, current request and how long it has run), the user's active commands,
-  /// memory use, the plugin log's path and health, and background job counts. Doesn't go through the host queue, so
-  /// it answers even while a long request is running.
+  /// memory use, the plugin log's path and health, and background job counts. Doesn't go through the host queue, and
+  /// asks the main thread with a short timeout, so it answers within seconds even while Civil 3D is frozen on a long
+  /// request. Asking AutoCAD directly from here blocked until the main thread was free, which is when it's needed most.
   /// </summary>
-  public static Task<object?> GetCivil3DHealthAsync()
+  public static async Task<object?> GetCivil3DHealthAsync()
   {
     var status = PluginRuntime.GetStatus();
-    var doc = App.DocumentManager.MdiActiveDocument;
     var process = System.Diagnostics.Process.GetCurrentProcess();
     var jobs = JobRegistry.GetStats();
+    var responsive = true;
+    try
+    {
+      (_lastVersion, _lastDrawingLoaded) = await CivilExecution.OnMainThreadAsync(
+        // ACADVER ends with the licensee's company name in parentheses; report only the version.
+        () => (System.Text.RegularExpressions.Regex.Replace(App.GetSystemVariable("ACADVER")?.ToString() ?? string.Empty, @"\s*\(.*\)\s*$", string.Empty),
+          App.DocumentManager.MdiActiveDocument != null),
+        TimeSpan.FromSeconds(3));
+    }
+    catch (TimeoutException)
+    {
+      responsive = false;
+    }
 
     object response = new Dictionary<string, object?>
     {
       ["connected"] = true,
-      // ACADVER ends with the licensee's company name in parentheses; report only the version.
-      ["civil3dVersion"] = System.Text.RegularExpressions.Regex.Replace(App.GetSystemVariable("ACADVER")?.ToString() ?? string.Empty, @"\s*\(.*\)\s*$", string.Empty),
+      ["mainThreadResponsive"] = responsive,
+      ["note"] = responsive ? null : HealthNote(status),
+      ["civil3dVersion"] = _lastVersion,
       ["pluginVersion"] = typeof(PluginEntry).Assembly.GetName().Version?.ToString(),
-      ["drawingLoaded"] = doc != null,
+      ["drawingLoaded"] = _lastDrawingLoaded,
       ["operationInProgress"] = status.OperationInProgress,
       ["currentOperation"] = status.CurrentOperation,
       ["queueDepth"] = status.QueueDepth,
@@ -55,6 +69,7 @@ public static class DrawingCommands
         ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startedAt)
         : null,
       ["memoryUsageMb"] = Math.Round(process.PrivateMemorySize64 / 1024d / 1024d, 2),
+      ["freeCommitMb"] = HostGuard.FreeCommitMb(),
       ["logFilePath"] = PluginLog.LogFilePath,
       ["fileLoggingHealthy"] = PluginLog.IsFileLoggingHealthy,
       ["fileLoggingError"] = PluginLog.LastFileError,
@@ -70,7 +85,17 @@ public static class DrawingCommands
       },
     };
 
-    return Task.FromResult<object?>(response);
+    return response;
+  }
+
+  // The last answers from the main thread, for health to give while it can't be asked.
+  private static string _lastVersion = string.Empty;
+  private static bool _lastDrawingLoaded;
+
+  private static string HealthNote(PluginStatus status)
+  {
+    var what = status.CurrentOperation ?? "something the plugin didn't start, such as a command or a dialog";
+    return $"Civil 3D's main thread didn't answer within 3 s: it's busy with {what}. It may show as Not Responding until that finishes. Wait, and don't end it.";
   }
 
   /// <summary>The active drawing's file, units, coordinate system code, unsaved-changes flag and object counts (see <see cref="BuildDrawingInfo"/>).</summary>

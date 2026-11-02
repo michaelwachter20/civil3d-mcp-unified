@@ -54,6 +54,7 @@ public static class PluginRuntime
   private static string? _currentOperation;
   private static string? _currentRequestId;
   private static long? _currentOperationStartedAtUnixMs;
+  private static Timer? _longCallLog;
 
   /// <summary>Starts the listener (C3DMCPSTART, the ribbon toggle, or CIVIL3D_MCP_AUTOSTART). Throws when the port is
   /// in use, e.g. by another Civil 3D window; nothing is kept then, so a later start can retry.</summary>
@@ -70,6 +71,7 @@ public static class PluginRuntime
       var server = new RpcTcpServer(Port, HandleRawRequestAsync);
       server.Start();
       _server = server;
+      _longCallLog = new Timer(_ => LogLongCall(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
   }
 
@@ -80,6 +82,8 @@ public static class PluginRuntime
     {
       _server?.Stop();
       _server = null;
+      _longCallLog?.Dispose();
+      _longCallLog = null;
       _currentOperation = null;
       _activeOperations = 0;
       _queueDepth = 0;
@@ -273,11 +277,24 @@ public static class PluginRuntime
     }
   }
 
-  /// <summary>Counts a request into the host queue, refusing with CIVIL3D.HOST_BUSY beyond 64 waiting.</summary>
+  /// <summary>
+  /// Counts a request into the host queue. Refuses with CIVIL3D.HOST_BUSY beyond 64 waiting, while a long call has the
+  /// main thread (waiting would only time out, with the call still running), and when memory is nearly out.
+  /// </summary>
   internal static void QueueHostOperation()
   {
+    if (HostGuard.CheckMemory(HostGuard.FreeCommitMb, () => Thread.Sleep(1000)) is { } lowMemory)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.HOST_BUSY", lowMemory);
+    }
+
     lock (Sync)
     {
+      if (HostGuard.BusyRefusal(_currentOperation, RunningMs()) is { } busy)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.HOST_BUSY", busy);
+      }
+
       if (_queueDepth >= MaxQueuedHostOperations)
       {
         throw new JsonRpcDispatchException(
@@ -286,6 +303,25 @@ public static class PluginRuntime
       }
 
       _queueDepth++;
+    }
+  }
+
+  private static long RunningMs() => _currentOperationStartedAtUnixMs is long startedAt
+    ? Math.Max(0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startedAt)
+    : 0;
+
+  /// <summary>
+  /// Leaves a line in the log every 30 s of a long call, with the memory it has, so a freeze can be told from a crash
+  /// afterwards: runs from a timer, because the main thread is the one that's busy.
+  /// </summary>
+  private static void LogLongCall()
+  {
+    lock (Sync)
+    {
+      if (_currentOperation != null && RunningMs() >= HostGuard.LongCallMs)
+      {
+        PluginLog.Info("HostGuard", $"Still running {_currentOperation} after {RunningMs() / 1000} s, {HostGuard.FreeCommitMb()} MB of memory left.");
+      }
     }
   }
 

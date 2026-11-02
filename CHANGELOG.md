@@ -20,6 +20,13 @@ From a review of the code against Project Analyzer and Civil 3D's own API list, 
   a crash, and now 1.1 s. `check_profile` went from 34 s to under a second and `sample_elevations` from 6 s to 0.6 s.
   `check_profile` now reports a steep tangent once, not at both ends. A timeout says Civil 3D may still be working.
 
+- **A long call can't look like a crash:** native Civil 3D calls can't be stopped, so a long one can't be cut short, but it
+  no longer goes unexplained. `civil3d_health` answers within seconds during a freeze, where it used to hang, and says
+  what's running. New requests are refused at once while a call has run past a minute, naming it, rather than timing out
+  behind it. The plugin log notes a long call every 30 s, with the memory left. New work is refused when under 300 MB of
+  commit stays that low for 6 s, because running out is what took the PC down before; a brief dip is only Windows about
+  to grow its page file.
+
 - **One huge answer can't end the session:** an answer sent as text and as structured content could pass the client's
   10 MiB limit, which drops the connection. Past 2 MiB the caller gets the answer's shape and where the rest is kept.
   `profile get` lists the first 500 entities unless told otherwise, in station order.

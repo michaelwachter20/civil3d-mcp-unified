@@ -314,6 +314,22 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
+  // A long call and low memory are answered, not waited on (HostGuard).
+  Assert(HostGuard.BusyRefusal(null, 999_000) == null, "Nothing running refuses nothing.");
+  Assert(HostGuard.BusyRefusal("checkStoppingDistance", 59_000) == null, "A call under a minute lets the next one wait.");
+  Assert(HostGuard.BusyRefusal("checkStoppingDistance", 95_000) is { } busy && busy.Contains("checkStoppingDistance") && busy.Contains("95 s") && busy.Contains("Not Responding"),
+    "A long call is named, with its time, and says it isn't a crash.");
+  Assert(HostGuard.MemoryRefusal(299) != null && HostGuard.MemoryRefusal(300) == null, "New work stops below 300 MB of commit.");
+  var readings = new Queue<long>(new long[] { 250, 260, 1650 });
+  var waits = 0;
+  Assert(HostGuard.CheckMemory(() => readings.Dequeue(), () => waits++) == null && waits == 2, "A dip that recovers refuses nothing: Windows grew its page file.");
+  waits = 0;
+  Assert(HostGuard.CheckMemory(() => 250, () => waits++) != null && waits == 6, "Memory that stays low is refused, after six checks.");
+  waits = 0;
+  Assert(HostGuard.CheckMemory(() => 2000, () => waits++) == null && waits == 0, "Plenty of memory costs no wait.");
+  Assert(HostGuard.MemoryRefusal(-1) == null, "When Windows won't say, nothing is refused.");
+  Assert(HostGuard.FreeCommitMb() > 0, "Windows reports the commit left.");
+
   // AASHTO's published stopping and passing distances, which FDOT's manual repeats (SightMath).
   (double Mph, double Stopping, double Passing)[] aashto =
     [(25, 155, 450), (30, 200, 500), (35, 250, 550), (40, 305, 600), (45, 360, 700), (50, 425, 800), (55, 495, 900), (60, 570, 1000), (65, 645, 1100), (70, 730, 1200)];
