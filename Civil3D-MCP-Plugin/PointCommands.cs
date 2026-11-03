@@ -67,7 +67,9 @@ public static class PointCommands
     var first = pointsNode.OfType<JsonObject>().FirstOrDefault();
     await PointCreationGate.RequireAsync($"{pointsNode.Count} COGO point{(pointsNode.Count == 1 ? "" : "s")}"
       + (first != null ? $", the first at E {first["x"]}, N {first["y"]}, elevation {first["z"]}" : "")
-      + " (civil3d_point create).");
+      + " (civil3d_point create).",
+      PointCreationGate.PointListDetails(pointsNode.OfType<JsonObject>()
+        .Select(p => $"E {p["x"]}, N {p["y"]}, elev {p["z"]}, {p["description"]?.ToString() ?? ""}").ToList()));
 
     return await CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -133,7 +135,9 @@ public static class PointCommands
 
     await PointCreationGate.RequireAsync($"{points.Count} COGO point{(points.Count == 1 ? "" : "s")} typed in by the AI "
       + $"({format}), the first at E {points[0].X}, N {points[0].Y}, elevation {points[0].Z}"
-      + " (civil3d_point import with data, not a file).");
+      + " (civil3d_point import with data, not a file).",
+      PointCreationGate.PointListDetails(points
+        .Select(p => $"{(p.Number?.ToString() ?? "(next)")}: E {p.X}, N {p.Y}, elev {p.Z}, {p.Description}").ToList()));
 
     return await CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {

@@ -12,6 +12,11 @@
   show them all, undoing the zoom to the area just worked on. Once that took in something at 0,0 the view went
   1.9 million ft wide. `civil3d_drawing action=save` now leaves the view where it is.
 
+- **The "create points?" window says more:** under the short summary, a collapsed "Details" section shows the drawing
+  the points would go into and what the AI is doing: for a saved script its description, the values it was run with
+  and its code; for code written on the spot its description, values and code; for points typed in, the first 25 of
+  them. The summary line stays as it was.
+
 ## v2.4.1 — 2026-11-01
 
 From a review of the code against Project Analyzer and Civil 3D's own API list, then a day of live testing in Civil 3D

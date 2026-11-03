@@ -43,7 +43,8 @@ public static class ScriptCommands
     var args = parameters?["args"] as JsonObject;
     if (write && PointCreationGate.ScriptAddsPoints(code))
     {
-      await PointCreationGate.RequireAsync($"C# run by the AI ({description}) that adds COGO points with CogoPoints.Add.");
+      await PointCreationGate.RequireAsync($"C# run by the AI ({description}) that adds COGO points with CogoPoints.Add.",
+        PointCreationGate.ScriptDetails("Code written by the AI for this request.", description, args, code));
     }
 
     // Compile on the request thread so AutoCAD is not blocked by Roslyn.
@@ -226,7 +227,8 @@ public static class ScriptCommands
     var args = ScriptLibrary.BuildArguments(script, parameters?["args"] as JsonObject);
     if (script.IsWrite && PointCreationGate.ScriptAddsPoints(script.Code))
     {
-      await PointCreationGate.RequireAsync($"the saved script '{script.Name}', which adds COGO points with CogoPoints.Add.");
+      await PointCreationGate.RequireAsync($"the saved script '{script.Name}', which adds COGO points with CogoPoints.Add.",
+        PointCreationGate.ScriptDetails($"Saved script '{script.Name}':", script.Description, parameters?["args"] as JsonObject, script.Code));
     }
 
     var compiled = await Task.Run(() => ScriptEngine.Compile(script.Code, script.IsWrite));

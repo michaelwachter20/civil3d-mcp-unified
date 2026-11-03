@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -28,12 +29,37 @@ public static class PointCreationGate
   /// <summary>True for one of Civil 3D's point-making commands (PointCreationRules).</summary>
   public static bool IsCreateCommand(string commandName) => PointCreationRules.IsCreateCommand(commandName);
 
+  /// <summary>The details for code the AI runs: what it says it does, the values it passes and the code itself.</summary>
+  public static string ScriptDetails(string heading, string? description, JsonObject? args, string code)
+  {
+    var lines = new List<string> { heading };
+    if (!string.IsNullOrWhiteSpace(description)) lines.Add(description);
+    lines.Add("");
+    lines.Add("Run with:");
+    if (args == null || args.Count == 0) lines.Add("  (no values)");
+    else lines.AddRange(args.Select(pair => $"  {pair.Key} = {pair.Value?.ToJsonString() ?? "null"}"));
+    lines.Add("");
+    lines.Add("Code:");
+    lines.Add(code);
+    return string.Join("\n", lines);
+  }
+
+  /// <summary>The details for points the AI types in: one line each, the first <paramref name="max"/> of them.</summary>
+  public static string PointListDetails(IReadOnlyList<string> pointLines, int max = 25)
+  {
+    var shown = pointLines.Take(max).ToList();
+    if (pointLines.Count > max) shown.Add($"...and {pointLines.Count - max} more");
+    return "Points:\n" + string.Join("\n", shown);
+  }
+
   /// <summary>
   /// Asks the user in Civil 3D whether the AI may make points (<paramref name="what"/> says what, e.g. "3 COGO points,
-  /// the first at E 2000.50, N 5000.25"). Returns when allowed; throws CIVIL3D.USER_DECLINED when the user says no or
-  /// doesn't answer in time, and CIVIL3D.POINT_CREATION_OFF when the policy is off.
+  /// the first at E 2000.50, N 5000.25"). <paramref name="details"/>, when given, goes in a collapsed "Details" section
+  /// under it (the values the AI passed, the code it runs, the points it types in), so the user can look before
+  /// answering. Returns when allowed; throws CIVIL3D.USER_DECLINED when the user says no or doesn't answer in time, and
+  /// CIVIL3D.POINT_CREATION_OFF when the policy is off.
   /// </summary>
-  public static async Task RequireAsync(string what)
+  public static async Task RequireAsync(string what, string? details = null)
   {
     var policy = (Environment.GetEnvironmentVariable("CIVIL3D_POINT_CREATION") ?? "ask").Trim().ToLowerInvariant();
     if (policy == "allow")
@@ -48,7 +74,7 @@ public static class PointCreationGate
         "civil3d_point action import_file (Civil 3D's own importer).");
     }
 
-    var allowed = await CivilExecution.OnMainThreadAsync(() => Task.FromResult(Ask(what)));
+    var allowed = await CivilExecution.OnMainThreadAsync(() => Task.FromResult(Ask(what, details)));
     if (!allowed)
     {
       throw new JsonRpcDispatchException("CIVIL3D.USER_DECLINED",
@@ -58,8 +84,9 @@ public static class PointCreationGate
   }
 
   /// <summary>The question window, modal in Civil 3D: "Allow" / "Don't allow" (the default), closing as no after
-  /// TimeoutSeconds. True only for an explicit "Allow".</summary>
-  private static bool Ask(string what)
+  /// TimeoutSeconds. True only for an explicit "Allow". The drawing the points would go into and any details sit in a
+  /// collapsed "Details" section, so the short summary stays the first thing read.</summary>
+  private static bool Ask(string what, string? details)
   {
     var remaining = TimeoutSeconds;
     var countdown = new TextBlock { Margin = new Thickness(0, 8, 0, 0), Opacity = 0.7 };
@@ -77,6 +104,31 @@ public static class PointCreationGate
       TextWrapping = TextWrapping.Wrap,
     });
     body.Children.Add(new TextBlock { Text = what, TextWrapping = TextWrapping.Wrap, MaxWidth = 480, Margin = new Thickness(0, 6, 0, 0) });
+    var drawing = App.DocumentManager.MdiActiveDocument?.Name;
+    var detailText = (string.IsNullOrWhiteSpace(drawing) ? "" : $"Into drawing: {System.IO.Path.GetFileName(drawing)}\n\n")
+      + (string.IsNullOrWhiteSpace(details) ? "No more detail was given." : details);
+    body.Children.Add(new Expander
+    {
+      Header = "Details: what the AI is doing",
+      IsExpanded = false,
+      Margin = new Thickness(0, 8, 0, 0),
+      MaxWidth = 560,
+      Content = new ScrollViewer
+      {
+        MaxHeight = 320,
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+        Content = new TextBox
+        {
+          Text = detailText,
+          IsReadOnly = true,
+          BorderThickness = new Thickness(0),
+          FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+          TextWrapping = TextWrapping.NoWrap,
+          Margin = new Thickness(0, 4, 0, 0),
+        },
+      },
+    });
     body.Children.Add(countdown);
     body.Children.Add(buttons);
     var window = new Window
