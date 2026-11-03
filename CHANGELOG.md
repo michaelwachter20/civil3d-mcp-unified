@@ -17,6 +17,11 @@
   and its code; for code written on the spot its description, values and code; for points typed in, the first 25 of
   them. The summary line stays as it was.
 
+- **The window says "delete points" when the AI deletes points:** a script that deleted points and added group ids to
+  a list asked "create points?", because any `.Add(` in a script that used CogoPoints counted. Now an Add or a Remove
+  counts only on the point collection itself (or a variable holding it), handing the collection to other code still
+  asks, erasing a CogoPoint counts as deleting, and the window's title and wording say create, delete, or both.
+
 ## v2.4.1 — 2026-11-01
 
 From a review of the code against Project Analyzer and Civil 3D's own API list, then a day of live testing in Civil 3D

@@ -41,10 +41,11 @@ public static class ScriptCommands
     var code = PluginRuntime.GetRequiredString(parameters, "code");
     var description = PluginRuntime.GetOptionalString(parameters, "description") ?? (write ? "execute" : "query");
     var args = parameters?["args"] as JsonObject;
-    if (write && PointCreationGate.ScriptAddsPoints(code))
+    var pointAction = write ? PointCreationGate.ScriptPointAction(code) : null;
+    if (pointAction != null)
     {
-      await PointCreationGate.RequireAsync($"C# run by the AI ({description}) that adds COGO points with CogoPoints.Add.",
-        PointCreationGate.ScriptDetails("Code written by the AI for this request.", description, args, code));
+      await PointCreationGate.RequireAsync($"C# run by the AI ({description}) that will {pointAction} COGO points.",
+        PointCreationGate.ScriptDetails("Code written by the AI for this request.", description, args, code), pointAction);
     }
 
     // Compile on the request thread so AutoCAD is not blocked by Roslyn.
@@ -225,10 +226,12 @@ public static class ScriptCommands
   {
     var script = ScriptLibrary.Get(PluginRuntime.GetRequiredString(parameters, "name"));
     var args = ScriptLibrary.BuildArguments(script, parameters?["args"] as JsonObject);
-    if (script.IsWrite && PointCreationGate.ScriptAddsPoints(script.Code))
+    var pointAction = script.IsWrite ? PointCreationGate.ScriptPointAction(script.Code) : null;
+    if (pointAction != null)
     {
-      await PointCreationGate.RequireAsync($"the saved script '{script.Name}', which adds COGO points with CogoPoints.Add.",
-        PointCreationGate.ScriptDetails($"Saved script '{script.Name}':", script.Description, parameters?["args"] as JsonObject, script.Code));
+      await PointCreationGate.RequireAsync($"the saved script '{script.Name}', which will {pointAction} COGO points.",
+        PointCreationGate.ScriptDetails($"Saved script '{script.Name}':", script.Description, parameters?["args"] as JsonObject, script.Code),
+        pointAction);
     }
 
     var compiled = await Task.Run(() => ScriptEngine.Compile(script.Code, script.IsWrite));

@@ -26,6 +26,18 @@ public static class PointCreationGate
   /// <summary>True when <paramref name="code"/> (a script) makes COGO points (PointCreationRules).</summary>
   public static bool ScriptAddsPoints(string code) => PointCreationRules.ScriptAddsPoints(code);
 
+  /// <summary>True when <paramref name="code"/> (a script) deletes COGO points (PointCreationRules).</summary>
+  public static bool ScriptRemovesPoints(string code) => PointCreationRules.ScriptRemovesPoints(code);
+
+  /// <summary>What a script does to points, for the window's wording: "create", "delete", "create and delete", or
+  /// null when it does neither.</summary>
+  public static string? ScriptPointAction(string code)
+  {
+    var adds = ScriptAddsPoints(code);
+    var removes = ScriptRemovesPoints(code);
+    return adds && removes ? "create and delete" : adds ? "create" : removes ? "delete" : null;
+  }
+
   /// <summary>True for one of Civil 3D's point-making commands (PointCreationRules).</summary>
   public static bool IsCreateCommand(string commandName) => PointCreationRules.IsCreateCommand(commandName);
 
@@ -59,7 +71,7 @@ public static class PointCreationGate
   /// answering. Returns when allowed; throws CIVIL3D.USER_DECLINED when the user says no or doesn't answer in time, and
   /// CIVIL3D.POINT_CREATION_OFF when the policy is off.
   /// </summary>
-  public static async Task RequireAsync(string what, string? details = null)
+  public static async Task RequireAsync(string what, string? details = null, string action = "create")
   {
     var policy = (Environment.GetEnvironmentVariable("CIVIL3D_POINT_CREATION") ?? "ask").Trim().ToLowerInvariant();
     if (policy == "allow")
@@ -74,19 +86,19 @@ public static class PointCreationGate
         "civil3d_point action import_file (Civil 3D's own importer).");
     }
 
-    var allowed = await CivilExecution.OnMainThreadAsync(() => Task.FromResult(Ask(what, details)));
+    var allowed = await CivilExecution.OnMainThreadAsync(() => Task.FromResult(Ask(what, details, action)));
     if (!allowed)
     {
       throw new JsonRpcDispatchException("CIVIL3D.USER_DECLINED",
         $"The user didn't allow it in Civil 3D (said no, or didn't answer within {TimeoutSeconds} s): {what.TrimEnd('.')}. Nothing " +
-        "was created. For points from a file use civil3d_point action import_file (Civil 3D's own importer).");
+        "was changed. For points from a file use civil3d_point action import_file (Civil 3D's own importer).");
     }
   }
 
   /// <summary>The question window, modal in Civil 3D: "Allow" / "Don't allow" (the default), closing as no after
   /// TimeoutSeconds. True only for an explicit "Allow". The drawing the points would go into and any details sit in a
   /// collapsed "Details" section, so the short summary stays the first thing read.</summary>
-  private static bool Ask(string what, string? details)
+  private static bool Ask(string what, string? details, string action)
   {
     var remaining = TimeoutSeconds;
     var countdown = new TextBlock { Margin = new Thickness(0, 8, 0, 0), Opacity = 0.7 };
@@ -99,7 +111,7 @@ public static class PointCreationGate
     var body = new StackPanel { Margin = new Thickness(16) };
     body.Children.Add(new TextBlock
     {
-      Text = "The AI (Civil 3D MCP) wants to create points in this drawing:",
+      Text = $"The AI (Civil 3D MCP) wants to {action} points in this drawing:",
       FontWeight = FontWeights.SemiBold,
       TextWrapping = TextWrapping.Wrap,
     });
@@ -133,7 +145,7 @@ public static class PointCreationGate
     body.Children.Add(buttons);
     var window = new Window
     {
-      Title = "Civil 3D MCP: create points?",
+      Title = $"Civil 3D MCP: {action} points?",
       Content = body,
       SizeToContent = SizeToContent.WidthAndHeight,
       ResizeMode = ResizeMode.NoResize,

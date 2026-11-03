@@ -392,6 +392,13 @@ try
   Assert(!PointCreationRules.ScriptAddsPoints("foreach (ObjectId id in CivilDoc.CogoPoints) Count++;")
          && !PointCreationRules.ScriptAddsPoints("names.Add(alignment.Name);"),
     "A script that only reads points, or adds to a list without touching points, doesn't count.");
+  Assert(!PointCreationRules.ScriptAddsPoints("foreach (var n in nums) CivilDoc.CogoPoints.Remove(CivilDoc.CogoPoints.GetPointByPointNumber(n));\nvar order = new ObjectIdCollection(); order.Add(id);")
+         && PointCreationRules.ScriptRemovesPoints("foreach (var n in nums) CivilDoc.CogoPoints.Remove(CivilDoc.CogoPoints.GetPointByPointNumber(n));"),
+    "A script that deletes points and adds to another collection asks to delete, not to create.");
+  Assert(PointCreationRules.ScriptAddsPoints("Helper(CivilDoc.CogoPoints);"),
+    "Handing the point collection to other code asks, since what it does there can't be seen.");
+  Assert(!PointCreationRules.ScriptRemovesPoints("foreach (ObjectId id in CivilDoc.CogoPoints) Count++;"),
+    "Reading points doesn't count as deleting them.");
   Assert(PointCreationRules.IsCreateCommand("CREATEPOINTS") && PointCreationRules.IsCreateCommand("createpoints")
          && !PointCreationRules.IsCreateCommand("IMPORTPOINTS"),
     "CREATEPOINTS asks; IMPORTPOINTS (Civil 3D's own importer) doesn't.");
