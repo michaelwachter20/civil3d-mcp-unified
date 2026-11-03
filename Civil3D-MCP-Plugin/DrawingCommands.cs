@@ -193,7 +193,7 @@ public static class DrawingCommands
         ["saved"] = true,
         ["filePath"] = targetPath,
       };
-    });
+    }, followView: false); // Saving touches objects all over the drawing; following them zoomed far out after every save.
   }
 
   /// <summary>

@@ -8,6 +8,10 @@
   section's left and right offsets, which matched the sampled surface and the drawn section exactly on real drawings,
   and a section with no data gives none. The export says how many sections had no data.
 
+- **Saving no longer moves the view:** a save touches objects all over the drawing, and the view then zoomed out to
+  show them all, undoing the zoom to the area just worked on. Once that took in something at 0,0 the view went
+  1.9 million ft wide. `civil3d_drawing action=save` now leaves the view where it is.
+
 ## v2.4.1 — 2026-11-01
 
 From a review of the code against Project Analyzer and Civil 3D's own API list, then a day of live testing in Civil 3D

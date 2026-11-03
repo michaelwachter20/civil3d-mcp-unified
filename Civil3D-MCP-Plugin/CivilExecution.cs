@@ -39,7 +39,7 @@ public static class CivilExecution
       : $"Read-only requests run outside command context via {_mainThreadContext.GetType().Name}.");
   }
 
-  public static async Task<T> ExecuteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action, bool write)
+  public static async Task<T> ExecuteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action, bool write, bool followView = true)
   {
     Task<T> Run()
     {
@@ -63,7 +63,7 @@ public static class CivilExecution
         }
       }
 
-      if (write)
+      if (write && followView)
       {
         ViewFollower.Follow(doc, changes);
       }
@@ -336,9 +336,13 @@ public static class CivilExecution
     return ExecuteReadOnlyAsync(() => Task.FromResult(action(GetVerifiedActiveDocuments().Item1)));
   }
 
-  public static Task<T> WriteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)
+  /// <summary>
+  /// A write in command context. <paramref name="followView"/> false leaves the view where it is: for writes the user
+  /// has nothing to look at, such as a save, which touches objects all over the drawing.
+  /// </summary>
+  public static Task<T> WriteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action, bool followView = true)
   {
-    return ExecuteAsync(action, true);
+    return ExecuteAsync(action, true, followView);
   }
 
   /// <summary>
