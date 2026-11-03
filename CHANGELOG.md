@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Section points are only the ones drawn:** Civil 3D also hands back points past a section's real ends that are never
+  drawn, across the whole sample line, and even on a section where the surface has no data at all (17 points on one
+  real section that draws nothing). `get_section_data` and `view_export` now keep only the points between the
+  section's left and right offsets, which matched the sampled surface and the drawn section exactly on real drawings,
+  and a section with no data gives none. The export says how many sections had no data.
+
 ## v2.4.1 — 2026-11-01
 
 From a review of the code against Project Analyzer and Civil 3D's own API list, then a day of live testing in Civil 3D

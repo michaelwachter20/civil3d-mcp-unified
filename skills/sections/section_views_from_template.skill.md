@@ -52,7 +52,9 @@ to show the settings. Make the rest so each lands exactly where the sheet expect
 ## Hard rules / gotchas
 - Never call `SampleLineGroup.GetSectionSources()` on a group opened for read: it updates the group and crashes Civil 3D
   (`eNotOpenForWrite`). The plugin blocks the raw call; use the `SectionSources(groupId)` helper in write mode.
-- `Section.LeftOffset` etc. throw "not supported by current Section" for surface sections - read names/styles/layers only.
+- `Section.LeftOffset` / `RightOffset` throw ("not supported by current Section") when the section has no data, e.g.
+  sample lines made before their sources were sampled; on a sampled surface section they give its real ends.
+  `SectionPoints` also holds undrawn points past those ends, so keep only points between them.
 - Sampling: a new sample line group samples nothing. Turn sources on with the `SetSectionSources(groupId, names, styleId)`
   helper (write mode). Through the API, sample lines that existed before their sources were sampled never get section data
   (unsample/resample does not fix it; the dialog does); the helper recreates such lines and their views by default.

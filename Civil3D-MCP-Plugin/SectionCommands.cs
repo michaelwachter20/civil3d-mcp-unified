@@ -192,6 +192,33 @@ public static class SectionCommands
     }
   }
 
+  /// <summary>
+  /// The points a section actually draws, left to right. <c>SectionPoints</c> also holds points past the section's real
+  /// ends that are never drawn, across the whole sample line and even on a section whose surface has no data there, so
+  /// only points between <c>LeftOffset</c> and <c>RightOffset</c> are kept. Those two throw when the section has no
+  /// data; that gives no points. On real drawings this matched <c>SampleElevations</c> and the drawn section exactly.
+  /// </summary>
+  private static List<Point3d> DrawnSectionPoints(Autodesk.Civil.DatabaseServices.Section section)
+  {
+    double left, right;
+    try
+    {
+      left = section.LeftOffset;
+      right = section.RightOffset;
+    }
+    catch (System.Exception)
+    {
+      return new List<Point3d>();
+    }
+
+    const double tolerance = 0.001;
+    return section.SectionPoints.Cast<SectionPoint>()
+      .Select(point => point.Location)
+      .Where(location => location.X >= left - tolerance && location.X <= right + tolerance)
+      .OrderBy(location => location.X)
+      .ToList();
+  }
+
   public static Task<object?> GetSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -232,10 +259,10 @@ public static class SectionCommands
           var section = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Section>(transaction, sectionId, OpenMode.ForRead);
           var offsets = new List<double>();
           var elevations = new List<double>();
-          foreach (SectionPoint point in section.SectionPoints)
+          foreach (var location in DrawnSectionPoints(section))
           {
-            offsets.Add(point.Location.X);
-            elevations.Add(point.Location.Y);
+            offsets.Add(location.X);
+            elevations.Add(location.Y);
           }
 
           var kept = StationMath.EvenIndices(offsets.Count, maxPoints);
@@ -506,7 +533,7 @@ public static class SectionCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Writes a CSV of every section point of every sample line in <c>sampleLineGroupName</c> (optionally only
+  /// Writes a CSV of every drawn section point of every sample line in <c>sampleLineGroupName</c> (optionally only
   /// between <c>stationStart</c> and <c>stationEnd</c>): station, section source name, offset and, unless
   /// <c>includeElevations</c> is false, elevation, in drawing units with invariant-culture numbers. The file goes to
   /// <c>outputPath</c> through <c>FileBoundary.WriteAllTextAtomic</c> (allowed roots, <c>.csv</c> only, no overwrite
@@ -539,6 +566,7 @@ public static class SectionCommands
       if (includeElevations) csv.Append(",Elevation");
       csv.AppendLine();
       var rowsWritten = 0;
+      var sectionsWithoutData = 0;
 
       foreach (ObjectId sampleLineId in group.GetSampleLineIds())
       {
@@ -549,13 +577,15 @@ public static class SectionCommands
         foreach (ObjectId sectionId in sampleLine.GetSectionIds())
         {
           var section = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Section>(transaction, sectionId, OpenMode.ForRead);
-          foreach (SectionPoint point in section.SectionPoints)
+          var points = DrawnSectionPoints(section);
+          if (points.Count == 0) sectionsWithoutData++;
+          foreach (var location in points)
           {
             csv.Append(sampleLine.Station.ToString("G17", CultureInfo.InvariantCulture))
               .Append(',').Append(EscapeCsv(SectionSource(section)))
-              .Append(',').Append(point.Location.X.ToString("G17", CultureInfo.InvariantCulture));
+              .Append(',').Append(location.X.ToString("G17", CultureInfo.InvariantCulture));
             if (includeElevations)
-              csv.Append(',').Append(point.Location.Y.ToString("G17", CultureInfo.InvariantCulture));
+              csv.Append(',').Append(location.Y.ToString("G17", CultureInfo.InvariantCulture));
             csv.AppendLine();
             rowsWritten++;
           }
@@ -570,6 +600,7 @@ public static class SectionCommands
         ["sampleLineGroupName"] = group.Name,
         ["outputPath"] = canonicalPath,
         ["rowsWritten"] = rowsWritten,
+        ["sectionsWithoutData"] = sectionsWithoutData,
         ["includeElevations"] = includeElevations,
         ["units"] = CivilObjectUtils.LinearUnits(database),
       };
