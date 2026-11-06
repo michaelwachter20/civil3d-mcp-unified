@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A job's overview counts removed files as removed:** files no longer in the job folder (props `gone` on them, or
+  on the file they were found in) are counted as `gone` in `civil3d_project_notes action=overview`, not under the
+  status they kept. A deleted folder of files the analyzer never read showed as tens of thousands "pending".
+
 - **Section points are only the ones drawn:** Civil 3D also hands back points past a section's real ends that are never
   drawn, across the whole sample line, and even on a section where the surface has no data at all (17 points on one
   real section that draws nothing). `get_section_data` and `view_export` now keep only the points between the

@@ -509,9 +509,12 @@ function copyInfo(db: DatabaseSync) {
 export async function projectOverview(name?: string) {
   const { job } = await resolveProject(name);
   return withProjectDb(job.file, ({ db }) => {
-    // Job files only: user-knowledge documents are counted under userKnowledge.
+    // Job files only: user-knowledge documents are counted under userKnowledge. A file no longer in the job folder
+    // (props 'gone' on it or the file it was found in) keeps its status in the table, but is counted as "gone": a
+    // removed file that was never read isn't waiting to be read.
     const statuses = all<{ status: string; n: number }>(
-      db, "SELECT status, COUNT(*) AS n FROM files WHERE NOT (path >= ? AND path < ?) GROUP BY status ORDER BY n DESC", ...USER_KNOWLEDGE_RANGE);
+      db, "SELECT CASE WHEN root_id IN (SELECT file_id FROM props WHERE key = 'gone') THEN 'gone' ELSE status END AS status, "
+        + "COUNT(*) AS n FROM files WHERE NOT (path >= ? AND path < ?) GROUP BY 1 ORDER BY n DESC", ...USER_KNOWLEDGE_RANGE);
     const knowledge = userKnowledgeStatus(db, job);
     const legacy = legacyFiles(job.file).files.length;
     const lastRun = metaValue(db, "last_run_finished");
