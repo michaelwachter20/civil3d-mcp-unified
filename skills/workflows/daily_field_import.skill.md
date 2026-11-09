@@ -1,7 +1,7 @@
 ---
 name: daily_field_import
 category: workflows
-description: Import a day's checked field files into a running "all points" drawing the way it is done by hand with Import Points - a layer per crew copied from the previous day's layer, a point group per crew at the top of the list, duplicate point numbers offset by a fixed step (+10,000,000, +20,000,000 ... per point) - then update the material point groups and report what each crew did. Suggested saved script names import-day, update-point-groups, points-by-segment.
+description: Import a day's checked field files into a running "all points" drawing the way it is done by hand with Import Points - a layer per crew copied from the previous day's layer, a point group per crew at the top of the list, duplicate point numbers offset by a fixed step (+10,000,000, +20,000,000 ... per point) - then update the material point groups, report what each crew did, and give a ready-to-paste work summary for the job's daily field report. Suggested saved script names import-day, update-point-groups, points-by-segment.
 requires_write: true
 civil3d_versions: 2027
 parameters:
@@ -71,6 +71,11 @@ layout, crew codes and group list in project notes, not here.
    check its query before worrying. Save again.
 5. Report what each crew did with the `points_by_segment_report` skill: shot types, segment, station range to the
    nearest +25 ft, offsets, and anything that crosses a segment boundary.
+6. If the job keeps a daily field report with a "work performed" box, end the report with a ready-to-paste summary of
+   the day for it, every time, in a code block: one entry per piece of work, worded and ordered the way the latest
+   filled-in reports word it (read two or three of them in the job database, `civil3d_project_notes` search/file), with
+   the request number and status the report above worked out. The job's own wording and what its codes mean go in
+   its project notes, not here.
 
 ## API notes
 - `CogoPoints.Add(location, true)` then set `PointNumber`, `RawDescription`, `Layer`, `StyleId`, `LabelStyleId`;

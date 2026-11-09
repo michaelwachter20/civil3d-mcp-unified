@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The daily import ends with a paste-in:** the `daily_field_import` skill's last step gives a ready-to-paste summary
+  of the day's work for the job's daily field report, every time, worded like the latest filled-in reports; the job's
+  own wording lives in its project notes.
+
 - **A job's overview counts removed files as removed:** files no longer in the job folder (props `gone` on them, or
   on the file they were found in) are counted as `gone` in `civil3d_project_notes action=overview`, not under the
   status they kept. A deleted folder of files the analyzer never read showed as tens of thousands "pending".
