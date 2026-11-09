@@ -1,7 +1,7 @@
 ---
 name: clear_annotation_clashes
 category: workflows
-description: Find every annotation clash on plan sheets with exact geometry (in-memory Explode of Civil labels and MLeaders - box against box, and every leader line against every box) and fix them the user's way - uniform, not random - station/offset labels back to the run's standard drag (or its mirror), paired callout leaders all on one layout (or its mirror) slid along their line when blocked. Saved scripts annotation-clash-check and annotation-uniform-fix.
+description: Find every annotation clash on plan sheets with exact geometry (in-memory Explode of Civil labels and MLeaders - box against box, and every leader line against every box) and fix them the user's way - uniform, not random - station/offset labels back to the run's standard drag (or its mirror), paired callout leaders all on one layout (or its mirror) slid along their line when blocked. Saved scripts annotation-clash-check and annotation-uniform-fix; final per-sheet verification with annotation-exact-check (every label, point label and leader exploded for real - leaders crossing, leaders through text, text overlaps, labels off the sheet).
 requires_write: true
 civil3d_versions: 2027
 parameters:
@@ -58,12 +58,23 @@ hand - and the user wants them clean and uniform, not "smallest random shift".
   along its line together. A pair already on either layout and clash-free is left alone.
 - Never move the user's deliberate placements: only pass `labelHandles` for labels a script moved.
 - Show the dry run and get a yes before applying; verify with the check afterwards.
+- A point on a sheet has its label on that same sheet, fully inside the viewport. Near a sheet edge, mirror the
+  drag (or use the other side) instead of letting the label run off the page.
+- Point (elevation) labels of newly added points follow their neighbours: the same drag the existing shown points
+  use, on the side opposite the point's station/offset label. Undragged labels sit on the point, right where the
+  station/offset leader starts, and read as overlapping.
+- Two shown points close together (about 10-20 ft): one station/offset label goes to a second row further out on
+  the same side, and the elevation labels are re-sided so no two leaders cross - leaders crossing each other count
+  as a clash, not only leaders through text.
 
 ## Exact geometry
 - In-memory `Entity.Explode` (copies only - the drawing is never changed by exploding): a Civil label explodes to a
   block reference -> border lines, MText, Leader; an MLeader -> MText, landing line, leader polyline from the
-  arrowhead, arrow solid. Points cannot be exploded: their label box comes from the label style (text height and
-  X offset, plotted feet x 12 / viewport scale).
+  arrowhead, arrow solid. The check and fix scripts below estimate point label boxes from the label style (text
+  height and X offset, plotted feet x 12 / viewport scale) and treat each label's leader as one straight line from
+  the anchor - both can miss real clashes (the leader's bend and landing, a dragged elevation label). Point labels
+  DO explode in the write context (copies only; the point is untouched), so the final check, `annotation-exact-check`,
+  explodes everything for real: MText quads, the station/offset border, Leader vertices, MLeader polylines.
 - **Civil labels explode only in the write (command) context** - in a read-only run they return nothing. Both
   scripts run through `civil3d_execute` (the check never writes; the fix writes only when dryRun is false) and stop
   if a label explodes empty.
@@ -77,6 +88,59 @@ hand - and the user wants them clean and uniform, not "smallest random shift".
 2. Read the user's preferred pair layout from a sheet they laid out (text offsets from each arrowhead, spacing).
 3. `annotation-uniform-fix` dry run -> show the user; apply on a yes (one undo step); QSAVE.
 4. Run the check again: it must come back empty for every measured sheet.
+5. Final check per sheet with `annotation-exact-check` (activate that sheet's viewport: LAYOUT, then MSPACE; run
+   through civil3d_execute or `civil3d_script run`). It must report nothing: no text/box overlap, no leaders crossing,
+   no leader through text, nothing off the sheet edge. Fix what it lists (labels only), then run it again.
+
+## Exact check script (annotation-exact-check)
+```csharp
+// annotation-exact-check: exact in-memory geometry of everything that labels the ACTIVE plan sheet viewport.
+// Station/offset labels -> border box + text quads + Leader polyline; point labels -> text quads + leader; MLeaders ->
+// text quads + leader polylines. Reports text/box overlaps, leader x leader crossings, leader through text, and
+// labels running off the sheet edge. Nothing is changed (explode returns throwaway copies). Write mode is needed only
+// because Civil 3D labels explode to nothing in a read-only run.
+var av = Get<Viewport>(Editor.CurrentViewportObjectId); if (av.Number < 2) throw new InvalidOperationException("Activate the plan sheet's viewport first (LAYOUT, then MSPACE).");
+var can = (string)Autodesk.AutoCAD.ApplicationServices.Application.GetSystemVariable("CANNOSCALE"); if (can != av.AnnotationScale.Name) throw new InvalidOperationException("Annotation scale " + can + " does not match the viewport - re-enter the viewport.");
+var m = (Matrix3d.Rotation(-av.TwistAngle, av.ViewDirection, av.ViewTarget) * Matrix3d.Displacement(av.ViewTarget - Point3d.Origin) * Matrix3d.PlaneToWorld(av.ViewDirection)).Inverse();
+double hw = av.Width / av.CustomScale / 2, hh = av.Height / av.CustomScale / 2; var c = av.ViewCenter;
+Point2d D(Point3d p) { var d = p.TransformBy(m); return new Point2d(d.X, d.Y); }
+bool Near(Point2d q) => Math.Abs(q.X - c.X) <= hw + 60 && Math.Abs(q.Y - c.Y) <= hh + 60;
+var frozen = new HashSet<ObjectId>(av.GetFrozenLayers().Cast<ObjectId>()); bool Vis(Autodesk.AutoCAD.DatabaseServices.Entity e) { var l = Get<LayerTableRecord>(e.LayerId); return !l.IsFrozen && !l.IsOff && !frozen.Contains(e.LayerId); }
+var shown = new HashSet<uint>(Get<PointGroup>(CivilDoc.PointGroups[Args.GetString("shownGroup")]).GetPointNumbers());
+Alignment al = null; if (Args.Has("alignment")) foreach (ObjectId id in CivilDoc.GetAlignmentIds()) { var a = Get<Alignment>(id); if (a.Name == Args.GetString("alignment")) al = a; }
+string Where(Point3d w) { if (al == null) return $"{w.X:0.0},{w.Y:0.0}"; double s = 0, o = 0; try { al.StationOffset(w.X, w.Y, ref s, ref o); } catch { return "?"; } s = Math.Round(s, 2); return $"{Math.Floor(s / 100):0}+{s - Math.Floor(s / 100) * 100:00.00}"; }
+var items = new List<(string name, List<Point2d[]> quads, List<(Point2d a, Point2d b)> segs)>();
+void Walk(DBObjectCollection col, int depth, List<Point2d[]> quads, List<(Point2d, Point2d)> segs, List<Point2d> border) { foreach (Autodesk.AutoCAD.DatabaseServices.DBObject o in col) {
+  if (o is BlockReference br && depth < 4) { var c2 = new DBObjectCollection(); br.Explode(c2); Walk(c2, depth + 1, quads, segs, border); }
+  else if (o is MText mt) { var q = mt.GetBoundingPoints().Cast<Point3d>().Select(D).ToArray(); if (q.Length == 4) quads.Add(new[] { q[0], q[1], q[3], q[2] }); }
+  else if (o is DBText dt) { var ex = dt.GeometricExtents; var a = D(ex.MinPoint); var b = D(ex.MaxPoint); quads.Add(new[] { a, new Point2d(b.X, a.Y), b, new Point2d(a.X, b.Y) }); }
+  else if (o is Leader ld) { for (int i = 0; i + 1 < ld.NumVertices; i++) segs.Add((D(ld.VertexAt(i)), D(ld.VertexAt(i + 1)))); }
+  else if (o is Polyline pl) { for (int i = 0; i + 1 < pl.NumberOfVertices; i++) segs.Add((D(pl.GetPoint3dAt(i)), D(pl.GetPoint3dAt(i + 1)))); }
+  else if (o is Line ln) { border.Add(D(ln.StartPoint)); border.Add(D(ln.EndPoint)); }
+  o.Dispose(); } }
+foreach (ObjectId id in ModelSpace) { var e = Get<Autodesk.AutoCAD.DatabaseServices.Entity>(id); if (!Vis(e)) continue;
+  string name = null; if (e is StationOffsetLabel sl) { if (!Near(D(sl.LabelLocation)) && !Near(D(sl.AnchorInfo.Location))) continue; name = $"station label {Where(sl.AnchorInfo.Location)} ({id.Handle})"; }
+  else if (e is CogoPoint cp) { if (!shown.Contains(cp.PointNumber) || !Near(D(cp.Location))) continue; name = $"point label {Where(cp.Location)} ({cp.PointNumber})"; }
+  else if (e is MLeader ml) { if (ml.ContentType != ContentType.MTextContent || !Near(D(ml.MText.Location))) continue; name = $"mleader '{ml.MText.Text.Trim()}' ({id.Handle})"; }
+  else continue;
+  var col = new DBObjectCollection(); try { e.Explode(col); } catch { } if (col.Count == 0) throw new InvalidOperationException(name + " explodes empty - run this in write mode (civil3d_execute / script run).");
+  var quads = new List<Point2d[]>(); var segs = new List<(Point2d, Point2d)>(); var border = new List<Point2d>(); Walk(col, 0, quads, segs, border);
+  if (border.Count >= 4 && e is StationOffsetLabel) { double x0 = border.Min(q => q.X), x1 = border.Max(q => q.X), y0 = border.Min(q => q.Y), y1 = border.Max(q => q.Y); quads.Add(new[] { new Point2d(x0, y0), new Point2d(x1, y0), new Point2d(x1, y1), new Point2d(x0, y1) }); }
+  items.Add((name, quads, segs)); }
+bool PtIn(Point2d p, Point2d[] q) { bool s = false; for (int i = 0, j = 3; i < 4; j = i++) if (((q[i].Y > p.Y) != (q[j].Y > p.Y)) && (p.X < (q[j].X - q[i].X) * (p.Y - q[i].Y) / (q[j].Y - q[i].Y) + q[i].X)) s = !s; return s; }
+bool SegSeg(Point2d a, Point2d b, Point2d c2, Point2d d) { double Cr(Point2d o, Point2d p, Point2d q) => (p.X - o.X) * (q.Y - o.Y) - (p.Y - o.Y) * (q.X - o.X); double d1 = Cr(c2, d, a), d2 = Cr(c2, d, b), d3 = Cr(a, b, c2), d4 = Cr(a, b, d); return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)); }
+bool SegQuad((Point2d a, Point2d b) s, Point2d[] q) { if (PtIn(s.a, q) || PtIn(s.b, q)) return true; for (int i = 0; i < 4; i++) if (SegSeg(s.a, s.b, q[i], q[(i + 1) % 4])) return true; return false; }
+bool QuadQuad(Point2d[] a, Point2d[] b) { if (a.Any(p => PtIn(p, b)) || b.Any(p => PtIn(p, a))) return true; for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) if (SegSeg(a[i], a[(i + 1) % 4], b[j], b[(j + 1) % 4])) return true; return false; }
+bool OnSheet(Point2d[] q) => q.Any(p => Math.Abs(p.X - c.X) <= hw && Math.Abs(p.Y - c.Y) <= hh);
+var rows = new List<string>();
+for (int i = 0; i < items.Count; i++) for (int j = i + 1; j < items.Count; j++) { var A = items[i]; var B = items[j];
+  if (A.quads.Any(qa => OnSheet(qa) && B.quads.Any(qb => QuadQuad(qa, qb)))) rows.Add($"TEXT/BOX OVERLAP: {A.name} x {B.name}");
+  if (A.segs.Any(sa => B.segs.Any(sb => SegSeg(sa.a, sa.b, sb.a, sb.b)))) rows.Add($"LEADERS CROSS: {A.name} x {B.name}");
+  if (A.segs.Any(s => B.quads.Any(q => SegQuad(s, q)))) rows.Add($"LEADER THROUGH TEXT: leader of {A.name} x {B.name}");
+  if (B.segs.Any(s => A.quads.Any(q => SegQuad(s, q)))) rows.Add($"LEADER THROUGH TEXT: leader of {B.name} x {A.name}"); }
+foreach (var it in items) foreach (var q in it.quads) if (q.Any(p => Math.Abs(p.X - c.X) <= hw && Math.Abs(p.Y - c.Y) <= hh) && q.Any(p => Math.Abs(p.X - c.X) > hw || Math.Abs(p.Y - c.Y) > hh)) { rows.Add($"OFF SHEET EDGE: {it.name}"); break; }
+return new { viewport = av.Handle.ToString(), measured = items.Count, clashes = rows.Distinct().ToList() };
+```
 
 ## Script
 ```csharp
