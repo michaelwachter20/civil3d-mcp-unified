@@ -3,10 +3,11 @@
 // JSON-RPC methods: listSheetSets, getSheetSetInfo, getSheetProperties, createSheetSet, addSheet (sheet set .dst files
 // through SheetSetCom, run with CivilExecution.OnActiveDocumentAsync: main thread, host gate, no transaction, no
 // drawing change); createSheetView, setSheetViewScale (CivilExecution.WriteAsync: command context, document lock, one
-// transaction, one undo step); publishSheetPdf, exportSheetSet (WriteAsync around PdfPublisher; also reached through
+// transaction, one undo step; a scale of 0 or less, or an unclear viewport, is refused); publishSheetPdf, exportSheetSet (WriteAsync around PdfPublisher; also reached through
 // the publish_sheet_pdf job and WorkflowCommands); setSheetTitleBlock, createPlanProfileSheet,
 // updatePlanProfileSheetAlignment (always refused with CIVIL3D.API_ERROR: no API for them; nothing changes).
-// Paths: .dst and .pdf outputs through FileBoundary.ResolveExportPath, existing .dst files through ResolveImportPath.
+// Paths: .dst and .pdf outputs, and an existing .dst that addSheet changes, through FileBoundary.ResolveExportPath;
+// existing .dst files that are only read through ResolveImportPath.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -124,12 +125,13 @@ public static class PlanProductionCommands
   /// <summary>
   /// Adds layout <c>layoutName</c> of the active drawing (default: the one named <c>sheetName</c>) to the sheet set file
   /// <c>sheetSetName</c>, numbered <c>sheetNumber</c> or after the last sheet.
-  /// addSheet: <c>sheetSetName</c> (.dst path) and <c>sheetName</c> required. Changes the .dst file (resolved through
-  /// the import roots, as an existing file), not the drawing. Same errors as createSheetSet.
+  /// addSheet: <c>sheetSetName</c> (.dst path) and <c>sheetName</c> required. Changes the .dst file, so it is resolved
+  /// for writing (<see cref="SheetSetFileToChange"/>: export roots, must already exist), not the drawing. Same errors as
+  /// createSheetSet, plus CIVIL3D.OBJECT_NOT_FOUND for a sheet set file that doesn't exist.
   /// </summary>
   public static Task<object?> AddSheetAsync(JsonObject? parameters)
   {
-    var sheetSetPath = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
+    var sheetSetPath = SheetSetFileToChange(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
     var sheetName = PluginRuntime.GetRequiredString(parameters, "sheetName");
     var sheetNumber = PluginRuntime.GetOptionalString(parameters, "sheetNumber");
     var layoutName = PluginRuntime.GetOptionalString(parameters, "layoutName") ?? sheetName;
@@ -146,13 +148,35 @@ public static class PlanProductionCommands
   /// the import roots).</summary>
   private static string SheetSetFile(string sheetSetName)
   {
+    RequireDstName(sheetSetName);
+    return FileBoundary.ResolveImportPath(sheetSetName, ".dst");
+  }
+
+  /// <summary>An existing .dst path that is about to be changed: resolved like an output (FileBoundary.ResolveExportPath,
+  /// so inside the export roots and never in the shared knowledge folder; overwriting is the point) and required to
+  /// exist. CIVIL3D.INVALID_INPUT when it doesn't end in .dst, CIVIL3D.OBJECT_NOT_FOUND when there is no such file.</summary>
+  private static string SheetSetFileToChange(string sheetSetName)
+  {
+    RequireDstName(sheetSetName);
+    var path = FileBoundary.ResolveExportPath(sheetSetName, overwrite: true, ".dst");
+    if (!File.Exists(path))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+        $"Sheet set file was not found: {path}. Make it with sheet_set_create first.");
+    }
+
+    return path;
+  }
+
+  /// <summary>CIVIL3D.INVALID_INPUT unless the name is a .dst path: a sheet set is a file, and its name means nothing
+  /// without where it is.</summary>
+  private static void RequireDstName(string sheetSetName)
+  {
     if (!sheetSetName.EndsWith(".dst", StringComparison.OrdinalIgnoreCase))
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
         $"'{sheetSetName}' isn't a sheet set file: give the path of the .dst, as sheet_set_create returned it.");
     }
-
-    return FileBoundary.ResolveImportPath(sheetSetName, ".dst");
   }
 
   /// <summary>
@@ -269,7 +293,7 @@ public static class PlanProductionCommands
   /// the middle of the model extents. <c>scale</c> (optional) is the drawing scale denominator, e.g. 40 for 1"=40'
   /// (CustomScale = 1/scale); without it the whole model fits. <c>viewName</c> (optional) recentres it on a named view
   /// and is ignored when there is no such view. Returns handle, layoutName, scale and created. Throws
-  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown layout and CIVIL3D.INVALID_INPUT for Model.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown layout and CIVIL3D.INVALID_INPUT for Model or a scale of 0 or less.
   /// </summary>
   public static Task<object?> CreateSheetViewAsync(JsonObject? parameters)
   {
@@ -280,6 +304,10 @@ public static class PlanProductionCommands
     var width = PluginRuntime.GetOptionalDouble(parameters, "width") ?? 8.0;
     var height = PluginRuntime.GetOptionalDouble(parameters, "height") ?? 6.0;
     var scale = PluginRuntime.GetOptionalDouble(parameters, "scale");
+    if (scale.HasValue)
+    {
+      RequireScale(scale.Value);
+    }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -302,7 +330,6 @@ public static class PlanProductionCommands
         viewport.CustomScale = 1.0 / scale.Value;
       }
 
-      var blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
       var layoutBlock = (BlockTableRecord)transaction.GetObject(layout.BlockTableRecordId, OpenMode.ForWrite);
 
       layoutBlock.AppendEntity(viewport);
@@ -342,16 +369,18 @@ public static class PlanProductionCommands
   // setSheetViewScale
   // -------------------------------------------------------------------------
 
-  /// <summary>setSheetViewScale (changes the drawing, one undo step): sets CustomScale = 1/<c>scale</c> (required)
-  /// on the viewport <c>viewportHandle</c> of layout <c>layoutName</c> (required). Without a handle, or with one that
-  /// doesn't match, it takes the layout's first viewport, which is usually the layout's own paper-space viewport.
-  /// Returns handle, scale and updated. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown layout or one without
-  /// viewports.</summary>
+  /// <summary>setSheetViewScale (changes the drawing, one undo step): sets CustomScale = 1/<c>scale</c> (required,
+  /// above 0: the drawing scale denominator, e.g. 40 for 1"=40') on the model viewport <c>viewportHandle</c> of layout
+  /// <c>layoutName</c> (required). Without a handle the layout's only model viewport is used; with several, none, a
+  /// handle that matches none of them, or the layout's own paper-space viewport, it refuses (see
+  /// <see cref="FindViewport"/>). Returns handle, scale and updated. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// layout and CIVIL3D.INVALID_INPUT for a bad scale or viewport choice (the message lists the model viewports).</summary>
   public static Task<object?> SetSheetViewScaleAsync(JsonObject? parameters)
   {
     var layoutName = PluginRuntime.GetRequiredString(parameters, "layoutName");
     var viewportHandle = PluginRuntime.GetOptionalString(parameters, "viewportHandle");
     var scale = PluginRuntime.GetRequiredDouble(parameters, "scale");
+    RequireScale(scale);
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -487,8 +516,14 @@ public static class PlanProductionCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Layout '{layoutName}' was not found.");
   }
 
-  /// <summary>The viewport with handle <paramref name="viewportHandle"/> on the layout, else the layout's first
-  /// viewport (open for read); CIVIL3D.OBJECT_NOT_FOUND when it has none.</summary>
+  /// <summary>
+  /// The model viewport to change on the layout (open for read). A layout's first viewport (Layout.GetViewports) is
+  /// its own paper-space viewport (the sheet itself), which has no drawing scale: it is never picked and naming it is
+  /// refused. With
+  /// <paramref name="viewportHandle"/> the model viewport with that handle; without one, the layout's only model
+  /// viewport. CIVIL3D.INVALID_INPUT, listing the layout's model viewports (handle, centre, size, scale), when the
+  /// layout has none, the handle matches none of them, or there are several and no handle was given.
+  /// </summary>
   private static Viewport FindViewport(
     Autodesk.AutoCAD.DatabaseServices.Database database,
     Transaction transaction,
@@ -497,21 +532,62 @@ public static class PlanProductionCommands
   {
     var layoutBlock = (BlockTableRecord)transaction.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
 
-    Viewport? first = null;
+    // Layout.GetViewports lists the paper-space viewport first; a layout never opened has none yet, and then every
+    // viewport in it is a model viewport (one made by sheet_view_create, say).
+    var layoutViewports = layout.GetViewports();
+    var paperSpaceId = layoutViewports != null && layoutViewports.Count > 0 ? layoutViewports[0] : ObjectId.Null;
+    Viewport? paperSpace = null;
+    var modelViewports = new List<Viewport>();
     foreach (ObjectId id in layoutBlock)
     {
-      var obj = transaction.GetObject(id, OpenMode.ForRead);
-      if (obj is Viewport vp)
-      {
-        if (!string.IsNullOrWhiteSpace(viewportHandle) &&
-            string.Equals(vp.Handle.ToString(), viewportHandle, StringComparison.OrdinalIgnoreCase))
-          return vp;
-        first ??= vp;
-      }
+      if (transaction.GetObject(id, OpenMode.ForRead) is not Viewport vp) continue;
+      if (id == paperSpaceId) paperSpace = vp;
+      else modelViewports.Add(vp);
     }
 
-    if (first != null) return first;
-    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"No viewport found in layout '{layout.LayoutName}'.");
+    if (!string.IsNullOrWhiteSpace(viewportHandle))
+    {
+      var match = modelViewports.FirstOrDefault(vp => string.Equals(vp.Handle.ToString(), viewportHandle, StringComparison.OrdinalIgnoreCase));
+      if (match != null) return match;
+      var reason = paperSpace != null && string.Equals(paperSpace.Handle.ToString(), viewportHandle, StringComparison.OrdinalIgnoreCase)
+        ? $"'{viewportHandle}' is layout '{layout.LayoutName}''s own paper-space viewport, which has no drawing scale."
+        : $"Layout '{layout.LayoutName}' has no model viewport with handle '{viewportHandle}'.";
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{reason} Nothing was changed. {DescribeViewports(layout, modelViewports)}");
+    }
+
+    if (modelViewports.Count == 1) return modelViewports[0];
+    throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+      (modelViewports.Count == 0
+        ? $"Layout '{layout.LayoutName}' has no model viewport to scale (make one with sheet_view_create)."
+        : $"Layout '{layout.LayoutName}' has {modelViewports.Count} model viewports: send viewportHandle to say which.")
+      + $" Nothing was changed. {DescribeViewports(layout, modelViewports)}");
+  }
+
+  /// <summary>The layout's model viewports for an error message: handle, centre and size in paper units, and scale
+  /// as its denominator (1/CustomScale).</summary>
+  private static string DescribeViewports(Layout layout, IReadOnlyCollection<Viewport> viewports)
+  {
+    if (viewports.Count == 0)
+    {
+      return string.Empty;
+    }
+
+    var invariant = System.Globalization.CultureInfo.InvariantCulture;
+    return $"Model viewports on '{layout.LayoutName}': " + string.Join("; ", viewports.Select(vp => string.Format(invariant,
+      "handle {0} at ({1:0.##}, {2:0.##}), {3:0.##} x {4:0.##}, scale {5}",
+      vp.Handle, vp.CenterPoint.X, vp.CenterPoint.Y, vp.Width, vp.Height,
+      vp.CustomScale > 0 ? (1.0 / vp.CustomScale).ToString("0.###", invariant) : "unknown"))) + ".";
+  }
+
+  /// <summary>CIVIL3D.INVALID_INPUT unless <paramref name="scale"/> (a drawing scale denominator, CustomScale =
+  /// 1/scale) is a finite number above 0.</summary>
+  private static void RequireScale(double scale)
+  {
+    if (!(scale > 0) || double.IsInfinity(scale))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"scale must be the drawing scale's denominator, a number above 0 (e.g. 40 for 1\"=40'), not {scale}. Nothing was changed.");
+    }
   }
 
   /// <summary>Centres the viewport on the named view and takes its height; does nothing when the view doesn't
@@ -529,11 +605,4 @@ public static class PlanProductionCommands
     viewport.ViewCenter = new Point2d(viewRecord.CenterPoint.X, viewRecord.CenterPoint.Y);
     viewport.ViewHeight = viewRecord.Height;
   }
-
-  // -------------------------------------------------------------------------
-  // General reflection helpers (mirror of PressureNetworkCommands pattern)
-  // -------------------------------------------------------------------------
-
-  private static string? GetName(object? value) => CivilObjectUtils.GetName(value);
-
 }

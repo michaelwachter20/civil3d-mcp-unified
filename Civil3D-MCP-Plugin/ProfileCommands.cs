@@ -288,15 +288,23 @@ public static class ProfileCommands
     };
   }
 
-  /// <summary>The first <paramref name="limit"/> profile entities by start station, with type, stations,
-  /// elevations, length and (tangents only) grade.</summary>
+  /// <summary>
+  /// The profile's entities in station order: the numbering getProfile shows as <c>index</c> and the one
+  /// profileSetGrade and profileCheckKValues take as <c>entityIndex</c>. Civil 3D lists them in the order they were
+  /// made (a curve added last comes after the tangent beyond it), so its own order can't be shown or taken as an index.
+  /// The sort is stable, so entities starting at the same station keep Civil 3D's order.
+  /// </summary>
+  internal static List<ProfileEntity> EntitiesByStation(Profile profile) =>
+    profile.Entities.Cast<ProfileEntity>().OrderBy(item => item.StartStation).ToList();
+
+  /// <summary>The first <paramref name="limit"/> profile entities by start station (<see cref="EntitiesByStation"/>),
+  /// with type, stations, elevations, length and (tangents only) grade.</summary>
   private static List<Dictionary<string, object?>> ReadProfileEntities(Profile profile, int limit)
   {
     var entities = new List<Dictionary<string, object?>>();
     var index = 0;
 
-    // Civil 3D lists them in the order they were made: a curve added last comes after the tangent beyond it.
-    foreach (var entity in profile.Entities.Cast<ProfileEntity>().OrderBy(item => item.StartStation).Take(limit))
+    foreach (var entity in EntitiesByStation(profile).Take(limit))
     {
       entities.Add(new Dictionary<string, object?>
       {

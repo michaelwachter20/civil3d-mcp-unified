@@ -47,7 +47,11 @@ HTTP client --HTTP 127.0.0.1:3000-> src/httpBridge.ts
    tools' `*_remove` actions need a token too. If it is, the call must carry an `approvalToken` from
    `civil3d_request_approval`: single use, five minutes, bound to the tool, action, a hash of the exact parameters
    and a fingerprint of the active drawing (a hash of `getDrawingInfo`). `CIVIL3D_APPROVAL_MODE=disabled` turns this
-   off for disposable test setups.
+   off for disposable test setups. Two declarations look at the call itself (`approvalTargetFor` in `domainRuntime.ts`,
+   used by the real call and by both approval tools): an action's `readOnlyWhen` says which validated arguments make it
+   change nothing (a `dryRun`, `applyChanges` off, no `outputPath`), and such a call needs no token; an action declared
+   `unsupported` (its plugin method always refuses) is answered with `CIVIL3D.API_ERROR` before approval, and the
+   plugin is never called.
 5. **Idempotency.** With an `idempotencyKey` (only on `safeForRetry` actions), `idempotencyStore` shares the result of
    an identical call for two minutes and refuses the same key with different parameters.
 6. **Execute.** The action's `execute` calls `withApplicationConnection(client => client.sendCommand(method, params))`
@@ -110,11 +114,11 @@ Most domains are thin: each action forwards its arguments to one plugin method. 
 
 | Domain file | What runs in Node |
 |---|---|
-| `workflowDomain.ts` | Multi-step workflows. Most are one plugin call (`*Workflow` methods in `WorkflowCommands.cs`); `grading_surface_volume` and `pipe_network_design` call other domains' actions in turn and report each step. Those inner calls use the actions' `execute` directly, so approval is checked once, on the workflow action. (`survey_import_adjust_figures` is written the same way but no exposure lists it, so no tool reaches it) |
+| `workflowDomain.ts` | Multi-step workflows. Most are one plugin call (`*Workflow` methods in `WorkflowCommands.cs`); `grading_surface_volume` and `pipe_network_design` call other domains' actions in turn and report each step. Those inner calls use the actions' `execute` directly, so approval is checked once, on the workflow action. (`survey_import_adjust_figures` is written the same way but is declared unsupported and in no exposure: its LandXML import and adjustment steps can't be done through Civil 3D's API) |
 | `corridorDomain.ts` | `summary`: the corridor, its surfaces and, when it can, its volumes (`getCorridor`, `getCorridorSurfaces`, `computeCorridorVolumes`) |
 | `drawingRuntimeDomain.ts` | `open`: finds "the latest C-101" among the open drawings, then in the job database (`openDrawing.ts`), before asking the plugin to open it |
 | `surfaceDomain.ts` | `comparison_workflow` (two surfaces plus their volume) and `drainage_workflow` (flow path, elevations along it, Rational runoff) |
-| `pipeDomain.ts` | `size_network` (Manning's equation picks a catalog part per pipe, optionally resizes) and `automate_profile_view` |
+| `pipeDomain.ts` | `size_network` (Manning's equation picks a catalog part per pipe, optionally resizes; each resized pipe is its own undo step) and `automate_profile_view` (the EG profile and the view are two undo steps) |
 | `profileDomain.ts`, `alignmentDomain.ts` | `report` actions that sample stations and summarize |
 | `hydrologyDomain.ts` | Nothing: every action, the runoff workflows included, is one call to `HydrologyCommands.cs` and its neighbours |
 | `scriptingDomain.ts` | Code execution (`civil3d_execute`, `civil3d_query`, `acad_command`, `civil3d_script`) and every knowledge tool (below), which work without the plugin (they only ask it, best effort, for the Civil 3D release or the active drawing) |
@@ -136,9 +140,10 @@ action is refused unless `CIVIL3D_ENABLE_HELP_REINDEX=true`.
   title and domain matches add points and explicit entries get a bonus. It also pulls values out of the text
   (quoted names, "alignment X", paths, points, numbers).
 - `ProjectContextService.ts` asks the plugin (`getProjectContext`) for drawing info, object types and the selection;
-  `SelectionResolver.ts` fills a missing alignment, surface or object name from what the user has selected. This is
-  called on every orchestrate call, planning included, so the orchestrator needs Civil 3D running with the AI
-  connection on. ("Project context" here is the open drawing, not the job database of `civil3d_project_notes`.)
+  `SelectionResolver.ts` fills a missing alignment, surface or object name from what the user has selected; a direct
+  `toolName` call sends those names too, and its answer shows the exact `toolArguments`. The context is read only when
+  the routed tool works on the active drawing; when the read fails, a plan goes on without it (and says so), while an
+  `execute` fails. ("Project context" here is the open drawing, not the job database of `civil3d_project_notes`.)
 - `WorkflowPlanner.ts` turns the routed intent into a plan: the steps, which are ready, missing input or blocked
   (for example no surfaces in the drawing), and questions to ask the user. It only plans; it never executes.
 - `civil3d_orchestrate.ts` puts these together and, when executing, calls the chosen tool through
@@ -186,8 +191,9 @@ the project notes, to find the active drawing (`listOpenDrawings` / `getDrawingI
 - **Good practices** (`practices.json`): `practices.ts`, `civil3d_practices`; only entries with
   `source: "civil3d"` are changed by this tool.
 - `preferences.json`, `lessons.jsonl` and `practices.json` are changed under a lock file with a backup of the
-  previous version and an atomic rename (`src/utils/atomicFiles.ts`). Skills are written atomically, with the
-  previous version moved to `skills\_archive` first. Job databases are changed in short SQLite transactions, and a
+  previous version and an atomic rename (`src/utils/atomicFiles.ts`). Skills are changed under `skills\skills.lock`
+  and written atomically, with the previous version kept in `skills\_archive` first (copied; a skill that moves to
+  another category is moved there only after its new file is written), so a failed write never loses it. Job databases are changed in short SQLite transactions, and a
   database this tool created gets a daily `VACUUM INTO` backup.
 
 The table layout of the job database is `src/tools/project-db.sql`, a copy of Project Analyzer's schema;
@@ -226,8 +232,9 @@ schema and annotations. Nothing on the C# side is registered at startup: the dis
   `"<tool> action '<action>' failed: <message>"`, `errorCode` and `rpcCode`: taken from the error when it has them,
   otherwise inferred from the message (timeout, connection, not found, ...). Knowledge tools throw
   `knowledgeError(code, message)` the same way. Messages are written for the AI: they say what to do next.
-  Approval errors carry no code of their own: a missing token comes back as `CIVIL3D.CONFLICT` (from the words
-  "Approval required"), a refused token as `CIVIL3D.INTERNAL_ERROR`.
+  Approval errors carry their own codes: a missing token is `CIVIL3D.APPROVAL_REQUIRED`, a refused token (unknown,
+  used, expired, for other parameters or another drawing) `CIVIL3D.APPROVAL_INVALID`; the HTTP bridge answers both
+  with 409. `civil3d_request_approval` for a call that needs no approval is `CIVIL3D.INVALID_INPUT`.
 - **HTTP bridge.** `executeRegisteredTool` turns an error result back into a thrown error, and the bridge maps it to
   an HTTP status and `{ error: { code, message } }`.
 

@@ -1,5 +1,6 @@
 // Guards civil3d_orchestrate execution (src/tools/civil3d_orchestrate.ts, src/orchestration/): a routed request runs
-// through the registered tool handlers with defaults, required-field checks and extracted inputs applied.
+// through the registered tool handlers with defaults, required-field checks and extracted inputs applied; a direct
+// call sends what the selection filled; the drawing context is read only when the tool works on the drawing.
 // The tool handler registry and project context are mocked; no plugin or Civil 3D.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -211,6 +212,57 @@ describe("civil3d_orchestrate execution", () => {
     );
     expect(response.status).toBe("executed");
     expect(response.selectedTool).toBe("civil3d_pressure_network_get_info");
+  });
+
+  it("sends names filled from the selection on a direct call, and shows the exact tool arguments", async () => {
+    getProjectContextMock.mockResolvedValueOnce({
+      drawingInfo: { objectCounts: { surfaces: 1, alignments: 0, profiles: 0, corridors: 0 } },
+      objectTypes: ["Surface"],
+      selectedObjects: [{ objectType: "TinSurface", name: "EG" }],
+    } as never);
+
+    const response = await executeCivil3DOrchestrate({
+      toolName: "civil3d_surface",
+      toolAction: "get",
+      execute: true,
+    });
+
+    expect(response.inferredFromSelection).toContain("name");
+    expect(executeRegisteredToolMock).toHaveBeenCalledWith(
+      "civil3d_surface",
+      expect.objectContaining({ action: "get", name: "EG" }),
+    );
+    expect(response.toolArguments).toEqual(expect.objectContaining({ action: "get", name: "EG" }));
+    expect(response.status).toBe("executed");
+  });
+
+  it("plans a tool that doesn't use the drawing without asking Civil 3D for the context", async () => {
+    const response = await executeCivil3DOrchestrate({
+      toolName: "civil3d_preferences",
+      toolAction: "preferences_list",
+    });
+
+    expect(getProjectContextMock).not.toHaveBeenCalled();
+    expect(response.projectContext).toBeNull();
+    expect(response.status).toBe("planned");
+  });
+
+  it("still plans when the drawing context can't be read, and says so", async () => {
+    getProjectContextMock.mockRejectedValueOnce(new Error("Failed to connect to Civil 3D plugin"));
+
+    const response = await executeCivil3DOrchestrate({ request: "show surface EG" });
+
+    expect(response.status).toBe("planned");
+    expect(String(response.projectContextNote)).toContain("couldn't be read");
+    expect(executeRegisteredToolMock).not.toHaveBeenCalled();
+  });
+
+  it("fails an execute when the drawing context can't be read", async () => {
+    getProjectContextMock.mockRejectedValueOnce(new Error("Failed to connect to Civil 3D plugin"));
+
+    await expect(executeCivil3DOrchestrate({ request: "show surface EG", execute: true }))
+      .rejects.toThrow("Failed to connect");
+    expect(executeRegisteredToolMock).not.toHaveBeenCalled();
   });
 
   it("uses extracted point inputs for exact pressure-pipe tool execution", async () => {

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { routeIntent } from "../src/orchestration/IntentRouter.js";
 import { buildWorkflowPlan } from "../src/orchestration/WorkflowPlanner.js";
 import { resolveParamsFromSelection } from "../src/orchestration/SelectionResolver.js";
+import { findToolCatalogEntry } from "../src/orchestration/ToolCatalog.js";
 import type { ProjectContext } from "../src/orchestration/ProjectContextService.js";
 
 /** Builds a fake project context (one surface, alignment, profile, corridor) that a test can override. */
@@ -305,6 +306,21 @@ describe("orchestration workflow planning", () => {
     expect(plan.title).toBe("Data shortcut reference workflow");
     expect(plan.missingFields).toEqual(["projectFolder", "shortcutName", "shortcutType"]);
     expect(plan.clarificationQuestions).toContain("Which project folder should be used for the data shortcut reference?");
+  });
+
+  it("passes overwrite through derived routes", () => {
+    const route = findToolCatalogEntry("civil3d_sheet_publish_pdf");
+    expect(route?.source).toBe("derived");
+    expect(route?.buildToolArgs({ layoutNames: ["C-101"], outputPath: "C:/out/set.pdf", overwrite: true }))
+      .toEqual(expect.objectContaining({ overwrite: true }));
+  });
+
+  it("counts an empty list as missing, as the router does", () => {
+    const routed = routeIntent("show surface EG");
+    const route = { ...routed, match: { ...routed.match, requiredFields: ["payItems"] } };
+    const plan = buildWorkflowPlan(route, { payItems: [] }, createProjectContext());
+
+    expect(plan.missingFields).toEqual(["payItems"]);
   });
 });
 

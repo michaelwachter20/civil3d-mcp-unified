@@ -198,7 +198,7 @@ const CorridorTargetMappingSetArgsSchema = z.object({
 
 /**
  * A new region on a baseline (default the first): an assembly by name over a station range. `frequency` is the
- * sampling interval along tangents in drawing units (10 when left out); the curve and knee-point frequencies default
+ * sampling interval along tangents in drawing units (10 when left out); the curve, profile-curve and spiral frequencies default
  * to the same value. The plugin rebuilds the corridor afterwards.
  */
 const CorridorRegionAddArgsSchema = z.object({
@@ -210,7 +210,8 @@ const CorridorRegionAddArgsSchema = z.object({
   endStation: z.number(),
   frequency: z.number().positive().optional(),
   frequencyAtCurves: z.number().positive().optional(),
-  frequencyAtKneePoints: z.number().positive().optional(),
+  frequencyAlongProfileCurves: z.number().positive().optional(),
+  frequencyAlongSpirals: z.number().positive().optional(),
 });
 
 const CorridorRegionDeleteArgsSchema = z.object({
@@ -255,7 +256,8 @@ const canonicalCorridorInputShape = {
   endStation: z.number().optional(),
   frequency: z.number().positive().optional(),
   frequencyAtCurves: z.number().positive().optional(),
-  frequencyAtKneePoints: z.number().positive().optional(),
+  frequencyAlongProfileCurves: z.number().positive().optional(),
+  frequencyAlongSpirals: z.number().positive().optional(),
 };
 
 // ─── Domain definition ────────────────────────────────────────────────────────
@@ -476,7 +478,8 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
           endStation: args.endStation,
           frequency: args.frequency ?? 10,
           frequencyAtCurves: args.frequencyAtCurves ?? null,
-          frequencyAtKneePoints: args.frequencyAtKneePoints ?? null,
+          frequencyAlongProfileCurves: args.frequencyAlongProfileCurves ?? null,
+          frequencyAlongSpirals: args.frequencyAlongSpirals ?? null,
         }),
       ),
     },
@@ -601,7 +604,8 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
         endStation: z.number(),
         frequency: z.number().positive().optional(),
         frequencyAtCurves: z.number().positive().optional(),
-        frequencyAtKneePoints: z.number().positive().optional(),
+        frequencyAlongProfileCurves: z.number().positive().optional(),
+        frequencyAlongSpirals: z.number().positive().optional(),
       },
       supportedActions: ["region_add"],
       resolveAction: (rawArgs) => ({
@@ -615,7 +619,8 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
           endStation: rawArgs.endStation,
           frequency: rawArgs.frequency,
           frequencyAtCurves: rawArgs.frequencyAtCurves,
-          frequencyAtKneePoints: rawArgs.frequencyAtKneePoints,
+          frequencyAlongProfileCurves: rawArgs.frequencyAlongProfileCurves,
+          frequencyAlongSpirals: rawArgs.frequencyAlongSpirals,
         },
       }),
     },

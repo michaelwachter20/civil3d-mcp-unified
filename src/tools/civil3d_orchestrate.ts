@@ -10,12 +10,14 @@
  * executeToolCallViaOrchestrator is also used by the HTTP bridge (httpBridge.ts) for its legacy endpoints.
  */
 import { z } from "zod";
-import { routeIntent, type RouteParams, type RouteResult } from "../orchestration/IntentRouter.js";
+import { hasRequiredValue, routeIntent, type RouteParams, type RouteResult } from "../orchestration/IntentRouter.js";
 import { findToolCatalogEntry } from "../orchestration/ToolCatalog.js";
-import { getProjectContext } from "../orchestration/ProjectContextService.js";
+import { getProjectContext, type ProjectContext } from "../orchestration/ProjectContextService.js";
 import { buildWorkflowPlan } from "../orchestration/WorkflowPlanner.js";
 import { resolveParamsFromSelection } from "../orchestration/SelectionResolver.js";
 import { executeRegisteredTool } from "./toolHandlerRegistry.js";
+import { findManifestAction } from "./toolManifest.js";
+import { TOOL_CATALOG } from "./tool_catalog.js";
 
 /** The orchestrator's input: `request` or `toolName` (+ toolAction, toolParameters), plus any route parameter given directly. */
 const Civil3DOrchestrateInputShape = {
@@ -329,21 +331,19 @@ function buildExactToolParameters(
   );
 }
 
-/** Whether a required field counts as given: non-blank string, finite number, non-empty array, or any non-null value. */
-function hasRequiredValue(value: unknown): boolean {
-  if (typeof value === "string") {
-    return value.trim().length > 0;
-  }
+/** What planning uses when it doesn't read the drawing: no counts, no object types, no selection. */
+const EMPTY_PROJECT_CONTEXT: ProjectContext = { drawingInfo: null, objectTypes: [], selectedObjects: [] };
 
-  if (typeof value === "number") {
-    return Number.isFinite(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.length > 0;
-  }
-
-  return value != null;
+/**
+ * Whether planning this route needs the drawing's context from the plugin: only when the routed tool action works on
+ * the active drawing (the action's manifest declaration, else the catalog entry's; an unknown tool counts as yes).
+ * Knowledge tools and the like plan and run without Civil 3D.
+ */
+function routeNeedsDrawingContext(routed: RouteResult): boolean {
+  if (routed.match.intent === "corridor_prerequisites") return true;
+  const manifestAction = findManifestAction(routed.match.toolName, routed.match.action);
+  if (manifestAction) return manifestAction.actionDefinition.requiresActiveDrawing;
+  return TOOL_CATALOG.find((entry) => entry.toolName === routed.match.toolName)?.requiresActiveDrawing ?? true;
 }
 
 /** The answer for the corridor_prerequisites intent: there is no corridor-creation tool, so it explains the sequence. */
@@ -514,10 +514,13 @@ export async function executeToolCallViaOrchestrator(
 }
 
 /**
- * The civil3d_orchestrate action. Always asks the plugin for the project context (so it needs Civil 3D), then answers
- * with the chosen tool and action, the confidence, the parameters (and which came from the selection), advice,
- * the plan and the missing fields. Status: "planned" / "planned_needs_input" without `execute`; with it,
- * "needs_input" (nothing run) or "executed" with the tool's result.
+ * The civil3d_orchestrate action. Asks the plugin for the project context (drawing counts and selection) only when
+ * the routed tool works on the active drawing; when that read fails while only planning, it plans without it and says
+ * so (`projectContextNote`), and when executing it fails as the tool call would. Answers with the chosen tool and
+ * action, the confidence, the parameters (and which came from the selection), advice, the plan and the missing
+ * fields; a direct (toolName) call also returns `toolArguments`, exactly what is sent to the tool, so an approval can
+ * be requested for those. Status: "planned" / "planned_needs_input" without `execute`; with it, "needs_input"
+ * (nothing run) or "executed" with the tool's result.
  */
 export async function executeCivil3DOrchestrate(rawArgs: OrchestrateArgs) {
   const args = Civil3DOrchestrateInputSchema.parse(rawArgs);
@@ -527,15 +530,35 @@ export async function executeCivil3DOrchestrate(rawArgs: OrchestrateArgs) {
 
   const directExecution = args.toolName ? buildDirectExecutionContext(args) : null;
   const routed = directExecution?.routed ?? routeIntent(args.request as string);
-  const projectContext = await getProjectContext();
+  let projectContext = EMPTY_PROJECT_CONTEXT;
+  let projectContextRead = false;
+  let projectContextNote: string | undefined;
+  if (routeNeedsDrawingContext(routed)) {
+    try {
+      projectContext = await getProjectContext();
+      projectContextRead = true;
+    } catch (error) {
+      if (args.execute === true) throw error;
+      projectContextNote = "The drawing's context couldn't be read from Civil 3D " +
+        `(${error instanceof Error ? error.message : String(error)}), so this plan doesn't reflect the drawing's ` +
+        "contents or selection.";
+    }
+  } else {
+    projectContextNote = `${routed.match.toolName} doesn't work on the drawing, so the drawing's context wasn't read.`;
+  }
   const mergedParams = directExecution?.params ?? buildMergedParams(args, routed);
   const selectionResolution = resolveParamsFromSelection(mergedParams, projectContext);
   const params = selectionResolution.resolvedParams;
   const contextAdvice = buildContextAwareAdvice(routed, projectContext);
   const workflowPlan = buildWorkflowPlan(routed, params, projectContext);
+  // A direct call sends its exact arguments, rebuilt here so names filled from the selection are sent too
+  // (toolParameters still win over them).
+  const toolArguments = directExecution
+    ? buildExactToolParameters(args, params, routed.match.action)
+    : undefined;
   const missingFields = findMissingRequiredFields(
     routed.match.requiredFields,
-    directExecution?.exactParameters ?? params,
+    toolArguments ?? params,
   );
 
   const response: Record<string, unknown> = {
@@ -546,8 +569,10 @@ export async function executeCivil3DOrchestrate(rawArgs: OrchestrateArgs) {
     confidence: routed.confidence,
     reasoning: routed.reasoning,
     params,
+    ...(toolArguments ? { toolArguments } : {}),
     inferredFromSelection: selectionResolution.inferredFromSelection,
-    projectContext,
+    projectContext: projectContextRead ? projectContext : null,
+    ...(projectContextNote ? { projectContextNote } : {}),
     contextAdvice,
     workflowPlan,
     missingFields,
@@ -561,11 +586,8 @@ export async function executeCivil3DOrchestrate(rawArgs: OrchestrateArgs) {
       response.clarificationQuestions = workflowPlan.clarificationQuestions;
     } else {
       response.status = "executed";
-      response.result = directExecution
-        ? await executeRegisteredToolDirectly(
-          routed.match.toolName,
-          directExecution.exactParameters,
-        )
+      response.result = toolArguments
+        ? await executeRegisteredToolDirectly(routed.match.toolName, toolArguments)
         : await executeIntent(routed, params);
     }
   } else {

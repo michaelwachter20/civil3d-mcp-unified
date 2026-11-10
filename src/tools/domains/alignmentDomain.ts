@@ -125,6 +125,7 @@ const canonicalAlignmentInputShape = {
     "delete",
     "report",
     "add_tangent",
+    "add_curve",
     "add_spiral",
     "delete_entity",
     "set_station_equation",
@@ -153,8 +154,8 @@ const canonicalAlignmentInputShape = {
   passThroughY: z.number().optional(),
   radius: z.number().positive().optional(),
   spiralType: z.enum(["clothoid", "cubic", "biquadratic"]).optional(),
-  fromEntityIndex: z.number().int().min(0).optional().describe("add_spiral: the tangent before the spirals, by the index alignment get shows"),
-  toEntityIndex: z.number().int().min(0).optional().describe("add_spiral: the tangent after the spirals"),
+  fromEntityIndex: z.number().int().min(0).optional().describe("add_spiral / add_curve: the entity before the new one, by the index alignment get shows"),
+  toEntityIndex: z.number().int().min(0).optional().describe("add_spiral / add_curve: the entity after the new one"),
   lengthOut: z.number().positive().optional().describe("add_spiral: the spiral out, when it differs from length"),
   startRadius: z.number().optional(),
   endRadius: z.number().optional(),
@@ -226,12 +227,26 @@ const AlignmentAddTangentArgsSchema = z.object({
   endY: z.number(),
 });
 
-const AlignmentAddCurveArgsSchema = z.object({
+/**
+ * `add_curve`: a free curve between two entities (by index, as `get` lists them), given either its `radius` or a
+ * point it passes through (`passThroughX` and `passThroughY`), not both.
+ */
+export const AlignmentAddCurveArgsSchema = z.object({
   action: z.literal("add_curve"),
   name: z.string(),
-  passThroughX: z.number(),
-  passThroughY: z.number(),
-  radius: z.number().positive(),
+  fromEntityIndex: z.number().int().min(0),
+  toEntityIndex: z.number().int().min(0),
+  radius: z.number().positive().optional(),
+  passThroughX: z.number().optional(),
+  passThroughY: z.number().optional(),
+}).refine((value) => {
+  const hasRadius = value.radius !== undefined;
+  const hasPoint = value.passThroughX !== undefined && value.passThroughY !== undefined;
+  const partialPoint = (value.passThroughX === undefined) !== (value.passThroughY === undefined);
+  return !partialPoint && hasRadius !== hasPoint;
+}, {
+  message: "Give either radius, or both passThroughX and passThroughY (not both kinds).",
+  path: ["radius"],
 });
 
 const AlignmentAddSpiralArgsSchema = z.object({
@@ -501,8 +516,8 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Defined, but not listed in any exposure's supportedActions (the canonical tool's action enum leaves it out), so no
-    // tool reaches it at the moment.
+    // A free curve between entities fromEntityIndex and toEntityIndex (the plugin's AddFreeCurve), by radius or by a
+    // pass-through point; a write (approval).
     add_curve: {
       action: "add_curve",
       inputSchema: AlignmentAddCurveArgsSchema,
@@ -514,6 +529,8 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("alignmentAddCurve", {
           alignmentName: args.name,
+          fromEntityIndex: args.fromEntityIndex,
+          toEntityIndex: args.toEntityIndex,
           passThroughX: args.passThroughX,
           passThroughY: args.passThroughY,
           radius: args.radius,
@@ -643,6 +660,7 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
         "delete",
         "report",
         "add_tangent",
+        "add_curve",
         "add_spiral",
         "delete_entity",
         "set_station_equation",

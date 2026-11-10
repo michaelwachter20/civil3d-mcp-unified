@@ -1,7 +1,8 @@
 // Minimal leveled logger for the MCP server. Every line goes to stderr (console.error) because stdout carries the
 // MCP stdio protocol and any stray output there would corrupt it. Used by index.ts, httpBridge.ts, domainRuntime.ts,
-// the connection code and the knowledge modules. The level comes from CIVIL3D_LOG_LEVEL (debug, info, warn, error;
-// default info), read once at startup. Don't log drawing content or job data at info level.
+// the connection code and the knowledge modules. The level comes from CIVIL3D_LOG_LEVEL (debug, info, warn, error, any
+// case; default info), read once at startup; any other value falls back to info with one warning line. Don't log
+// drawing content or job data at info level.
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -11,8 +12,25 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
-// Not validated: a value outside the four names makes every comparison false, so nothing is logged.
-const currentLevel: LogLevel = (process.env.CIVIL3D_LOG_LEVEL as LogLevel) ?? "info";
+/**
+ * The level for a CIVIL3D_LOG_LEVEL value: one of the four names (trimmed, any case), else "info" with a warning to
+ * print, so a typo never switches logging off.
+ */
+export function resolveLogLevel(value: string | undefined): { level: LogLevel; warning?: string } {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return { level: "info" };
+  if (normalized in LOG_LEVELS) return { level: normalized as LogLevel };
+  return {
+    level: "info",
+    warning: `CIVIL3D_LOG_LEVEL='${value}' is not one of debug, info, warn, error; logging at info.`,
+  };
+}
+
+const resolvedLevel = resolveLogLevel(process.env.CIVIL3D_LOG_LEVEL);
+const currentLevel: LogLevel = resolvedLevel.level;
+if (resolvedLevel.warning) {
+  console.error(formatMessage("warn", "Logger", resolvedLevel.warning));
+}
 
 /** True when `level` is at or above the configured level. */
 function shouldLog(level: LogLevel): boolean {

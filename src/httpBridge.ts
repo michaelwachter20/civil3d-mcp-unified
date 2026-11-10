@@ -260,13 +260,16 @@ function writeError(
   writeJson(response, statusCode, { error: { code, message } });
 }
 
-/** The HTTP status for a plugin domain code (499 for a cancelled request, as nginx uses it; 500 for anything unknown). */
+/**
+ * The HTTP status for a plugin domain code, or the server's own approval codes (409, like a conflict); 499 for a
+ * cancelled request, as nginx uses it; 500 for anything unknown.
+ */
 function statusForDomainCode(code: string): number {
   if (code === "CIVIL3D.INVALID_JSON" || code === "CIVIL3D.INVALID_REQUEST" || code === "CIVIL3D.INVALID_INPUT") return 400;
   if (code === "CIVIL3D.AUTH_REQUIRED") return 401;
   if (code === "CIVIL3D.FORBIDDEN" || code === "CIVIL3D.PATH_NOT_ALLOWED" || code === "CIVIL3D.FILE_TYPE_NOT_ALLOWED") return 403;
   if (code === "CIVIL3D.OBJECT_NOT_FOUND" || code === "CIVIL3D.METHOD_NOT_FOUND") return 404;
-  if (code === "CIVIL3D.CONFLICT") return 409;
+  if (code === "CIVIL3D.CONFLICT" || code === "CIVIL3D.APPROVAL_REQUIRED" || code === "CIVIL3D.APPROVAL_INVALID") return 409;
   if (code === "CIVIL3D.CANCELLED") return 499;
   if (code === "CIVIL3D.REQUEST_TOO_LARGE") return 413;
   if (code === "CIVIL3D.TIMEOUT") return 504;

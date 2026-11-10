@@ -18,6 +18,9 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class SlopeAnalysisCommands
 {
+  /// <summary>Most stations one calculateSlopeGeometry samples: a tiny interval would hold the host queue.</summary>
+  private const int MaxStations = 100_000;
+
   // ─── calculateSlopeGeometry ──────────────────────────────────────────────────
 
   /// <summary>
@@ -27,9 +30,10 @@ public static class SlopeAnalysisCommands
   /// 0) plus height x ratio (<c>cutSlopeRatio</c> default 2, <c>fillSlopeRatio</c> default 3), with benches of
   /// <c>benchWidth</c> every <c>benchHeightInterval</c> (default 20). <c>alignmentName</c>, <c>profileName</c> and
   /// <c>surfaceName</c> are optional: without them the first alignment, a profile named like "FG"/"Design" (else the
-  /// first) and the first surface are used; a profile name that isn't found also falls back that way. Read-only.
-  /// Throws CIVIL3D.OBJECT_NOT_FOUND (no alignment / named alignment or surface missing / no profile or surface),
-  /// CIVIL3D.INVALID_INPUT (range outside the profile), CIVIL3D.API_ERROR (a sample failed).
+  /// first) and the first surface are used. Read-only. Throws CIVIL3D.OBJECT_NOT_FOUND (no alignment / named alignment,
+  /// profile or surface missing, the profile error listing the alignment's profiles / no profile or surface),
+  /// CIVIL3D.INVALID_INPUT (range outside the profile, an interval that isn't positive), CIVIL3D.API_ERROR (a sample
+  /// failed).
   /// </summary>
   public static Task<object?> CalculateSlopeGeometryAsync(JsonObject? parameters)
   {
@@ -44,6 +48,11 @@ public static class SlopeAnalysisCommands
     var stationEnd = PluginRuntime.GetOptionalDouble(parameters, "stationEnd");
     var stationInterval = PluginRuntime.GetOptionalDouble(parameters, "stationInterval") ?? 10.0;
     var roadwayHalfWidth = PluginRuntime.GetOptionalDouble(parameters, "roadwayWidth") ?? 0.0;
+    if (!(stationInterval > 0) || double.IsInfinity(stationInterval))
+    {
+      // Zero or less never moves along the alignment, so the loop below would not end.
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"stationInterval must be a positive distance in drawing units (e.g. 10), not {stationInterval}.");
+    }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -58,10 +67,16 @@ public static class SlopeAnalysisCommands
       if (alignment == null)
         throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "No alignment found in drawing.");
 
-      // Resolve profile
+      // Resolve profile. A name that isn't found is an error: falling back to another profile would answer about a
+      // profile the caller didn't ask for.
       Profile? profile = null;
       if (!string.IsNullOrWhiteSpace(profileName))
-        profile = FindProfileByName(alignment, transaction, profileName!);
+      {
+        profile = FindProfileByName(alignment, transaction, profileName!)
+          ?? throw new JsonRpcDispatchException(
+            "CIVIL3D.OBJECT_NOT_FOUND",
+            $"Alignment '{alignment.Name}' has no profile '{profileName}'. Its profiles: {ProfileNames(alignment, transaction)}");
+      }
 
       if (profile == null)
         profile = GetFirstProfile(alignment, transaction, preferFinishedGrade: true);
@@ -85,6 +100,12 @@ public static class SlopeAnalysisCommands
       {
         throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
           $"Profile '{profile.Name}' runs from {profile.StartingStation:F2} to {profile.EndingStation:F2}: nothing to check in that range.");
+      }
+
+      if ((endSta - startSta) / stationInterval > MaxStations)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"stationInterval {stationInterval} gives more than {MaxStations} stations from {startSta:F2} to {endSta:F2}: use a larger interval or a shorter range.");
       }
 
       var rows = new List<Dictionary<string, object?>>();
@@ -257,6 +278,18 @@ public static class SlopeAnalysisCommands
     }
 
     return null;
+  }
+
+  /// <summary>The alignment's profile names, quoted and comma-separated, or "none." for an error message.</summary>
+  private static string ProfileNames(Alignment alignment, Transaction transaction)
+  {
+    var names = new List<string>();
+    foreach (ObjectId id in alignment.GetProfileIds())
+    {
+      names.Add($"'{CivilObjectUtils.GetRequiredObject<Profile>(transaction, id, OpenMode.ForRead).Name}'");
+    }
+
+    return names.Count == 0 ? "none." : string.Join(", ", names) + ".";
   }
 
   /// <summary>The first profile whose name contains "FG" or "Design" (when preferred), else the first profile, else null.</summary>

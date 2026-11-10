@@ -2,10 +2,11 @@
 // JSON-RPC methods (CommandDispatcher): listDataShortcuts, createDataShortcut, referenceDataShortcut,
 // createDataShortcutReference, syncDataShortcuts, promoteDataShortcut. Called by src/tools/domains/projectDomain.ts
 // (civil3d_project) and reused by WorkflowCommands' data shortcut workflows.
-// listDataShortcuts is a CivilExecution.ReadAsync, but it reloads the current shortcut project (sets the working
-// folder) as a side effect outside the drawing. Publish and reference are CivilExecution.WriteAsync (one undo step);
-// publishing writes Civil 3D's shortcut files into the project folder through DataShortcutManager. Sync only queues
-// SynchronizeReferences, which runs after the request. Source drawing paths go through FileBoundary.ResolveReferencePath.
+// listDataShortcuts is a CivilExecution.ReadAsync; it reloads the current shortcut project to read what is published
+// and puts the working folder and project back as they were. Publish and reference are CivilExecution.WriteAsync (one
+// undo step); publishing writes Civil 3D's shortcut files into the project folder through DataShortcutManager. Sync
+// runs SynchronizeReferences inside the host gate (CivilExecution.ExecuteInCommandContextAsync + Editor.CommandAsync)
+// and waits for it. Source drawing paths go through FileBoundary.ResolveReferencePath.
 // Reference-state properties that differ between releases are read late-bound through CivilObjectUtils.
 using System.Collections;
 using System.Linq;
@@ -25,7 +26,7 @@ namespace Civil3DMcpPlugin;
 /// Plugin methods behind civil3d_project (data shortcuts; src/tools/domains/projectDomain.ts) and the data shortcut
 /// workflows. Publishing and referencing go through Civil 3D's DataShortcutManager, so they finish here with no window:
 /// a drawing's objects are selected and saved into the current project, and a published item becomes a reference with
-/// CreateReference. Sync launches the SynchronizeReferences command. Promote answers "manual_step_required" (or
+/// CreateReference. Sync runs the SynchronizeReferences command and waits for it. Promote answers "manual_step_required" (or
 /// "unsupported" for corridors) with what the user must do in Toolspace; pass that on instead of reporting it as done.
 /// </summary>
 public static class DataShortcutCommands
@@ -33,7 +34,9 @@ public static class DataShortcutCommands
   /// <summary>Surfaces, alignments and other shortcut-able objects split into incoming references (data shortcuts
   /// already in this drawing) and exportable objects (this drawing's own, which could be published), plus the working
   /// folder, current project and what that project has published. listDataShortcuts; no parameters. Doesn't change
-  /// the drawing (it does reload the current shortcut project).</summary>
+  /// the drawing. Reading the published items loads the current project (the same working folder and project are
+  /// set again), and the working folder and project are checked and put back afterwards (RestoreProject), so the
+  /// list leaves the Data Shortcuts setup as it was.</summary>
   public static Task<object?> ListDataShortcutsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -77,16 +80,53 @@ public static class DataShortcutCommands
         RegisterShortcutCandidate(corridor, "corridor", incoming, exportable);
       }
 
+      var workingFolder = Shortcuts.GetWorkingFolder();
       var (current, _) = Projects();
+      List<Dictionary<string, object?>> published;
+      try
+      {
+        published = PublishedItems();
+      }
+      finally
+      {
+        RestoreProject(workingFolder, current);
+      }
+
       return new Dictionary<string, object?>
       {
         ["incoming"] = incoming,
         ["exportable"] = exportable,
-        ["workingFolder"] = Shortcuts.GetWorkingFolder(),
+        ["workingFolder"] = workingFolder,
         ["currentProject"] = current,
-        ["published"] = PublishedItems(),
+        ["published"] = published,
       };
     });
+  }
+
+  /// <summary>
+  /// Puts the shortcut working folder and current project back to <paramref name="workingFolder"/> /
+  /// <paramref name="current"/> when they differ now, so a list leaves the user's Data Shortcuts setup as it found it.
+  /// (Loading the project to read what it has published sets the same values again; this only acts if Civil 3D moved
+  /// them.) Best effort: a failure here is logged, not thrown over the list's answer.
+  /// </summary>
+  private static void RestoreProject(string workingFolder, string current)
+  {
+    try
+    {
+      if (!string.Equals(Shortcuts.GetWorkingFolder(), workingFolder, StringComparison.OrdinalIgnoreCase))
+      {
+        Shortcuts.SetWorkingFolder(workingFolder);
+      }
+
+      if (current.Length > 0 && !string.Equals(Projects().Current, current, StringComparison.OrdinalIgnoreCase))
+      {
+        Shortcuts.SetCurrentProjectFolder(current);
+      }
+    }
+    catch (Exception exception)
+    {
+      PluginLog.Warn("DataShortcuts", $"Couldn't put the shortcut working folder/project back: {exception.Message}");
+    }
   }
 
   /// <summary>The current shortcut project, and the working folder's other ones.</summary>
@@ -149,8 +189,37 @@ public static class DataShortcutCommands
       return;
     }
 
+    throw NoCurrentProject(others);
+  }
+
+  /// <summary>
+  /// The dry-run form of <see cref="RequireShortcutFolder"/>: on the main thread through the host gate (ReadAsync), it
+  /// only checks that a shortcut project is current and changes nothing (no project is loaded). Returns workingFolder
+  /// and currentProject; CIVIL3D.INVALID_INPUT as RequireShortcutFolder when none is current.
+  /// </summary>
+  internal static Task<object?> CheckShortcutFolderAsync()
+  {
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var (current, others) = Projects();
+      if (current.Length == 0)
+      {
+        throw NoCurrentProject(others);
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["workingFolder"] = Shortcuts.GetWorkingFolder(),
+        ["currentProject"] = current,
+      };
+    });
+  }
+
+  /// <summary>CIVIL3D.INVALID_INPUT for no current shortcut project, naming the working folder's projects.</summary>
+  private static JsonRpcDispatchException NoCurrentProject(List<string> others)
+  {
     var choices = others.Count > 0 ? $" Its projects are: {string.Join(", ", others)}." : string.Empty;
-    throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+    return new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
       $"Nothing was started: no shortcut project is current in '{Shortcuts.GetWorkingFolder()}'.{choices} Name one with projectFolder; publishing makes it if it's new.");
   }
 
@@ -361,11 +430,11 @@ public static class DataShortcutCommands
   }
 
   /// <summary>
-  /// Lists the references that look out of date and, unless <c>dryRun</c>, launches SynchronizeReferences. The command
-  /// is queued with SendStringToExecute, so it runs after this request returns (status "initiated"), and it covers
-  /// every reference in the drawing: <c>shortcutNames</c> and <c>projectFolder</c> only filter what is reported.
-  /// Nothing stale answers "up_to_date" without sending anything. The command itself runs outside the host queue and
-  /// changes the drawing on its own. CIVIL3D.COMMAND_FAILED when the command can't be sent.
+  /// Lists the references that look out of date and, unless <c>dryRun</c>, runs SynchronizeReferences. The command
+  /// runs inside the host gate in command context (Editor.CommandAsync, like acad_command) and this request waits for
+  /// it, so its drawing changes are one undo step of this request (status "synchronized"). It covers every reference
+  /// in the drawing: <c>shortcutNames</c> and <c>projectFolder</c> only filter what is reported. Nothing stale answers
+  /// "up_to_date" without running anything. CIVIL3D.COMMAND_FAILED when the command fails.
   /// </summary>
   public static async Task<object?> SyncDataShortcutsAsync(JsonObject? parameters)
   {
@@ -404,13 +473,16 @@ public static class DataShortcutCommands
       };
     }
 
-    return await CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    // The command changes the drawing, so it runs inside the host gate, in command context, and this request waits for
+    // it (as acad_command does): one undo step, on the verified drawing, with nothing else running at the same time.
+    return await CivilExecution.ExecuteInCommandContextAsync<object?>(async () =>
     {
-      SendCommand(doc, "SynchronizeReferences");
+      var (doc, _) = CivilExecution.GetVerifiedActiveDocuments();
+      await RunCommandAsync(doc, "SynchronizeReferences");
 
       var notes = new List<string>
       {
-        "The SynchronizeReferences command was launched in Civil 3D.",
+        "Civil 3D's SynchronizeReferences command ran and finished in this request.",
       };
 
       if (!string.IsNullOrWhiteSpace(projectFolder))
@@ -430,7 +502,7 @@ public static class DataShortcutCommands
         ["dryRun"] = false,
         ["staleReferenceCount"] = staleReferences.Count,
         ["targetReferences"] = staleReferences,
-        ["status"] = "initiated",
+        ["status"] = "synchronized",
         ["dialogRequired"] = false,
         ["command"] = "SynchronizeReferences",
         ["notes"] = notes,
@@ -629,18 +701,19 @@ public static class DataShortcutCommands
   }
 
   /// <summary>
-  /// Queues <paramref name="commandName"/> on the document's command line (SendStringToExecute); it runs after the
-  /// current request. CIVIL3D.COMMAND_FAILED when queuing throws.
+  /// Runs <paramref name="commandName"/> with Editor.CommandAsync and waits for it to finish. Call only inside
+  /// CivilExecution.ExecuteInCommandContextAsync (host gate, command context), so the command's changes are part of the
+  /// request. CIVIL3D.COMMAND_FAILED when the command fails.
   /// </summary>
-  private static void SendCommand(Document doc, string commandName)
+  private static async Task RunCommandAsync(Document doc, string commandName)
   {
     try
     {
-      doc.SendStringToExecute($"{commandName}\n", true, false, false);
+      await doc.Editor.CommandAsync(commandName);
     }
     catch (Exception ex)
     {
-      throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED", $"Failed to execute {commandName}: {ex.Message}");
+      throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED", $"Failed to run {commandName}: {ex.Message}");
     }
   }
 

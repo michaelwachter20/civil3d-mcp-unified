@@ -210,7 +210,7 @@ public static class PluginRuntime
       // Loopback-only server: return the cause so callers can act on it; the stack trace is in the log.
       return JsonRpcProtocol.SerializeError(
         id,
-        -32603,
+        JsonRpcProtocol.NumericErrorCode("CIVIL3D.INTERNAL_ERROR"),
         "CIVIL3D.INTERNAL_ERROR",
         $"The Civil 3D plugin encountered an unexpected error ({ex.GetType().Name}: {ex.Message}). Stack trace: {PluginLog.LogFilePath}");
     }

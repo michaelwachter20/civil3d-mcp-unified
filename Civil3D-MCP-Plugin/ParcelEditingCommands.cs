@@ -135,7 +135,8 @@ public static class ParcelEditingCommands
   /// createParcel (changes the drawing). Reads <c>siteName</c> (required), then either <c>sourceHandle</c> (a closed
   /// entity's hex handle) or <c>points</c> ([[x, y], ...], at least 3 corners), and optionally <c>name</c> (used only
   /// when exactly one parcel forms), <c>style</c> and <c>areaLabelStyle</c>. Returns siteName, created, parcelCount
-  /// and parcels (name, handle, area, perimeter). Throws CIVIL3D.INVALID_INPUT with neither source,
+  /// and parcels (name, handle, area, perimeter). Throws CIVIL3D.INVALID_INPUT with neither source or a sourceHandle
+  /// that isn't hexadecimal,
   /// CIVIL3D.OBJECT_NOT_FOUND for an unknown site, handle or style, and CIVIL3D.API_ERROR when the lines close no
   /// area; on any failure the added lines are deleted again.
   /// </para>
@@ -155,6 +156,15 @@ public static class ParcelEditingCommands
         "createParcel requires either a sourceHandle (entity handle) or a points array with ≥3 vertices.");
     }
 
+    // A handle is hexadecimal ("2A3F"); anything else is the caller's mistake, not an internal error.
+    long sourceHandleValue = 0;
+    if (!string.IsNullOrWhiteSpace(sourceHandle)
+        && !long.TryParse(sourceHandle.Trim(), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out sourceHandleValue))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+        $"sourceHandle '{sourceHandle}' isn't an entity handle: send the hexadecimal handle of a closed entity, e.g. \"2A3F\".");
+    }
+
     return CivilExecution.WithDocumentLockAsync<object?>((doc, civilDoc) =>
     {
       var database = doc.Database;
@@ -165,7 +175,7 @@ public static class ParcelEditingCommands
         before = EnumerateParcelIds(FindSiteByName(civilDoc, transaction, siteName), transaction).ToHashSet();
         if (!string.IsNullOrWhiteSpace(sourceHandle))
         {
-          if (!database.TryGetObjectId(new Handle(Convert.ToInt64(sourceHandle, 16)), out var entityId) || entityId.IsNull)
+          if (!database.TryGetObjectId(new Handle(sourceHandleValue), out var entityId) || entityId.IsNull)
           {
             throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Entity with handle '{sourceHandle}' was not found.");
           }
@@ -252,7 +262,13 @@ public static class ParcelEditingCommands
     foreach (var node in pointsNode ?? [])
     {
       if (node is not JsonArray pair || pair.Count < 2) continue;
-      var corner = new Point2d(pair[0]?.GetValue<double>() ?? 0, pair[1]?.GetValue<double>() ?? 0);
+      if (pair[0] is not JsonValue xValue || !xValue.TryGetValue<double>(out var x)
+          || pair[1] is not JsonValue yValue || !yValue.TryGetValue<double>(out var y))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"points: each corner must be [x, y] numbers, got {pair.ToJsonString()}.");
+      }
+
+      var corner = new Point2d(x, y);
       if (corners.Count == 0 || !corners[^1].IsEqualTo(corner)) corners.Add(corner);
     }
 
@@ -325,11 +341,14 @@ public static class ParcelEditingCommands
 
   /// <summary>
   /// reportParcels (read-only on the drawing): the parcels of <c>siteName</c> (required), optionally only those in
-  /// <c>parcelNames</c>, with area in <c>units</c> (sqft default, acres, sqm, ha; converted assuming the drawing is in
-  /// feet), perimeter, style and, with <c>includeCoordinates</c>, the boundary vertices. With <c>outputPath</c> it also
-  /// writes a .csv (name, area, units, perimeter, style; no vertices) through FileBoundary, refusing to replace a file
-  /// unless <c>overwrite</c> is true. Returns siteName, parcelCount, parcels and the written outputPath. Throws
-  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown site and FileBoundary's errors for the path.
+  /// <c>parcelNames</c>, with area in <c>units</c> (sqft, acres, sqm, ha, converted from the drawing's own square
+  /// units by DesignMath.ConvertArea; left out, the drawing's own: sqft in feet, sqm in meters), perimeter, style and,
+  /// with <c>includeCoordinates</c>, the boundary vertices. With <c>outputPath</c> it also writes a .csv (name, area,
+  /// units, perimeter, style, plus the vertices as "x y;x y;..." with <c>includeCoordinates</c>; RFC 4180 quoting)
+  /// through FileBoundary, refusing to replace a file unless <c>overwrite</c> is true. Returns siteName, parcelCount,
+  /// parcels and the written outputPath. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown site, CIVIL3D.INVALID_INPUT for
+  /// an unknown <c>units</c> or a conversion in a drawing in neither feet nor meters, and FileBoundary's errors for
+  /// the path.
   /// </summary>
   public static Task<object?> ReportParcelsAsync(JsonObject? parameters)
   {
@@ -337,7 +356,7 @@ public static class ParcelEditingCommands
     var parcelNamesNode = PluginRuntime.GetParameter(parameters, "parcelNames") as JsonArray;
     var outputPath = PluginRuntime.GetOptionalString(parameters, "outputPath");
     var includeCoordinates = PluginRuntime.GetOptionalBool(parameters, "includeCoordinates") ?? false;
-    var units = PluginRuntime.GetOptionalString(parameters, "units") ?? "sqft";
+    var requestedUnits = PluginRuntime.GetOptionalString(parameters, "units");
     var overwrite = PluginRuntime.GetOptionalBool(parameters, "overwrite") ?? false;
 
     var filterNames = parcelNamesNode?
@@ -349,13 +368,15 @@ public static class ParcelEditingCommands
     {
       var site = FindSiteByName(civilDoc, transaction, siteName);
       var rows = new List<Dictionary<string, object?>>();
+      var linearUnits = CivilObjectUtils.LinearUnits(database);
+      var units = requestedUnits ?? DesignMath.NativeAreaUnit(linearUnits);
 
       foreach (ObjectId pid in EnumerateParcelIds(site, transaction))
       {
         var parcel = CivilObjectUtils.GetRequiredObject<Parcel>(transaction, pid, OpenMode.ForRead);
         if (filterNames != null && filterNames.Count > 0 && !filterNames.Contains(parcel.Name)) continue;
 
-        var areaInUnits = ConvertArea(parcel.Area, units);
+        var areaInUnits = requestedUnits == null ? parcel.Area : DesignMath.ConvertArea(parcel.Area, linearUnits, units);
 
         var row = new Dictionary<string, object?>
         {
@@ -543,22 +564,10 @@ public static class ParcelEditingCommands
     return parcel.Number;
   }
 
-  /// <summary>Converts an area in square feet to acres, sqm or ha; anything else is returned unchanged. It assumes a
-  /// drawing in feet: a metric drawing's square meters are converted as if they were square feet.</summary>
-  private static double ConvertArea(double areaInDrawingUnits, string units)
-  {
-    return units.ToLowerInvariant() switch
-    {
-      "acres" => areaInDrawingUnits / 43560.0,
-      "sqm" => areaInDrawingUnits * 0.092903,
-      "ha" => areaInDrawingUnits * 0.092903 / 10000.0,
-      _ => areaInDrawingUnits, // sqft or default
-    };
-  }
-
   /// <summary>Writes the report rows as UTF-8 CSV through FileBoundary.WriteAllTextAtomic (.csv only, export roots,
-  /// no overwrite unless asked) and returns the full path written. Values are not quoted, and
-  /// <paramref name="includeCoordinates"/> is not used: the CSV never has vertices.</summary>
+  /// no overwrite unless asked) and returns the full path written. Every field is RFC 4180 quoted when it needs it and
+  /// numbers use a dot (DesignMath.CsvLine); with <paramref name="includeCoordinates"/> a Vertices column holds the
+  /// boundary as "x y;x y;...".</summary>
   private static string WriteCsv(
     string outputPath,
     List<Dictionary<string, object?>> rows,
@@ -566,13 +575,22 @@ public static class ParcelEditingCommands
     bool overwrite)
   {
     var csv = new System.Text.StringBuilder();
-    csv.AppendLine("Name,Area,AreaUnits,Perimeter,Style");
+    csv.AppendLine(includeCoordinates ? "Name,Area,AreaUnits,Perimeter,Style,Vertices" : "Name,Area,AreaUnits,Perimeter,Style");
     foreach (var row in rows)
     {
-      csv.AppendLine(string.Join(",",
+      var fields = new List<object?>
+      {
         row.GetValueOrDefault("name"), row.GetValueOrDefault("area"),
         row.GetValueOrDefault("areaUnits"), row.GetValueOrDefault("perimeter"),
-        row.GetValueOrDefault("style")));
+        row.GetValueOrDefault("style"),
+      };
+      if (includeCoordinates)
+      {
+        var vertices = row.GetValueOrDefault("vertices") as IEnumerable<Dictionary<string, object?>> ?? [];
+        fields.Add(DesignMath.VertexList(vertices.Select(vertex => ((double)vertex["x"]!, (double)vertex["y"]!))));
+      }
+
+      csv.AppendLine(DesignMath.CsvLine(fields));
     }
 
     return FileBoundary.WriteAllTextAtomic(

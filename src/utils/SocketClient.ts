@@ -17,6 +17,29 @@ import { createRpcRequestId } from "./requestContext.js";
 const log = createLogger("SocketClient");
 /** How long one command may take before it is rejected (CIVIL3D_COMMAND_TIMEOUT, ms; default two minutes). */
 const COMMAND_TIMEOUT_MS = parseInt(process.env.CIVIL3D_COMMAND_TIMEOUT ?? "120000", 10);
+/**
+ * How long a method that waits for the user to close one of Civil 3D's dialogs may take (CIVIL3D_DIALOG_TIMEOUT, ms;
+ * default 30 minutes, never less than COMMAND_TIMEOUT_MS): the plugin answers only when the dialog is closed.
+ */
+const DIALOG_TIMEOUT_MS = Math.max(parseInt(process.env.CIVIL3D_DIALOG_TIMEOUT ?? "1800000", 10), COMMAND_TIMEOUT_MS);
+/**
+ * Plugin methods that hold the request open while the user works in a Civil 3D dialog: the STM export/import and the
+ * gravity network analysis (StmCommands.cs), and data shortcut synchronization, alone or inside a workflow.
+ */
+const USER_DIALOG_METHODS = new Set([
+  "exportStm",
+  "importStm",
+  "openStormSanitaryAnalysis",
+  "syncDataShortcuts",
+  "dataShortcutPublishSyncWorkflow",
+  "dataShortcutReferenceSyncWorkflow",
+  "projectReferenceSetupWorkflow",
+]);
+
+/** The timeout for one plugin method: DIALOG_TIMEOUT_MS for those that wait on a dialog, else COMMAND_TIMEOUT_MS. */
+export function commandTimeoutMs(command: string): number {
+  return USER_DIALOG_METHODS.has(command) ? DIALOG_TIMEOUT_MS : COMMAND_TIMEOUT_MS;
+}
 /** Largest answer accepted before the connection is dropped (CIVIL3D_MAX_RESPONSE_BYTES; default 8 MiB). */
 const MAX_RESPONSE_BYTES = parseInt(process.env.CIVIL3D_MAX_RESPONSE_BYTES ?? "8388608", 10);
 
@@ -195,7 +218,7 @@ export class ApplicationClientConnection {
   /**
    * Sends plugin method `command` (a CommandDispatcher.cs name such as "listAlignments") with `params` and resolves
    * with the JSON-RPC `result`. Rejects with Civil3DRpcError for an error answer, and with a plain Error when the
-   * connection fails, the answer is not a valid JSON-RPC 2.0 envelope for this request id, or COMMAND_TIMEOUT_MS
+   * connection fails, the answer is not a valid JSON-RPC 2.0 envelope for this request id, or commandTimeoutMs(command)
    * passes. A timeout only rejects; it doesn't close the socket (the caller's disconnect does).
    */
   public sendCommand(command: string, params: any = {}): Promise<any> {
@@ -214,14 +237,15 @@ export class ApplicationClientConnection {
         id: requestId,
       };
 
+      const timeoutMs = commandTimeoutMs(command);
       const timeout = setTimeout(() => {
         const pending = this.responseCallbacks.get(requestId);
         if (pending) {
           this.responseCallbacks.delete(requestId);
-          log.warn("Command timed out", { method: command, requestId, timeoutMs: COMMAND_TIMEOUT_MS });
-          pending.reject(new Error(`Command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}. Civil 3D may still be working on it and show as Not Responding until it finishes: wait, and don't run it again or end Civil 3D.`));
+          log.warn("Command timed out", { method: command, requestId, timeoutMs });
+          pending.reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}. Civil 3D may still be working on it and show as Not Responding until it finishes: wait, and don't run it again or end Civil 3D.`));
         }
-      }, COMMAND_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.responseCallbacks.set(requestId, {
         timeout,

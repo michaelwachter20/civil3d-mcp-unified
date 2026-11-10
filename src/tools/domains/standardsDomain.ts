@@ -3,7 +3,7 @@
 // each to LabelCommands.cs, StyleCommands.cs or QcCommands.cs; `lookup` runs in Node only, over the JSON shipped in
 // src/standards/data (FrameworkStandardsService.ts), and needs no drawing. Writes: label_add (non-retryable create,
 // needs an approvalToken) and fix_drawing_standards (layer renames/colours; its name contains "fix", so approval is
-// required even with dryRun). Everything else is read-only. Details are in the comments below.
+// required, except for a dryRun, which only lists the changes). Everything else is read-only. Details are below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import { lookupFrameworkStandards } from "../../standards/FrameworkStandardsService.js";
@@ -69,7 +69,7 @@ const canonicalStandardsInputShape = {
   objectName: z.string().optional(),
   labelType: z.string().optional(),
   labelStyle: z.string().optional(),
-  station: z.number().optional(),
+  station: z.number().optional().describe("label_add: station for alignment or profile station labels (a profile station label needs a profile view of that profile)"),
   point: LabelPointSchema.optional(),
   styleName: z.string().optional(),
   query: z.string().optional(),
@@ -98,7 +98,8 @@ const LabelListArgsSchema = z.object({
 /**
  * `label_add`: which `labelType` works with which object, and whether it needs `station` or `point`, is decided by
  * LabelCommands.AddLabelAsync (alignment/profile station labels or a label set, surface spot elevations, pipe and
- * structure plan labels); anything else comes back as CIVIL3D.INVALID_INPUT listing what is supported. With no
+ * structure plan labels; a profile station label needs a profile view of that profile in the drawing); anything else
+ * comes back as CIVIL3D.INVALID_INPUT listing what is supported. With no
  * `labelStyle` the first style is used; a name the drawing doesn't have is refused with the names it does.
  */
 const LabelAddArgsSchema = z.object({
@@ -326,6 +327,8 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["qcFixDrawingStandards"],
+      // A dryRun opens the layers for read and only lists the changes, so it needs no approval.
+      readOnlyWhen: (args) => args.dryRun === true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("qcFixDrawingStandards", {
           layerPrefix: args.layerPrefix ?? null,
@@ -371,7 +374,7 @@ export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
         objectName: z.string().optional(),
         labelType: z.string().optional(),
         labelStyle: z.string().optional(),
-        station: z.number().optional(),
+        station: z.number().optional().describe("Station for alignment or profile station labels (a profile station label needs a profile view of that profile)"),
         point: LabelPointSchema.optional(),
       },
       supportedActions: ["label_list", "label_add", "label_list_styles"],

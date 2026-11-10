@@ -185,9 +185,9 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Declared with `delete` because it can erase a subassembly, so every call needs approval, even one that only
-    // lists. The plugin runs the listing inside a write too (an undo step that changes nothing); `get` is the
-    // read-only way to inspect.
+    // Declared with `delete` because it can erase a subassembly, so a call that names a subassembly needs approval.
+    // Without subassemblyName (and with no parameters or delete) the plugin only lists, through a read, so that call
+    // needs none (readOnlyWhen).
     edit: {
       action: "edit",
       inputSchema: AssemblyEditArgsSchema,
@@ -196,6 +196,7 @@ export const ASSEMBLY_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["editAssembly"],
+      readOnlyWhen: (args) => !String(args.subassemblyName ?? "").trim() && args.parameters === undefined && args.delete !== true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("editAssembly", {
           assemblyName: args.assemblyName,

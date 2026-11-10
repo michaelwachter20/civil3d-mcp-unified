@@ -61,21 +61,103 @@ public static class AlignmentEditCommands
   // ─── alignmentAddCurve ────────────────────────────────────────────────────
 
   /// <summary>
-  /// alignmentAddCurve: not implemented. Reads <c>alignmentName</c>, <c>passThroughX</c>, <c>passThroughY</c> and
-  /// <c>radius</c> (required, so a missing one is CIVIL3D.INVALID_INPUT) and then always throws CIVIL3D.API_ERROR: the
-  /// schema gives no curve direction, so nothing is created and the drawing is never opened.
+  /// alignmentAddCurve: a free curve between two entities of alignment <c>alignmentName</c> (usually two tangents that
+  /// meet at a PI), Civil 3D's AlignmentEntityCollection.AddFreeCurve. <c>fromEntityIndex</c> and
+  /// <c>toEntityIndex</c> are the entities (the index alignment get shows); the curve is given by exactly one of
+  /// <c>radius</c> (positive) or a point it passes through (<c>passThroughX</c> + <c>passThroughY</c>). The direction
+  /// comes from the two entities, so none is asked for; the curve is the short one (under 180 degrees). Two entities
+  /// with a curve between them already are refused by Civil 3D: delete_entity it first. A write (one undo step);
+  /// returns the new entity's index, its radius and the alignment's new length. CIVIL3D.INVALID_INPUT for a missing or
+  /// out-of-range index, the same index twice, or not exactly one of radius / pass-through point;
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment; CIVIL3D.API_ERROR when Civil 3D can't fit the curve.
   /// </summary>
   public static Task<object?> AddCurveAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
-    var passThroughX = PluginRuntime.GetRequiredDouble(parameters, "passThroughX");
-    var passThroughY = PluginRuntime.GetRequiredDouble(parameters, "passThroughY");
-    var radius = PluginRuntime.GetRequiredDouble(parameters, "radius");
+    var fromIndex = PluginRuntime.GetOptionalInt(parameters, "fromEntityIndex");
+    var toIndex = PluginRuntime.GetOptionalInt(parameters, "toEntityIndex");
+    var radius = PluginRuntime.GetOptionalDouble(parameters, "radius");
+    var passThroughX = PluginRuntime.GetOptionalDouble(parameters, "passThroughX");
+    var passThroughY = PluginRuntime.GetOptionalDouble(parameters, "passThroughY");
 
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Cannot add the requested radius-{radius} curve at ({passThroughX}, {passThroughY}): Civil 3D requires an explicit clockwise direction or additional geometry. " +
-      "The current tool schema does not provide enough information, so no curve was created.");
+    if (fromIndex == null || toIndex == null)
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        "alignmentAddCurve needs fromEntityIndex and toEntityIndex: the two entities (usually tangents, the index alignment get shows) the curve goes between.");
+    }
+
+    if (fromIndex == toIndex)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"fromEntityIndex and toEntityIndex are both {fromIndex}: a curve goes between two different entities.");
+    }
+
+    var hasPoint = passThroughX != null || passThroughY != null;
+    if (hasPoint && (passThroughX == null || passThroughY == null))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "A pass-through point needs both passThroughX and passThroughY.");
+    }
+
+    if (hasPoint == (radius != null))
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        "Give the curve by exactly one of: radius, or a point it passes through (passThroughX + passThroughY).");
+    }
+
+    if (radius != null && (!(radius > 0) || double.IsInfinity(radius.Value)))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"radius must be a positive distance in drawing units, not {radius}.");
+    }
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var found = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
+      var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, found.ObjectId, OpenMode.ForWrite);
+      var entities = alignment.Entities.Cast<AlignmentEntity>().ToList();
+      foreach (var index in new[] { fromIndex.Value, toIndex.Value })
+      {
+        if (index < 0 || index >= entities.Count)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Entity index {index} is out of range: alignment '{alignment.Name}' has {entities.Count} entities.");
+        }
+      }
+
+      var previousId = entities[fromIndex.Value].EntityId;
+      var nextId = entities[toIndex.Value].EntityId;
+      AlignmentArc arc;
+      try
+      {
+        arc = radius != null
+          ? alignment.Entities.AddFreeCurve(previousId, nextId, radius.Value, CurveParamType.Radius, false, CurveType.Compound)
+          : alignment.Entities.AddFreeCurve(previousId, nextId, new Point3d(passThroughX!.Value, passThroughY!.Value, 0));
+      }
+      catch (Autodesk.AutoCAD.Runtime.Exception exception)
+      {
+        // Civil 3D says only that a value is out of range; the usual causes are named instead.
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.API_ERROR",
+          $"Civil 3D could not fit a curve between entities {fromIndex} and {toIndex} of alignment '{alignment.Name}' ({exception.Message}). " +
+          "Check that they are neighbouring entities with no curve between them already and that the radius or point fits between them.");
+      }
+      catch (ArgumentException exception)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.API_ERROR",
+          $"Civil 3D could not fit a curve between entities {fromIndex} and {toIndex} of alignment '{alignment.Name}' ({exception.Message}). " +
+          "Check that they are neighbouring entities with no curve between them already and that the radius or point fits between them.");
+      }
+
+      return new Dictionary<string, object?>
+      {
+        ["alignmentName"] = alignment.Name,
+        ["operation"] = "add_curve",
+        ["entityIndex"] = alignment.Entities.Cast<AlignmentEntity>().ToList().FindIndex(entity => entity.EntityId == arc.EntityId),
+        ["radius"] = arc.Radius,
+        ["newLength"] = alignment.Length,
+        ["success"] = true,
+      };
+    });
   }
 
   // ─── alignmentAddSpiral ───────────────────────────────────────────────────

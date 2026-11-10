@@ -162,9 +162,11 @@ public static class CatchmentCommands
   /// <summary>
   /// setCatchmentProperties: changes catchment <c>catchmentName</c> (required). Optional <c>runoffCoefficient</c>,
   /// <c>manningsCoefficient</c>, <c>curveNumber</c> (rounded to an integer), <c>description</c>, <c>newName</c>; at
-  /// least one is needed. Changes the drawing. Returns the list of changes and the updated summary. Manning's n and
-  /// curve number are set late-bound and listed as changed even if this release has no such property.
-  /// CIVIL3D.INVALID_INPUT when nothing is given, CIVIL3D.OBJECT_NOT_FOUND for an unknown catchment.
+  /// least one is needed. Changes the drawing. Returns the list of <c>changes</c>, <c>notChanged</c> (what was asked
+  /// but this release can't set) and the updated summary. Manning's n and curve number are set late-bound and read
+  /// back, so they are listed as changed only when the new value is really there. CIVIL3D.INVALID_INPUT when nothing
+  /// is given, CIVIL3D.API_ERROR when nothing asked for could be set, CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// catchment.
   /// </summary>
   public static Task<object?> SetCatchmentPropertiesAsync(JsonObject? parameters)
   {
@@ -181,6 +183,7 @@ public static class CatchmentCommands
     {
       var catchment = FindCatchmentByName(civilDoc, database, transaction, catchmentName, OpenMode.ForWrite);
       var changes = new List<string>();
+      var notChanged = new List<string>();
 
       if (runoffCoefficient.HasValue)
       {
@@ -188,16 +191,22 @@ public static class CatchmentCommands
         changes.Add($"RunoffCoefficient={runoffCoefficient.Value}");
       }
 
+      // Manning's n and the curve number are only late-bound: listed as changed only when the value reads back.
       if (manningsCoefficient.HasValue)
       {
-        TrySetDeprecatedProperty(catchment, manningsCoefficient.Value, "ManningsCoefficient");
-        changes.Add($"ManningsCoefficient={manningsCoefficient.Value}");
+        if (TrySetDeprecatedProperty(catchment, manningsCoefficient.Value, "ManningsCoefficient") is { } setName)
+          changes.Add($"{setName}={manningsCoefficient.Value}");
+        else
+          notChanged.Add("manningsCoefficient: this Civil 3D release has no writable Manning's n on a catchment (set it in the catchment's properties or its flow segments).");
       }
 
       if (curveNumber.HasValue)
       {
-        TrySetDeprecatedProperty(catchment, (int)Math.Round(curveNumber.Value), "CompositeCurveNumber", "CurveNumber");
-        changes.Add($"CurveNumber={curveNumber.Value}");
+        var rounded = Math.Round(curveNumber.Value);
+        if (TrySetDeprecatedProperty(catchment, rounded, "CompositeCurveNumber", "CurveNumber") is { } setName)
+          changes.Add($"{setName}={rounded}");
+        else
+          notChanged.Add("curveNumber: this Civil 3D release has no writable curve number on a catchment.");
       }
 
       if (!string.IsNullOrWhiteSpace(description))
@@ -212,6 +221,11 @@ public static class CatchmentCommands
         changes.Add($"Name={newName}");
       }
 
+      if (changes.Count == 0 && notChanged.Count > 0)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Nothing was changed: {string.Join(" ", notChanged)}");
+      }
+
       if (changes.Count == 0)
       {
         throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
@@ -223,6 +237,7 @@ public static class CatchmentCommands
         ["catchmentName"] = catchment.Name,
         ["handle"] = CivilObjectUtils.GetHandle(catchment),
         ["changes"] = changes,
+        ["notChanged"] = notChanged,
         ["updatedProperties"] = ToCatchmentSummary(catchment),
       };
     });
@@ -636,12 +651,20 @@ public static class CatchmentCommands
     return null;
   }
 
-  /// <summary>Sets the first of <paramref name="propertyNames"/> this release can write (late-bound); silently does nothing if none.</summary>
-  private static void TrySetDeprecatedProperty(object target, object value, params string[] propertyNames)
+  /// <summary>
+  /// Sets the first of <paramref name="propertyNames"/> this release can write (late-bound) and reads it back. Returns
+  /// the name of the property that now holds <paramref name="value"/>, or null when no name could be written or the
+  /// value didn't stick (a property can accept a set and ignore it), so the caller reports only real changes.
+  /// </summary>
+  private static string? TrySetDeprecatedProperty(object target, double value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
     {
-      if (Civil3DCompatibility.TrySetProperty(target, propertyName, value)) return;
+      if (!Civil3DCompatibility.TrySetProperty(target, propertyName, value)) continue;
+      var readBack = CivilObjectUtils.GetDoubleProperty(target, propertyName);
+      return readBack.HasValue && Math.Abs(readBack.Value - value) <= 1e-9 * Math.Max(1.0, Math.Abs(value)) ? propertyName : null;
     }
+
+    return null;
   }
 }

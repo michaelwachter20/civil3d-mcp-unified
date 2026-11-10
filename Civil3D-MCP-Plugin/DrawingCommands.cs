@@ -630,13 +630,14 @@ public static class DrawingCommands
 
   /// <summary>
   /// The drawing's coordinate system code from its unit and zone settings, with the category and datum Civil 3D's
-  /// coordinate system library has for it; all null when the drawing has none. The vertical datum isn't read.
+  /// coordinate system library has for it; all null when the drawing has none (an empty code or ".", read as
+  /// CoordinateSystemCommands.DrawingCode reads it, so getDrawingInfo and getCoordinateSystemInfo agree). The vertical
+  /// datum isn't read.
   /// </summary>
   private static (string? code, string? zone, string? datum, string? verticalDatum) ReadCoordinateSystemFields(CivilDocument civilDoc)
   {
-    var unitZone = civilDoc.Settings.DrawingSettings.UnitZoneSettings;
-    var code = unitZone.CoordinateSystemCode;
-    if (string.IsNullOrWhiteSpace(code))
+    var code = CoordinateSystemCommands.DrawingCode(civilDoc);
+    if (code == null)
     {
       return (null, null, null, null);
     }

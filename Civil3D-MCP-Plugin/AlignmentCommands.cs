@@ -213,22 +213,20 @@ public static class AlignmentCommands
   /// with curves added between tangents, and the polyline is erased. Optional <c>style</c>, <c>layer</c>,
   /// <c>labelSet</c> and <c>site</c> fall back to the drawing's defaults (LookupUtils). A write (one undo step).
   /// Returns name, handle, <c>created</c> and a note when curves were added. Throws CIVIL3D.INVALID_INPUT for fewer
-  /// than two points or <c>type</c> = offset (use alignmentOffsetCreate), CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// than two points, a point that isn't an object or lacks a numeric x/y (naming the point; StationMath.ReadVertices)
+  /// or <c>type</c> = offset (use alignmentOffsetCreate), CIVIL3D.OBJECT_NOT_FOUND for an unknown
   /// style, layer, label set or site.
   /// </summary>
   public static Task<object?> CreateAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
-    var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
-    if (pointsNode == null || pointsNode.Count < 2)
-    {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "createAlignment requires at least two points.");
-    }
-
     if (string.Equals(PluginRuntime.GetOptionalString(parameters, "type"), "offset", StringComparison.OrdinalIgnoreCase))
     {
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "An offset alignment is made from its parent: use action=offset_create.");
     }
+
+    // Read and checked before the host queue: every point becomes a vertex, so its index is the vertex index.
+    var vertices = StationMath.ReadVertices(PluginRuntime.GetParameter(parameters, "points") as JsonArray, "createAlignment");
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -236,14 +234,9 @@ public static class AlignmentCommands
       var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
       using var polyline = new Polyline();
-      for (var index = 0; index < pointsNode.Count; index++)
+      for (var index = 0; index < vertices.Count; index++)
       {
-        if (pointsNode[index] is not JsonObject point)
-        {
-          continue;
-        }
-
-        polyline.AddVertexAt(index, new Point2d(point["x"]!.GetValue<double>(), point["y"]!.GetValue<double>()), 0, 0, 0);
+        polyline.AddVertexAt(index, new Point2d(vertices[index].X, vertices[index].Y), 0, 0, 0);
       }
 
       var polylineId = modelSpace.AppendEntity(polyline);
@@ -269,7 +262,7 @@ public static class AlignmentCommands
         ["name"] = alignment.Name,
         ["handle"] = CivilObjectUtils.GetHandle(alignment),
         ["created"] = true,
-        ["note"] = pointsNode.Count > 2
+        ["note"] = vertices.Count > 2
           ? "Curves were added between the tangents, at the radius in the drawing's alignment settings, so the alignment passes near the interior points, not through them."
           : null,
       };

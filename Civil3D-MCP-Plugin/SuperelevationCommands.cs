@@ -305,9 +305,11 @@ public static class SuperelevationCommands
         sb.AppendLine(new string('-', 62));
         foreach (var row in rawTable)
         {
-          var station = row.TryGetValue("station", out var st) ? $"{Convert.ToDouble(st):F3}" : "—";
-          var left = row.TryGetValue("leftSlope", out var ls) ? $"{Convert.ToDouble(ls):F2}" : "—";
-          var right = row.TryGetValue("rightSlope", out var rs) ? $"{Convert.ToDouble(rs):F2}" : "—";
+          // A lane with no cross slope at a station is null: a dash, not 0.00 (Convert.ToDouble(null) is 0), which
+          // would read as a flat lane.
+          var station = row.TryGetValue("station", out var st) && st != null ? $"{Convert.ToDouble(st):F3}" : "—";
+          var left = row.TryGetValue("leftSlope", out var ls) && ls != null ? $"{Convert.ToDouble(ls):F2}" : "—";
+          var right = row.TryGetValue("rightSlope", out var rs) && rs != null ? $"{Convert.ToDouble(rs):F2}" : "—";
           var notes = row.TryGetValue("notes", out var n) ? n?.ToString() ?? "" : "";
           sb.AppendLine($"{station,-14} {left,-14} {right,-14} {notes,-20}");
         }

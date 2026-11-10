@@ -1,57 +1,21 @@
-// Guards the intended input shapes (zod) of the grading-group, grading and feature-line tool actions.
-// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
-// Pure schema tests: no Civil 3D, no plugin.
+// Guards the input shapes (zod) of the grading-group, grading and feature-line actions, using the REAL schemas from
+// src/tools/domains/gradingDomain.ts (tests/helpers/realSchemas.ts). The group and grading actions are unsupported and
+// in no tool, so their action schemas are checked directly. Pure schema tests: no Civil 3D, no plugin.
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
+import { GRADING_DOMAIN_DEFINITION } from "../src/tools/domains/gradingDomain.js";
+import { actionInput, toolActionInput, toolInput } from "./helpers/realSchemas.js";
 
-// ─── Input schemas (mirrored from civil3d_grading.ts) ──────────────────────
-
-const Point3DSchema = z.object({
-  x: z.number(),
-  y: z.number(),
-  z: z.number().default(0),
-});
-
-const GradingGroupGetSchema = z.object({ name: z.string() });
-const GradingGroupCreateSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  useProjection: z.boolean().optional(),
-});
-const GradingGroupDeleteSchema = z.object({ name: z.string() });
-const GradingGroupVolumeSchema = z.object({ name: z.string() });
-const GradingGroupSurfaceCreateSchema = z.object({
-  name: z.string(),
-  surfaceName: z.string().optional(),
-});
-const GradingListSchema = z.object({ groupName: z.string() });
-const GradingGetSchema = z.object({
-  groupName: z.string(),
-  handle: z.string(),
-});
-const GradingCreateSchema = z.object({
-  groupName: z.string(),
-  featureLineName: z.string(),
-  criteriaName: z.string().optional(),
-  side: z.enum(["left", "right", "both"]).optional(),
-});
-const GradingDeleteSchema = z.object({
-  groupName: z.string(),
-  handle: z.string(),
-});
-const FeatureLineGetSchema = z.object({
-  name: z.string(),
-});
-const FeatureLineExportSchema = z.object({
-  name: z.string(),
-  targetLayer: z.string().optional(),
-});
-const FeatureLineCreateSchema = z.object({
-  points: z.array(Point3DSchema).min(2),
-  name: z.string().optional(),
-  layer: z.string().optional(),
-});
+const GradingGroupGetSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_get");
+const GradingGroupCreateSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_create");
+const GradingGroupVolumeSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_volume");
+const GradingGroupSurfaceCreateSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_surface_create");
+const GradingListSchema = actionInput(GRADING_DOMAIN_DEFINITION, "list");
+const GradingCreateSchema = actionInput(GRADING_DOMAIN_DEFINITION, "create");
+const GradingDeleteSchema = actionInput(GRADING_DOMAIN_DEFINITION, "delete");
+const FeatureLineGetSchema = toolActionInput("civil3d_feature_line", "get");
+const FeatureLineExportSchema = toolActionInput("civil3d_feature_line", "export_as_polyline");
+const FeatureLineCreateSchema = toolInput("civil3d_feature_line_create");
 
 // ─── civil3d_grading_group_create ─────────────────────────────────────────
 
@@ -185,7 +149,7 @@ describe("civil3d_feature_line_create input schema", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.points[0].z).toBe(0);
+      expect((result.data.points as Array<{ z: number }>)[0].z).toBe(0);
     }
   });
 

@@ -4,8 +4,9 @@
 // (read, CivilExecution.ReadAsync: main thread, no undo step).
 // exportCogoPoints returns the text in the answer (PointText.Format); it writes no file.
 // Rules: transformCogoPoints MOVES COGO points, which are often survey data; the AI may only use it when the user
-// asks (server instructions). The TS side requires approval and refuses to move every point unless allPoints is set;
-// this handler itself moves every point when neither pointNumbers nor groupName is given. Listing is in PointCommands.
+// asks (server instructions). The TS side requires approval; both it and this handler refuse to move every point
+// unless allPoints: true is sent, and a scale or rotation needs its base point (baseX/baseY). Point numbers must be
+// whole numbers of 1 or more (JsonRpcProtocol.PositiveIntegers). Listing is in PointCommands.
 // Uses the typed PointGroup / StandardPointGroupQuery API; no reflection, no file access.
 using System.Text;
 using System.Text.Json.Nodes;
@@ -122,13 +123,14 @@ public static class PointGroupCommands
   /// exportCogoPoints (read-only): the points as text, one line each in <c>format</c> (pnezd default, penz, xyzd, xyz,
   /// csv; PointText.Format) joined by <c>delimiter</c> (default ","). Optional filters: <c>groupName</c> and
   /// <c>pointNumbers</c>; both given means points in both. Returns format, exportedCount, data (the text) and units.
-  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and CIVIL3D.INVALID_INPUT for an unknown format.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and CIVIL3D.INVALID_INPUT for an unknown format or a point
+  /// number that isn't a whole number of 1 or more (JsonRpcProtocol.PositiveIntegers).
   /// </summary>
   public static Task<object?> ExportCogoPointsAsync(JsonObject? parameters)
   {
     var format = PluginRuntime.GetOptionalString(parameters, "format") ?? "pnezd";
     var groupName = PluginRuntime.GetOptionalString(parameters, "groupName");
-    var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
+    var pointNumbers = JsonRpcProtocol.PositiveIntegers(PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray, "pointNumbers");
     var delimiter = PluginRuntime.GetOptionalString(parameters, "delimiter") ?? ",";
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -141,9 +143,9 @@ public static class PointGroupCommands
         allowedNumbers = new HashSet<uint>(group.GetPointNumbers());
       }
 
-      if (numbersNode != null && numbersNode.Count > 0)
+      if (pointNumbers.Count > 0)
       {
-        var explicit_ = new HashSet<uint>(numbersNode.Select(n => (uint)(n?.GetValue<int>() ?? 0)).Where(n => n > 0));
+        var explicit_ = new HashSet<uint>(pointNumbers);
         allowedNumbers = allowedNumbers == null ? explicit_ : new HashSet<uint>(allowedNumbers.Intersect(explicit_));
       }
 
@@ -179,29 +181,58 @@ public static class PointGroupCommands
 
   /// <summary>
   /// transformCogoPoints (MOVES points; changes the drawing, one undo step): for the points in <c>pointNumbers</c>,
-  /// else in point group <c>groupName</c>, else EVERY point of the drawing, scales X and Y by <c>scaleFactor</c>
-  /// (default 1), rotates by <c>rotateRadians</c> (default 0), both about the drawing origin (0,0), then adds
-  /// <c>translateX/Y/Z</c> (default 0). Elevations are only translated. Returns transformedCount and the values used.
-  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and CIVIL3D.API_ERROR when Civil 3D won't move a point (the
-  /// whole write is then not committed).
+  /// else in point group <c>groupName</c>, else, only when <c>allPoints</c> is true, EVERY point of the drawing: scales
+  /// X and Y by <c>scaleFactor</c> (default 1, must be above 0) and rotates by <c>rotateRadians</c> (default 0), both
+  /// about the base point <c>baseX</c>/<c>baseY</c>, then adds <c>translateX/Y/Z</c> (default 0). Elevations are only
+  /// translated. The base point is required whenever there is a scale or rotation (0,0 is only used when sent as
+  /// such: about the origin a state-plane job flies miles away). Returns transformedCount, notFound (listed numbers
+  /// the drawing doesn't have) and the values used. Throws CIVIL3D.INVALID_INPUT with no selection and no allPoints,
+  /// for a missing base point, a scale of 0 or less, or a bad point number; CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// group; CIVIL3D.API_ERROR when Civil 3D won't move a point (the whole write is then not committed).
   /// </summary>
   public static Task<object?> TransformCogoPointsAsync(JsonObject? parameters)
   {
-    var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
+    var pointNumbers = JsonRpcProtocol.PositiveIntegers(PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray, "pointNumbers");
     var translateX = PluginRuntime.GetOptionalDouble(parameters, "translateX") ?? 0;
     var translateY = PluginRuntime.GetOptionalDouble(parameters, "translateY") ?? 0;
     var translateZ = PluginRuntime.GetOptionalDouble(parameters, "translateZ") ?? 0;
     var rotateRadians = PluginRuntime.GetOptionalDouble(parameters, "rotateRadians") ?? 0;
     var scaleFactor = PluginRuntime.GetOptionalDouble(parameters, "scaleFactor") ?? 1.0;
     var groupName = PluginRuntime.GetOptionalString(parameters, "groupName");
+    var allPoints = PluginRuntime.GetOptionalBool(parameters, "allPoints") ?? false;
+    var baseX = PluginRuntime.GetOptionalDouble(parameters, "baseX");
+    var baseY = PluginRuntime.GetOptionalDouble(parameters, "baseY");
+
+    // The selection is checked here too, not only in Node: a call that names no points must not move all the survey data.
+    if (pointNumbers.Count == 0 && string.IsNullOrWhiteSpace(groupName) && !allPoints)
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        "Name the points to move (pointNumbers or groupName), or send allPoints: true to move every point in the drawing. Nothing was moved.");
+    }
+
+    if (!(scaleFactor > 0) || double.IsInfinity(scaleFactor))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"scaleFactor must be a number above 0, not {scaleFactor}. Nothing was moved.");
+    }
+
+    if ((scaleFactor != 1.0 || rotateRadians != 0) && (!baseX.HasValue || !baseY.HasValue))
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        "A scale or rotation needs the point it turns about: send baseX and baseY (drawing coordinates; 0 and 0 only if the origin is really meant). Nothing was moved.");
+    }
+
+    var pivotX = baseX ?? 0;
+    var pivotY = baseY ?? 0;
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       HashSet<uint>? targetNumbers = null;
 
-      if (numbersNode != null && numbersNode.Count > 0)
+      if (pointNumbers.Count > 0)
       {
-        targetNumbers = new HashSet<uint>(numbersNode.Select(n => (uint)(n?.GetValue<int>() ?? 0)).Where(n => n > 0));
+        targetNumbers = new HashSet<uint>(pointNumbers);
       }
       else if (!string.IsNullOrWhiteSpace(groupName))
       {
@@ -210,6 +241,7 @@ public static class PointGroupCommands
       }
 
       var transformedCount = 0;
+      var moved = new HashSet<uint>();
       var sinRot = Math.Sin(rotateRadians);
       var cosRot = Math.Cos(rotateRadians);
 
@@ -221,40 +253,29 @@ public static class PointGroupCommands
         var writablePoint = transaction.GetObject(objectId, OpenMode.ForWrite) as CogoPoint;
         if (writablePoint == null) continue;
 
-        var x = writablePoint.Location.X;
-        var y = writablePoint.Location.Y;
-        var z = writablePoint.Location.Z;
-
-        // Scale around origin
-        x *= scaleFactor;
-        y *= scaleFactor;
-
-        // Rotate around origin
-        if (rotateRadians != 0)
-        {
-          var rx = x * cosRot - y * sinRot;
-          var ry = x * sinRot + y * cosRot;
-          x = rx;
-          y = ry;
-        }
-
-        // Translate
-        x += translateX;
-        y += translateY;
-        z += translateZ;
+        // Scale and rotate about the base point, then translate.
+        var dx = (writablePoint.Location.X - pivotX) * scaleFactor;
+        var dy = (writablePoint.Location.Y - pivotY) * scaleFactor;
+        var x = pivotX + dx * cosRot - dy * sinRot + translateX;
+        var y = pivotY + dx * sinRot + dy * cosRot + translateY;
+        var z = writablePoint.Location.Z + translateZ;
 
         SetPointCoordinate(writablePoint, x, y, z);
+        moved.Add(writablePoint.PointNumber);
         transformedCount++;
       }
 
       return new Dictionary<string, object?>
       {
         ["transformedCount"] = transformedCount,
+        ["notFound"] = pointNumbers.Where(number => !moved.Contains(number)).Distinct().ToList(),
         ["translateX"] = translateX,
         ["translateY"] = translateY,
         ["translateZ"] = translateZ,
         ["rotateRadians"] = rotateRadians,
         ["scaleFactor"] = scaleFactor,
+        ["baseX"] = baseX,
+        ["baseY"] = baseY,
       };
     });
   }

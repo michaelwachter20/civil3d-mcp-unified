@@ -64,7 +64,8 @@ public static class CoordinateSystemCommands
         ["linearUnits"] = CivilObjectUtils.LinearUnits(database),
         ["description"] = description,
         ["epsgCode"] = epsgCode,
-        ["centralMeridian"] = Parameter(parameters, "natural origin") ?? Parameter(parameters, "central meridian"),
+        // A longitude parameter only: "natural origin" alone also matched "Latitude of natural origin".
+        ["centralMeridian"] = CoordinateParameterMatch.CentralMeridian(parameters),
         ["falseEasting"] = Parameter(parameters, "false easting"),
         ["falseNorthing"] = Parameter(parameters, "false northing"),
         ["scaleFactor"] = Parameter(parameters, "scale"),
@@ -137,8 +138,9 @@ public static class CoordinateSystemCommands
   // Helpers
   // -------------------------------------------------------------------------
 
-  /// <summary>The drawing's coordinate system code, or null. A drawing with none answers ".", not an empty string.</summary>
-  private static string? DrawingCode(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc)
+  /// <summary>The drawing's coordinate system code, or null. A drawing with none answers ".", not an empty string.
+  /// Also used by DrawingCommands (getDrawingInfo), so both say "none" the same way.</summary>
+  internal static string? DrawingCode(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc)
   {
     var code = civilDoc.Settings.DrawingSettings.UnitZoneSettings.CoordinateSystemCode;
     return string.IsNullOrWhiteSpace(code) || code == "." ? null : code;

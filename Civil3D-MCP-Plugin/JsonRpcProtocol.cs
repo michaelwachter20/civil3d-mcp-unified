@@ -1,8 +1,10 @@
-// JSON-RPC 2.0 response serialization for the plugin, and the domain-code to numeric-code table.
+// JSON-RPC 2.0 response serialization for the plugin, the domain-code to numeric-code table, and one shared
+// parameter reader (PositiveIntegers, for point numbers).
 // Serves no JSON-RPC method: PluginRuntime.HandleRawRequestAsync and RpcTcpServer use it to write every answer that
 // goes back to the TypeScript server (src/utils/SocketClient.ts turns errors into Civil3DRpcError). Results are
 // camelCase JSON; errors carry the number in error.code and the CIVIL3D.* domain code in error.data.code
-// (tests/security_boundary.test.ts checks those strings). Pure serialization: no drawing, no files.
+// (tests/security_boundary.test.ts checks those strings). Pure serialization and parsing: no drawing, no files; also
+// compiled into tests/FileBoundaryHarness.
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -49,8 +51,9 @@ internal static class JsonRpcProtocol
   }
 
   /// <summary>
-  /// The JSON-RPC error number for a CIVIL3D.* domain code; codes not listed (e.g. CIVIL3D.INVALID_CONFIGURATION) get
-  /// the generic -32000. CIVIL3D.INTERNAL_ERROR's -32603 is written directly by PluginRuntime, not looked up here.
+  /// The JSON-RPC error number for a CIVIL3D.* domain code; codes not listed (e.g. CIVIL3D.USER_DECLINED) get the
+  /// generic -32000. CIVIL3D.INTERNAL_ERROR maps to JSON-RPC's own -32603 (PluginRuntime still writes that number
+  /// directly for an unexpected exception; both must stay the same).
   /// </summary>
   public static int NumericErrorCode(string domainCode) => domainCode switch
   {
@@ -58,6 +61,7 @@ internal static class JsonRpcProtocol
     "CIVIL3D.INVALID_REQUEST" => -32600,
     "CIVIL3D.METHOD_NOT_FOUND" => -32601,
     "CIVIL3D.INVALID_INPUT" => -32602,
+    "CIVIL3D.INTERNAL_ERROR" => -32603,
     "CIVIL3D.NO_DRAWING" or "CIVIL3D.UNAVAILABLE" => -32001,
     "CIVIL3D.OBJECT_NOT_FOUND" => -32004,
     "CIVIL3D.TIMEOUT" => -32008,
@@ -75,8 +79,46 @@ internal static class JsonRpcProtocol
     "CIVIL3D.COMPILATION_ERROR" => -32053,
     "CIVIL3D.SCRIPT_ERROR" => -32054,
     "CIVIL3D.SANDBOX_VIOLATION" => -32045,
+    "CIVIL3D.INVALID_CONFIGURATION" => -32046,
     _ => -32000,
   };
+
+  /// <summary>
+  /// A request's array of whole positive numbers (COGO point numbers), in order; empty when <paramref name="array"/> is
+  /// null. Anything else in it (a fraction such as 12.5, 0, a negative, text, null) is CIVIL3D.INVALID_INPUT naming
+  /// <paramref name="parameterName"/> and the bad item, never silently dropped or truncated: a point number that was
+  /// read wrong would act on another point.
+  /// </summary>
+  public static List<uint> PositiveIntegers(JsonArray? array, string parameterName)
+  {
+    var numbers = new List<uint>();
+    if (array == null)
+    {
+      return numbers;
+    }
+
+    for (var index = 0; index < array.Count; index++)
+    {
+      var item = array[index];
+      // Read through the JSON text, so a number built in code (JsonValue of an int) reads the same as one parsed.
+      if (item is JsonValue value
+          && value.GetValueKind() == JsonValueKind.Number
+          && double.TryParse(value.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number)
+          && number >= 1
+          && number <= uint.MaxValue
+          && number == Math.Floor(number))
+      {
+        numbers.Add((uint)number);
+        continue;
+      }
+
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        $"{parameterName}[{index}] is {item?.ToJsonString() ?? "null"}: point numbers are whole numbers of 1 or more. Send them as integers, e.g. [101, 102].");
+    }
+
+    return numbers;
+  }
 
   /// <summary>camelCase property names, compact output.</summary>
   private static readonly JsonSerializerOptions SerializerOptions = new()

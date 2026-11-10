@@ -2,12 +2,12 @@
 
 Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 
-- Catalog entries: 215
+- Catalog entries: 207
 - Domains: 30
 
 | Tool | Domain | Operations | Plugin methods | Safe retry |
 |---|---|---|---|---|
-| `civil3d_alignment` | alignment | list, get, station_to_point, point_to_station, create, delete, report, add_tangent, add_spiral, delete_entity, set_station_equation, get_station_offset, offset_create, widen_transition | listAlignments, getAlignment, alignmentStationToPoint, alignmentPointToStation, createAlignment, deleteAlignment, alignmentSampleStations, alignmentAddTangent, alignmentAddSpiral, alignmentDeleteEntity, alignmentSetStationEquation, alignmentGetStationOffset, alignmentOffsetCreate, alignmentWidenTransition | no |
+| `civil3d_alignment` | alignment | list, get, station_to_point, point_to_station, create, delete, report, add_tangent, add_curve, add_spiral, delete_entity, set_station_equation, get_station_offset, offset_create, widen_transition | listAlignments, getAlignment, alignmentStationToPoint, alignmentPointToStation, createAlignment, deleteAlignment, alignmentSampleStations, alignmentAddTangent, alignmentAddCurve, alignmentAddSpiral, alignmentDeleteEntity, alignmentSetStationEquation, alignmentGetStationOffset, alignmentOffsetCreate, alignmentWidenTransition | no |
 | `civil3d_alignment_add_spiral` | alignment | — | alignmentAddSpiral | no |
 | `civil3d_alignment_add_tangent` | alignment | — | alignmentAddTangent | no |
 | `civil3d_alignment_delete_entity` | alignment | — | alignmentDeleteEntity | no |
@@ -19,7 +19,7 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `civil3d_intersection` | alignment | list, get | listIntersections, getIntersection | yes |
 | `civil3d_intersection_get` | alignment | — | getIntersection | yes |
 | `civil3d_intersection_list` | alignment | — | listIntersections | yes |
-| `civil3d_superelevation` | alignment | get, set, set_station, report | getSuperelevation, setSuperelevation, setSuperelevationStation, generateSuperelevationReport | no |
+| `civil3d_superelevation` | alignment | get, set, set_station, design_check, report | getSuperelevation, setSuperelevation, setSuperelevationStation, checkSuperelevationDesign, generateSuperelevationReport | no |
 | `civil3d_superelevation_design_check` | alignment | — | checkSuperelevationDesign | yes |
 | `civil3d_superelevation_get` | alignment | — | getSuperelevation | yes |
 | `civil3d_superelevation_report` | alignment | — | generateSuperelevationReport | no |
@@ -60,18 +60,9 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `create_line_segment` | geometry | — | createLineSegment | no |
 | `civil3d_feature_line` | grading | list, get, export_as_polyline | listFeatureLines, getFeatureLine, exportFeatureLineAsPolyline | no |
 | `civil3d_feature_line_create` | grading | — | createFeatureLine | no |
-| `civil3d_grading` | grading | group_list, group_get, group_create, group_delete, group_volume, group_surface_create, list, get, create, delete, criteria_list, feature_line_list, feature_line_get, feature_line_export_as_polyline, feature_line_create | listGradingGroups, getGradingGroup, createGradingGroup, deleteGradingGroup, getGradingGroupVolume, createSurfaceFromGradingGroup, listGradings, getGrading, createGrading, deleteGrading, listGradingCriteria, listFeatureLines, getFeatureLine, exportFeatureLineAsPolyline, createFeatureLine | no |
-| `civil3d_grading_create` | grading | — | createGrading | no |
+| `civil3d_grading` | grading | group_list, criteria_list, feature_line_list, feature_line_get, feature_line_export_as_polyline, feature_line_create | listGradingGroups, listGradingCriteria, listFeatureLines, getFeatureLine, exportFeatureLineAsPolyline, createFeatureLine | no |
 | `civil3d_grading_criteria_list` | grading | — | listGradingCriteria | yes |
-| `civil3d_grading_delete` | grading | — | deleteGrading | no |
-| `civil3d_grading_get` | grading | — | getGrading | yes |
-| `civil3d_grading_group_create` | grading | — | createGradingGroup | no |
-| `civil3d_grading_group_delete` | grading | — | deleteGradingGroup | no |
-| `civil3d_grading_group_get` | grading | — | getGradingGroup | yes |
 | `civil3d_grading_group_list` | grading | — | listGradingGroups | yes |
-| `civil3d_grading_group_surface_create` | grading | — | createSurfaceFromGradingGroup | no |
-| `civil3d_grading_group_volume` | grading | — | getGradingGroupVolume | yes |
-| `civil3d_grading_list` | grading | — | listGradings | yes |
 | `civil3d_help` | help | search, search_videos, get_topic, status, reindex | — | yes |
 | `civil3d_catchment` | hydrology | list_catchment_groups, get_catchment_group, list_catchments, get_catchment_properties, set_catchment_properties, copy_catchment_to_group, get_catchment_flow_path, get_catchment_boundary | listCatchmentGroups, getCatchmentGroup, listCatchments, getCatchmentProperties, setCatchmentProperties, copyCatchmentToGroup, getCatchmentFlowPath, getCatchmentBoundary | no |
 | `civil3d_hydrology` | hydrology | list_capabilities, trace_flow_path, find_low_point, estimate_runoff, delineate_watershed, calculate_catchment_area, list_catchment_groups, get_catchment_group, list_catchments, get_catchment_properties, set_catchment_properties, copy_catchment_to_group, get_catchment_flow_path, get_catchment_boundary, list_tc_methods, calculate_tc, generate_hydrograph, list_ssa_capabilities, export_stm, import_stm, open_storm_sanitary_analysis, watershed_runoff_workflow, runoff_detention_workflow, runoff_pipe_workflow | listHydrologyCapabilities, traceHydrologyFlowPath, findHydrologyLowPoint, estimateHydrologyRunoff, delineateWatershed, calculateCatchmentArea, listCatchmentGroups, getCatchmentGroup, listCatchments, getCatchmentProperties, setCatchmentProperties, copyCatchmentToGroup, getCatchmentFlowPath, getCatchmentBoundary, listTcMethods, calculateTimeOfConcentration, generateHydrograph, listSsaCapabilities, exportStm, importStm, openStormSanitaryAnalysis, watershedRunoffWorkflow, runoffDetentionWorkflow, runoffPipeWorkflow | no |
@@ -154,14 +145,16 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `civil3d_qc_check_surface` | qc | — | qcCheckSurface | yes |
 | `civil3d_qc_report_generate` | qc | — | qcReportGenerate | no |
 | `civil3d_qty_alignment_lengths` | quantity_takeoff | — | qtyAlignmentLengths | yes |
+| `civil3d_qty_corridor_volumes` | quantity_takeoff | — | qtyCorridorVolumes | yes |
 | `civil3d_qty_earthwork_summary` | quantity_takeoff | — | qtyEarthworkSummary | yes |
 | `civil3d_qty_export_to_csv` | quantity_takeoff | — | qtyExportToCsv | no |
+| `civil3d_qty_material_lists` | quantity_takeoff | — | qtyMaterialListGet | yes |
 | `civil3d_qty_parcel_areas` | quantity_takeoff | — | qtyParcelAreas | yes |
 | `civil3d_qty_pipe_network_lengths` | quantity_takeoff | — | qtyPipeNetworkLengths | yes |
 | `civil3d_qty_point_count_by_group` | quantity_takeoff | — | qtyPointCountByGroup | yes |
 | `civil3d_qty_pressure_network_lengths` | quantity_takeoff | — | qtyPressureNetworkLengths | yes |
 | `civil3d_qty_surface_volume` | quantity_takeoff | — | qtySurfaceVolume | yes |
-| `civil3d_quantity_takeoff` | quantity_takeoff | surface_volume, pipe_network_lengths, pressure_network_lengths, parcel_areas, alignment_lengths, point_count_by_group, export_to_csv, earthwork_summary | qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths, qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv, qtyEarthworkSummary | no |
+| `civil3d_quantity_takeoff` | quantity_takeoff | surface_volume, pipe_network_lengths, pressure_network_lengths, parcel_areas, alignment_lengths, point_count_by_group, export_to_csv, earthwork_summary, corridor_volumes, material_lists | qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths, qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv, qtyEarthworkSummary, qtyCorridorVolumes, qtyMaterialListGet | no |
 | `acad_command` | scripting | — | runAcadCommand | no |
 | `civil3d_execute` | scripting | — | executeCode | no |
 | `civil3d_memory` | scripting | memory_record, memory_search, memory_remove | — | yes |
@@ -209,12 +202,11 @@ Generated from the runtime manifest for civil3d-mcp 2.4.1. Do not edit by hand.
 | `civil3d_survey_figure_get` | survey | — | getSurveyFigure | yes |
 | `civil3d_survey_figure_list` | survey | — | listSurveyFigures | yes |
 | `civil3d_survey_observation_list` | survey | — | listSurveyObservations | yes |
-| `civil3d_workflow` | workflow | corridor_qc_report, grading_surface_volume, surface_comparison_report, data_shortcut_publish_sync, data_shortcut_reference_sync, project_startup, project_reference_setup, drawing_readiness_audit, feature_line_to_grading, pipe_network_design, plan_production_publish, qc_fix_and_verify | corridorQcReportWorkflow, calculateSurfaceVolume, surfaceComparisonReportWorkflow, dataShortcutPublishSyncWorkflow, dataShortcutReferenceSyncWorkflow, projectStartupWorkflow, projectReferenceSetupWorkflow, drawingReadinessAuditWorkflow, featureLineToGradingWorkflow, getPipeNetwork, listPipePartsCatalog, resizePipeInNetwork, analyzePipeNetworkHydraulics, planProductionPublishWorkflow, qcFixAndVerifyWorkflow | no |
+| `civil3d_workflow` | workflow | corridor_qc_report, grading_surface_volume, surface_comparison_report, data_shortcut_publish_sync, data_shortcut_reference_sync, project_startup, project_reference_setup, drawing_readiness_audit, pipe_network_design, plan_production_publish, qc_fix_and_verify | corridorQcReportWorkflow, calculateSurfaceVolume, surfaceComparisonReportWorkflow, dataShortcutPublishSyncWorkflow, dataShortcutReferenceSyncWorkflow, projectStartupWorkflow, projectReferenceSetupWorkflow, drawingReadinessAuditWorkflow, getPipeNetwork, listPipePartsCatalog, resizePipeInNetwork, analyzePipeNetworkHydraulics, planProductionPublishWorkflow, qcFixAndVerifyWorkflow | no |
 | `civil3d_workflow_corridor_qc_report` | workflow | — | corridorQcReportWorkflow | no |
 | `civil3d_workflow_data_shortcut_publish_sync` | workflow | — | dataShortcutPublishSyncWorkflow | no |
 | `civil3d_workflow_data_shortcut_reference_sync` | workflow | — | dataShortcutReferenceSyncWorkflow | no |
 | `civil3d_workflow_drawing_readiness_audit` | workflow | — | drawingReadinessAuditWorkflow | yes |
-| `civil3d_workflow_feature_line_to_grading` | workflow | — | featureLineToGradingWorkflow | no |
 | `civil3d_workflow_grading_surface_volume` | workflow | — | calculateSurfaceVolume | yes |
 | `civil3d_workflow_pipe_network_design` | workflow | — | getPipeNetwork, listPipePartsCatalog, resizePipeInNetwork, analyzePipeNetworkHydraulics | no |
 | `civil3d_workflow_plan_production_publish` | workflow | — | planProductionPublishWorkflow | no |

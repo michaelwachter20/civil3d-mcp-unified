@@ -171,7 +171,10 @@ describe("domain manifest migration", () => {
 
     expect(grading).toBeDefined();
     expect(grading!.operations).toContain("group_list");
-    expect(grading!.operations).toContain("group_create");
+    // Civil 3D's API doesn't reach grading groups or gradings: those actions are unsupported and offered by no tool.
+    for (const unsupported of ["group_get", "group_create", "group_delete", "group_volume", "group_surface_create", "list", "get", "create", "delete"]) {
+      expect(grading!.operations).not.toContain(unsupported);
+    }
     expect(grading!.operations).toContain("criteria_list");
     expect(grading!.operations).toContain("feature_line_list");
     expect(grading!.operations).toContain("feature_line_create");
@@ -181,8 +184,8 @@ describe("domain manifest migration", () => {
     expect(featureLine!.operations).toContain("list");
     expect(featureLine!.operations).toContain("export_as_polyline");
 
-    expect(gradingGroupCreate).toBeDefined();
-    expect(gradingCreate).toBeDefined();
+    expect(gradingGroupCreate).toBeUndefined();
+    expect(gradingCreate).toBeUndefined();
     expect(featureLineCreate).toBeDefined();
   });
 
@@ -282,7 +285,7 @@ describe("domain manifest migration", () => {
     expect(workflow!.operations).toContain("project_startup");
     expect(workflow!.operations).toContain("project_reference_setup");
     expect(workflow!.operations).toContain("drawing_readiness_audit");
-    expect(workflow!.operations).toContain("feature_line_to_grading");
+    expect(workflow!.operations).not.toContain("feature_line_to_grading");
     expect(workflow!.operations).toContain("pipe_network_design");
     expect(workflow!.operations).toContain("plan_production_publish");
     expect(workflow!.operations).toContain("qc_fix_and_verify");
@@ -297,7 +300,7 @@ describe("domain manifest migration", () => {
     expect(projectStartup).toBeDefined();
     expect(projectReferenceSetup).toBeDefined();
     expect(drawingReadinessAudit).toBeDefined();
-    expect(featureLineToGrading).toBeDefined();
+    expect(featureLineToGrading).toBeUndefined();
     expect(pipeNetworkDesign).toBeDefined();
     expect(planProductionPublish).toBeDefined();
     expect(qcFixAndVerify).toBeDefined();
@@ -407,12 +410,13 @@ describe("domain manifest migration", () => {
     const cost = GENERATED_TOOL_CATALOG_ENTRIES.find((e) => e.toolName === "civil3d_cost_estimation");
 
     expect(quantity).toBeDefined();
-    expect(quantity!.operations).not.toContain("corridor_volumes");
+    expect(quantity!.operations).toContain("corridor_volumes");
+    expect(quantity!.operations).toContain("material_lists");
     expect(quantity!.operations).toContain("earthwork_summary");
     expect(quantity!.safeForRetry).toBe(false);
 
     expect(superelevation).toBeDefined();
-    expect(superelevation!.operations).not.toContain("design_check");
+    expect(superelevation!.operations).toContain("design_check");
     expect(GENERATED_TOOL_CATALOG_ENTRIES.find((e) => e.toolName === "civil3d_superelevation_design_check")).toBeDefined();
     expect(intersection).toBeDefined();
     expect(intersection!.operations).not.toContain("create");
@@ -522,7 +526,7 @@ describe("domain manifest migration", () => {
     expect(point!.operations).toContain("group_create");
     expect(point!.operations).toContain("transform");
     expect(grading).toBeDefined();
-    expect(grading!.operations).toContain("group_create");
+    expect(grading!.operations).not.toContain("group_create");
     expect(grading!.operations).toContain("feature_line_create");
     expect(parcel).toBeDefined();
     expect(parcel!.operations).toContain("create");

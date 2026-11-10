@@ -1,7 +1,8 @@
 /**
  * Reads the drawing context civil3d_orchestrate plans against, in one plugin round trip.
- * Used by src/tools/civil3d_orchestrate.ts (every orchestrate call, planning included, so it needs Civil 3D with the
- * AI connection on). Calls the plugin method `getProjectContext` (DrawingCommands.GetProjectContextAsync), a
+ * Used by src/tools/civil3d_orchestrate.ts for a route whose tool works on the active drawing (a plan for one that
+ * doesn't, such as a knowledge tool, skips it; a plan whose read fails goes on without it). Calls the plugin method
+ * `getProjectContext` (DrawingCommands.GetProjectContextAsync), a
  * read-only request that adds no undo step. The result feeds SelectionResolver and WorkflowPlanner.
  * Note: "project" here means the open drawing, not the suite's job database (that is civil3d_project_notes).
  */

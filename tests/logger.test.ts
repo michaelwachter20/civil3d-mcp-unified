@@ -1,5 +1,5 @@
-// Guards src/utils/logger.ts: writes to stderr (stdout is the MCP channel), honours CIVIL3D_LOG_LEVEL, timestamps in ISO
-// form, and always logs errors. Pure unit test.
+// Guards src/utils/logger.ts: writes to stderr (stdout is the MCP channel), honours CIVIL3D_LOG_LEVEL (an unknown value
+// falls back to info), timestamps in ISO form, and always logs errors. Pure unit test.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -47,6 +47,17 @@ describe("Logger", () => {
     const msg = (console.error as any).mock.calls[0][0];
     // ISO 8601 pattern
     expect(msg).toMatch(/\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+
+  it("falls back to info with a warning for an unknown CIVIL3D_LOG_LEVEL instead of logging nothing", async () => {
+    const { resolveLogLevel } = await import("../src/utils/logger.js");
+    expect(resolveLogLevel(undefined)).toEqual({ level: "info" });
+    expect(resolveLogLevel("")).toEqual({ level: "info" });
+    expect(resolveLogLevel(" WARN ")).toEqual({ level: "warn" });
+    expect(resolveLogLevel("debug")).toEqual({ level: "debug" });
+    const typo = resolveLogLevel("verbose");
+    expect(typo.level).toBe("info");
+    expect(typo.warning).toContain("verbose");
   });
 
   it("should log errors regardless of level", async () => {

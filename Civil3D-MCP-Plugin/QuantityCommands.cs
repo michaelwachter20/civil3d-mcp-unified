@@ -3,10 +3,12 @@
 // JSON-RPC methods (CommandDispatcher.cs): qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths,
 // qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv and qtyEarthworkSummary serve
 // civil3d_quantity_takeoff (src/tools/domains/quantityTakeoffDomain.ts). qtyCorridorVolumes and qtyMaterialListGet are
-// dispatched but no TS domain calls them; they always throw CIVIL3D.API_ERROR.
-// Nothing here changes the drawing. Reads go through CivilExecution.ReadAsync (main thread, no undo step). The two
-// volume methods use MeasureAsync: a temporary TinVolumeSurface needs a document lock, the transaction is never
-// committed, and the lock leaves one blank undo step. qtyExportToCsv writes its .csv only through FileBoundary.
+// dispatched but no TS domain calls them yet; they read the QTO material lists of the sample-line groups on a
+// corridor's alignments (CostEstimationCommands reuses CorridorMaterialLists for corridor pay items).
+// Nothing here changes the drawing. Reads go through CivilExecution.ReadAsync (main thread, no undo step). The volume
+// methods (and qtyExportToCsv with surface volumes) use MeasureAsync: a temporary TinVolumeSurface needs a document
+// lock, the transaction is never committed, and the lock leaves one blank undo step. qtyExportToCsv writes its .csv
+// only through FileBoundary, quoted by DesignMath.
 // A value the API can't give throws (GetRequiredEngineeringDouble) rather than being reported as 0.
 using System.Collections;
 using System.Text;
@@ -30,16 +32,110 @@ public static class QuantityCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Not supported: corridor material quantities live in a sample-line group's QTO material lists, not on the
-  /// corridor. Reads <c>name</c> (required, CIVIL3D.INVALID_INPUT without it) and then always throws CIVIL3D.API_ERROR,
-  /// so no made-up zero quantities are returned. No TS domain calls it.
+  /// Corridor quantities from Civil 3D's own QTO: corridor material quantities live in the QTO material lists of the
+  /// sample-line groups on the corridor's baseline alignments (Compute Materials), not on the corridor. For corridor
+  /// <c>name</c> (required) it returns, per material list, the total cut, fill and usable volume at the last sample
+  /// line (SampleLineGroup.GetTotalVolumeResultDataForMaterialList), in the drawing's cubic units. A list Civil 3D
+  /// can't compute is reported with its <c>error</c>, never as zero; with no material list at all, <c>materialLists</c>
+  /// is empty and <c>note</c> says to run Compute Materials. Read-only. CIVIL3D.INVALID_INPUT without <c>name</c>,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor. No TS domain calls it yet.
   /// </summary>
   public static Task<object?> QtyCorridorVolumesAsync(JsonObject? parameters)
   {
-    _ = PluginRuntime.GetRequiredString(parameters, "name");
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Corridor material quantities are exposed through SampleLineGroup QTO material lists, not Corridor baseline properties. A sample-line group and material-list identifier are required; no zero quantities were returned.");
+    var name = PluginRuntime.GetRequiredString(parameters, "name");
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var lists = CorridorMaterialLists(civilDoc, transaction, name, withVolumes: true);
+      return new Dictionary<string, object?>
+      {
+        ["corridorName"] = name,
+        ["materialLists"] = lists.Select(list => list.ToDictionary()).ToList(),
+        ["units"] = CivilObjectUtils.VolumeUnits(database),
+        ["note"] = lists.Count == 0
+          ? NoMaterialListNote(name)
+          : "Totals are Civil 3D's QTO results at the last sample line of each sample-line group, as the Total Volume table shows them.",
+      };
+    });
+  }
+
+  /// <summary>One QTO material list of a sample-line group on a corridor's alignment, with its totals when asked
+  /// (null volumes and an <c>Error</c> when Civil 3D couldn't compute them).</summary>
+  internal sealed record MaterialListTotal(
+    string SampleLineGroup, string Alignment, string MaterialList, IReadOnlyList<string> Materials,
+    double? CutVolume, double? FillVolume, double? UsableVolume, int SampleLineCount, string? Error)
+  {
+    /// <summary>The list as an answer row.</summary>
+    public Dictionary<string, object?> ToDictionary() => new()
+    {
+      ["sampleLineGroup"] = SampleLineGroup,
+      ["alignment"] = Alignment,
+      ["materialList"] = MaterialList,
+      ["materials"] = Materials,
+      ["cutVolume"] = CutVolume,
+      ["fillVolume"] = FillVolume,
+      ["usableVolume"] = UsableVolume,
+      ["sampleLineCount"] = SampleLineCount,
+      ["error"] = Error,
+    };
+  }
+
+  /// <summary>Why a corridor has no material quantities: no QTO material list on its alignments' sample-line groups.</summary>
+  internal static string NoMaterialListNote(string corridorName) =>
+    $"No QTO material list was found on the sample-line groups of corridor '{corridorName}''s baseline alignments. " +
+    "Run Compute Materials in Civil 3D for a sample-line group on that alignment first.";
+
+  /// <summary>
+  /// The QTO material lists of every sample-line group on <paramref name="corridorName"/>'s baseline alignments, with
+  /// their total volumes when <paramref name="withVolumes"/>. Typed API only, read-only; a list whose totals Civil 3D
+  /// can't compute keeps its <c>Error</c>. CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor.
+  /// </summary>
+  internal static List<MaterialListTotal> CorridorMaterialLists(CivilDocument civilDoc, Transaction transaction, string corridorName, bool withVolumes)
+  {
+    var corridor = CivilObjectUtils.FindCorridorByName(civilDoc, transaction, corridorName, OpenMode.ForRead);
+    var results = new List<MaterialListTotal>();
+    var alignmentIds = corridor.Baselines.Select(baseline => baseline.AlignmentId).Where(id => !id.IsNull).Distinct().ToList();
+    foreach (var alignmentId in alignmentIds)
+    {
+      var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignmentId, OpenMode.ForRead);
+      foreach (ObjectId groupId in alignment.GetSampleLineGroupIds())
+      {
+        var group = CivilObjectUtils.GetRequiredObject<SampleLineGroup>(transaction, groupId, OpenMode.ForRead);
+        foreach (QTOMaterialList list in group.MaterialLists)
+        {
+          var listName = list.Name;
+          var guid = list.Guid;
+          IReadOnlyList<string> materials;
+          try { materials = group.GetMaterialNamesInMapping(guid); }
+          catch (Exception) { materials = Array.Empty<string>(); }
+
+          double? cut = null, fill = null, usable = null;
+          var sampleLines = 0;
+          string? error = null;
+          if (withVolumes)
+          {
+            try
+            {
+              var along = group.GetTotalVolumeResultDataForMaterialList(guid).GetResultsAlongSampleLines();
+              sampleLines = along.Length;
+              // Cumulative along the sample lines, so the last one holds the totals.
+              if (along.Length > 0)
+              {
+                var last = along[^1].VolumeResult;
+                (cut, fill, usable) = (last.CumulativeCutVolume, last.CumulativeFillVolume, last.CumulativeUsableVolume);
+              }
+            }
+            catch (Exception exception) when (exception is not JsonRpcDispatchException)
+            {
+              error = $"Civil 3D couldn't compute this material list's volumes: {exception.Message}";
+            }
+          }
+
+          results.Add(new MaterialListTotal(group.Name, alignment.Name, listName, materials, cut, fill, usable, sampleLines, error));
+        }
+      }
+    }
+
+    return results;
   }
 
   // -------------------------------------------------------------------------
@@ -48,44 +144,92 @@ public static class QuantityCommands
 
   /// <summary>
   /// Exact cut, fill and net volume between <c>baseSurface</c> and <c>comparisonSurface</c> (both required), from a
-  /// temporary TinVolumeSurface. <c>corridorName</c> is optional, echoed back and not used. Doesn't change the drawing
-  /// (MeasureAsync: the temporary surface is never committed). Returns the two names, <c>cutVolume</c>,
-  /// <c>fillVolume</c>, <c>netVolume</c> (unadjusted), <c>net2dArea</c> (always null), <c>units</c> and a <c>note</c>.
-  /// Throws CIVIL3D.INVALID_INPUT for a missing name or for surfaces that are the same, empty or don't overlap, and
-  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
+  /// temporary TinVolumeSurface. With <c>region</c> ([{x, y}, ...], at least 3 corners, closed automatically) the
+  /// temporary surface gets that polygon as its outer boundary, so only the volume inside it is counted.
+  /// <c>corridorName</c> is optional, echoed back and not used. Doesn't change the drawing (MeasureAsync: the
+  /// temporary surface and its boundary are never committed). Returns the two names, <c>region</c> (the corner count
+  /// or null), <c>cutVolume</c>, <c>fillVolume</c>, <c>netVolume</c> (unadjusted), <c>net2dArea</c> (always null),
+  /// <c>units</c> and a <c>note</c>. Throws CIVIL3D.INVALID_INPUT for a missing name, a region that isn't at least
+  /// three {x, y} numbers, or surfaces that are the same, empty or don't overlap, and CIVIL3D.OBJECT_NOT_FOUND for an
+  /// unknown surface.
   /// </summary>
   public static Task<object?> QtySurfaceVolumeAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
     var comparisonSurfaceName = PluginRuntime.GetRequiredString(parameters, "comparisonSurface");
     var corridorName = PluginRuntime.GetOptionalString(parameters, "corridorName");
+    var region = ParseRegion(PluginRuntime.GetParameter(parameters, "region") as JsonNode);
 
     return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
-      var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
-
-      // Before Create: Civil 3D answers a same, empty or non-overlapping pair only with "Fail to create a surface".
-      CivilObjectUtils.RequireDifferentSurfaces(baseSurface, compSurface);
-      var temporaryName = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
-      var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, compSurface.ObjectId);
-      var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
-      var volumeProperties = volumeSurface.GetVolumeProperties();
+      var volumeProperties = MeasureVolume(civilDoc, transaction, baseSurfaceName, comparisonSurfaceName, region, "MCP_TMP_VOLUME");
 
       return new Dictionary<string, object?>
       {
         ["baseSurface"] = baseSurfaceName,
         ["comparisonSurface"] = comparisonSurfaceName,
         ["corridorName"] = corridorName,
+        ["region"] = region?.Count,
         ["cutVolume"] = volumeProperties.UnadjustedCutVolume,
         ["fillVolume"] = volumeProperties.UnadjustedFillVolume,
         ["netVolume"] = volumeProperties.UnadjustedNetVolume,
         ["net2dArea"] = null,
         ["units"] = CivilObjectUtils.VolumeUnits(database),
         ["note"] = "Volumes are exact Civil 3D TinVolumeSurface results. The managed volume-properties API does not expose a net 2D area."
+          + (region == null ? "" : " Only the part inside the region polygon is counted.")
           + (string.IsNullOrWhiteSpace(corridorName) ? "" : " corridorName is not used: this is the volume between the two surfaces."),
       };
     });
+  }
+
+  /// <summary>
+  /// Cut and fill between two named surfaces from a temporary TinVolumeSurface, clipped to <paramref name="region"/>
+  /// (an outer boundary, non-destructive) when given. Only valid inside MeasureAsync's uncommitted transaction.
+  /// CIVIL3D.INVALID_INPUT for a same, empty or non-overlapping pair (checked before Create, which otherwise only says
+  /// "Fail to create a surface"); CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
+  /// </summary>
+  private static VolumeSurfaceProperties MeasureVolume(CivilDocument civilDoc, Transaction transaction,
+    string baseSurfaceName, string comparisonSurfaceName, List<(double X, double Y)>? region, string namePrefix)
+  {
+    var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
+    var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
+    CivilObjectUtils.RequireDifferentSurfaces(baseSurface, compSurface);
+    var volumeSurfaceId = TinVolumeSurface.Create($"{namePrefix}_{Guid.NewGuid():N}", baseSurface.ObjectId, compSurface.ObjectId);
+    var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId,
+      region == null ? OpenMode.ForRead : OpenMode.ForWrite);
+    if (region != null)
+    {
+      var corners = new Autodesk.AutoCAD.Geometry.Point2dCollection();
+      foreach (var (x, y) in region) corners.Add(new Autodesk.AutoCAD.Geometry.Point2d(x, y));
+      if (!corners[0].IsEqualTo(corners[corners.Count - 1])) corners.Add(corners[0]);
+      volumeSurface.BoundariesDefinition.AddBoundaries(corners, 0.1, Autodesk.Civil.SurfaceBoundaryType.Outer, true);
+      volumeSurface.Rebuild();
+    }
+
+    return volumeSurface.GetVolumeProperties();
+  }
+
+  /// <summary>The <c>region</c> polygon ([{x, y}, ...]) as corners, or null when not given. CIVIL3D.INVALID_INPUT for
+  /// anything but an array of at least three objects with numeric x and y.</summary>
+  private static List<(double X, double Y)>? ParseRegion(JsonNode? node)
+  {
+    if (node == null) return null;
+    const string expected = "region must be an array of at least 3 corners like {\"x\": 1000.0, \"y\": 2000.0}.";
+    if (node is not JsonArray array) throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", expected);
+    var corners = new List<(double X, double Y)>();
+    foreach (var item in array)
+    {
+      if (item is not JsonObject corner
+          || corner["x"] is not JsonValue xValue || !xValue.TryGetValue<double>(out var x)
+          || corner["y"] is not JsonValue yValue || !yValue.TryGetValue<double>(out var y))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", expected);
+      }
+
+      corners.Add((x, y));
+    }
+
+    return corners.Count >= 3 ? corners : throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", expected);
   }
 
   // -------------------------------------------------------------------------
@@ -237,8 +381,9 @@ public static class QuantityCommands
   /// <summary>
   /// Area and perimeter of the parcels in every site, or only in <c>siteName</c>, and only those in
   /// <c>parcelNames</c> (a string array) when given; both optional, matched case-insensitively. Read-only. Returns
-  /// <c>parcels</c> (name, area, perimeter, siteName), <c>totalArea</c>, <c>parcelCount</c> and <c>units</c>, which
-  /// is the drawing's linear unit name (areas are in its square). Throws no error codes of its own.
+  /// <c>parcels</c> (name, area, perimeter, siteName), <c>totalArea</c>, <c>parcelCount</c> and <c>units</c>
+  /// (<c>area</c>: the drawing's square unit, e.g. "feet²"; <c>areaUnit</c>: sqft, sqm or "square drawing units";
+  /// <c>length</c>: the linear unit of the perimeters), as listParcels gives them. Throws no error codes of its own.
   /// </summary>
   public static Task<object?> QtyParcelAreasAsync(JsonObject? parameters)
   {
@@ -291,7 +436,13 @@ public static class QuantityCommands
         ["parcels"] = parcelResults,
         ["totalArea"] = totalArea,
         ["parcelCount"] = parcelResults.Count,
-        ["units"] = CivilObjectUtils.LinearUnits(database),
+        // Areas are in the square of the linear unit, perimeters in the linear unit.
+        ["units"] = new Dictionary<string, object?>
+        {
+          ["area"] = $"{CivilObjectUtils.LinearUnits(database)}²",
+          ["areaUnit"] = DesignMath.NativeAreaUnit(CivilObjectUtils.LinearUnits(database)),
+          ["length"] = CivilObjectUtils.LinearUnits(database),
+        },
       };
     });
   }
@@ -424,13 +575,20 @@ public static class QuantityCommands
   /// <summary>
   /// Writes a quantities .csv to <c>outputPath</c> (required) through FileBoundary.WriteAllTextAtomic (inside the
   /// export roots, no overwrite unless <c>overwrite</c>). Each section is its own header row and rows, then a blank
-  /// line: alignments (<c>includeAlignmentLengths</c>, or the older <c>includeAlignments</c>, on by default), surfaces
-  /// (<c>includeSurfaceVolumes</c> or <c>includeSurfaces</c>: elevation range and point count, not volumes),
-  /// <c>includePipeNetworks</c>, <c>includeParcelAreas</c> and <c>includePointGroups</c> (off by default).
-  /// <c>filterNames</c> (optional string array) keeps only objects, networks, parcels or groups with those names.
-  /// Doesn't change the drawing. Returns the canonical <c>outputPath</c>, <c>rowsWritten</c> and
-  /// <c>sectionsIncluded</c>. FileBoundary's codes pass through (CIVIL3D.PATH_NOT_ALLOWED, FILE_TYPE_NOT_ALLOWED,
-  /// CONFLICT, FILE_IO_ERROR); CIVIL3D.API_ERROR when a pipe's length, diameter or slope can't be read.
+  /// line; every field is RFC 4180 quoted when needed and numbers use a dot (DesignMath.CsvLine). Sections:
+  /// alignments (<c>includeAlignmentLengths</c>, or the older <c>includeAlignments</c>, on by default); surface volumes
+  /// (<c>includeSurfaceVolumes</c> with <c>baseSurface</c> and <c>comparisonSurface</c>: cut, fill and net from a
+  /// temporary TIN volume surface, as qtySurfaceVolume); surfaces (<c>includeSurfaces</c>, or
+  /// <c>includeSurfaceVolumes</c> without the two surfaces: elevation range and point count of each surface);
+  /// corridor volumes (<c>includeCorridorVolumes</c> with <c>corridorName</c>: the QTO material-list totals of
+  /// qtyCorridorVolumes); <c>includePipeNetworks</c>, <c>includePressureNetworks</c>, <c>includeParcelAreas</c> and
+  /// <c>includePointGroups</c> (off by default). <c>filterNames</c> (optional string array) keeps only objects,
+  /// networks, parcels or groups with those names. Doesn't change the drawing (a run with surface volumes measures
+  /// under MeasureAsync: never committed, one blank undo step). Returns the canonical <c>outputPath</c>,
+  /// <c>rowsWritten</c>, <c>sectionsIncluded</c> and <c>notes</c> (what was asked for but couldn't be written).
+  /// FileBoundary's codes pass through (CIVIL3D.PATH_NOT_ALLOWED, FILE_TYPE_NOT_ALLOWED, CONFLICT, FILE_IO_ERROR);
+  /// CIVIL3D.API_ERROR when a pipe's length, diameter or slope can't be read; the surface and corridor lookups' own
+  /// codes for unknown names.
   /// </summary>
   public static Task<object?> QtyExportToCsvAsync(JsonObject? parameters)
   {
@@ -439,11 +597,16 @@ public static class QuantityCommands
     // The tool's names first (includeAlignmentLengths, includeSurfaceVolumes); the plugin's own older names still work.
     var includeAlignments = PluginRuntime.GetOptionalBool(parameters, "includeAlignmentLengths")
       ?? PluginRuntime.GetOptionalBool(parameters, "includeAlignments") ?? true;
-    var includeSurfaces = PluginRuntime.GetOptionalBool(parameters, "includeSurfaceVolumes")
-      ?? PluginRuntime.GetOptionalBool(parameters, "includeSurfaces") ?? false;
+    var includeSurfaceVolumes = PluginRuntime.GetOptionalBool(parameters, "includeSurfaceVolumes") ?? false;
+    var includeSurfaces = PluginRuntime.GetOptionalBool(parameters, "includeSurfaces") ?? false;
+    var includeCorridorVolumes = PluginRuntime.GetOptionalBool(parameters, "includeCorridorVolumes") ?? false;
     var includePipeNetworks = PluginRuntime.GetOptionalBool(parameters, "includePipeNetworks") ?? false;
+    var includePressureNetworks = PluginRuntime.GetOptionalBool(parameters, "includePressureNetworks") ?? false;
     var includeParcelAreas = PluginRuntime.GetOptionalBool(parameters, "includeParcelAreas") ?? false;
     var includePointGroups = PluginRuntime.GetOptionalBool(parameters, "includePointGroups") ?? false;
+    var corridorName = PluginRuntime.GetOptionalString(parameters, "corridorName");
+    var baseSurfaceName = PluginRuntime.GetOptionalString(parameters, "baseSurface");
+    var comparisonSurfaceName = PluginRuntime.GetOptionalString(parameters, "comparisonSurface");
     var filterNamesNode = PluginRuntime.GetParameter(parameters, "filterNames") as JsonArray;
     var filterNames = filterNamesNode?
       .Select(n => n?.GetValue<string>())
@@ -451,11 +614,20 @@ public static class QuantityCommands
       .Cast<string>()
       .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    var measureVolumes = includeSurfaceVolumes && !string.IsNullOrWhiteSpace(baseSurfaceName) && !string.IsNullOrWhiteSpace(comparisonSurfaceName);
+    // Without the two surfaces there is no volume to give: the per-surface summary is written instead, as before.
+    includeSurfaces |= includeSurfaceVolumes && !measureVolumes;
+
+    // A volume needs a temporary TIN volume surface, which needs the document lock (MeasureAsync); everything else is a
+    // plain read.
+    Func<Autodesk.AutoCAD.ApplicationServices.Document, CivilDocument, Database, Transaction, object?> export = (doc, civilDoc, database, transaction) =>
     {
       var sb = new StringBuilder();
       var rowsWritten = 0;
       var sectionsIncluded = new List<string>();
+      var notes = new List<string>();
+      var linearUnits = CivilObjectUtils.LinearUnits(database);
+      void Row(params object?[] values) => sb.AppendLine(DesignMath.CsvLine(values));
 
       if (includeAlignments)
       {
@@ -465,10 +637,25 @@ public static class QuantityCommands
         {
           var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignId, OpenMode.ForRead);
           if (filterNames != null && !filterNames.Contains(alignment.Name)) continue;
-          sb.AppendLine($"Alignment,{EscapeCsv(alignment.Name)},{alignment.Length:F3},{alignment.StartingStation:F3},{alignment.EndingStation:F3},{CivilObjectUtils.LinearUnits(database)}");
+          Row("Alignment", alignment.Name, Math.Round(alignment.Length, 3), Math.Round(alignment.StartingStation, 3), Math.Round(alignment.EndingStation, 3), linearUnits);
           rowsWritten++;
         }
         sb.AppendLine();
+      }
+
+      if (measureVolumes)
+      {
+        sectionsIncluded.Add("surfaceVolumes");
+        sb.AppendLine("Section,BaseSurface,ComparisonSurface,Cut,Fill,Net,Units");
+        var volumes = MeasureVolume(civilDoc, transaction, baseSurfaceName!, comparisonSurfaceName!, null, "MCP_TMP_QTY_EXPORT");
+        Row("SurfaceVolume", baseSurfaceName, comparisonSurfaceName, Math.Round(volumes.UnadjustedCutVolume, 3),
+          Math.Round(volumes.UnadjustedFillVolume, 3), Math.Round(volumes.UnadjustedNetVolume, 3), CivilObjectUtils.VolumeUnits(database));
+        rowsWritten++;
+        sb.AppendLine();
+      }
+      else if (includeSurfaceVolumes)
+      {
+        notes.Add("includeSurfaceVolumes needs baseSurface and comparisonSurface for volumes; each surface's elevation range and point count were written instead.");
       }
 
       if (includeSurfaces)
@@ -479,11 +666,42 @@ public static class QuantityCommands
         {
           var surface = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, surfId, OpenMode.ForRead);
           if (filterNames != null && !filterNames.Contains(surface.Name)) continue;
-          var gp = surface.GetGeneralProperties();
-          sb.AppendLine($"Surface,{EscapeCsv(surface.Name)},{surface.GetType().Name},{gp.MinimumElevation:F3},{gp.MaximumElevation:F3},{gp.NumberOfPoints},{CivilObjectUtils.LinearUnits(database)}");
+          // An empty surface throws when asked its properties.
+          if (SurfaceCommands.IsEmpty(surface))
+          {
+            Row("Surface", surface.Name, surface.GetType().Name, null, null, 0, linearUnits);
+          }
+          else
+          {
+            var gp = surface.GetGeneralProperties();
+            Row("Surface", surface.Name, surface.GetType().Name, Math.Round(gp.MinimumElevation, 3), Math.Round(gp.MaximumElevation, 3), gp.NumberOfPoints, linearUnits);
+          }
+
           rowsWritten++;
         }
         sb.AppendLine();
+      }
+
+      if (includeCorridorVolumes)
+      {
+        if (string.IsNullOrWhiteSpace(corridorName))
+        {
+          notes.Add("includeCorridorVolumes needs corridorName; no corridor section was written.");
+        }
+        else
+        {
+          sectionsIncluded.Add("corridorVolumes");
+          sb.AppendLine("Section,Corridor,SampleLineGroup,MaterialList,Cut,Fill,Usable,Units,Error");
+          var lists = CorridorMaterialLists(civilDoc, transaction, corridorName!, withVolumes: true);
+          if (lists.Count == 0) notes.Add(NoMaterialListNote(corridorName!));
+          foreach (var list in lists)
+          {
+            Row("CorridorVolume", corridorName, list.SampleLineGroup, list.MaterialList, list.CutVolume, list.FillVolume, list.UsableVolume,
+              CivilObjectUtils.VolumeUnits(database), list.Error);
+            rowsWritten++;
+          }
+          sb.AppendLine();
+        }
       }
 
       if (includePipeNetworks)
@@ -502,7 +720,32 @@ public static class QuantityCommands
             var diameter = GetRequiredEngineeringDouble(pipe, $"pipe '{pipeName}' diameter", "InnerDiameterOrWidth", "InnerDiameter", "Diameter");
             var slope = GetRequiredEngineeringDouble(pipe, $"pipe '{pipeName}' slope", "Slope", "FlowSlope");
             var material = GetAnyString(pipe, "Material", "PartDescription", "PartFamilyName") ?? string.Empty;
-            sb.AppendLine($"PipeNetwork,{EscapeCsv(networkName)},{EscapeCsv(pipeName)},{length:F3},{diameter:F3},{slope:F6},{EscapeCsv(material)},{CivilObjectUtils.LinearUnits(database)}");
+            Row("PipeNetwork", networkName, pipeName, Math.Round(length, 3), Math.Round(diameter, 3), Math.Round(slope, 6), material, linearUnits);
+            rowsWritten++;
+          }
+        }
+        sb.AppendLine();
+      }
+
+      if (includePressureNetworks)
+      {
+        sectionsIncluded.Add("pressureNetworks");
+        sb.AppendLine("Section,NetworkName,PipeName,Length,Diameter,Material,Units");
+        foreach (ObjectId networkId in civilDoc.GetPressurePipeNetworkIds())
+        {
+          if (networkId == ObjectId.Null) continue;
+          var networkObj = transaction.GetObject(networkId, OpenMode.ForRead);
+          var networkName = CivilObjectUtils.GetName(networkObj) ?? "unknown";
+          if (filterNames != null && !filterNames.Contains(networkName)) continue;
+          foreach (var pipeId in GetChildObjectIds(networkObj, "GetPipeIds", "PipeIds", "Pipes"))
+          {
+            var pipe = transaction.GetObject(pipeId, OpenMode.ForRead);
+            var pipeName = CivilObjectUtils.GetName(pipe) ?? pipeId.Handle.ToString();
+            // As in qtyPressureNetworkLengths: center-to-center length.
+            var length = GetRequiredEngineeringDouble(pipe, $"pressure pipe '{pipeName}' length", "Length3DCenterToCenter", "Length2DCenterToCenter");
+            var diameter = GetRequiredEngineeringDouble(pipe, $"pressure pipe '{pipeName}' diameter", "InnerDiameter", "OuterDiameter", "Diameter", "InnerDiameterOrWidth");
+            var material = GetAnyString(pipe, "Material", "PipeFamily", "PartFamilyName", "PartDescription") ?? string.Empty;
+            Row("PressureNetwork", networkName, pipeName, Math.Round(length, 3), Math.Round(diameter, 3), material, linearUnits);
             rowsWritten++;
           }
         }
@@ -512,7 +755,8 @@ public static class QuantityCommands
       if (includeParcelAreas)
       {
         sectionsIncluded.Add("parcelAreas");
-        sb.AppendLine("Section,SiteName,ParcelName,Area,Perimeter,Units");
+        // Area in the drawing's square unit, perimeter in its linear unit.
+        sb.AppendLine("Section,SiteName,ParcelName,Area,AreaUnits,Perimeter,LengthUnits");
         foreach (ObjectId siteId in civilDoc.GetSiteIds())
         {
           var site = CivilObjectUtils.GetRequiredObject<Site>(transaction, siteId, OpenMode.ForRead);
@@ -523,10 +767,9 @@ public static class QuantityCommands
             var parcel = CivilObjectUtils.GetRequiredObject<Parcel>(transaction, parcelId, OpenMode.ForRead);
             var parcelName = parcel.Name;
             if (filterNames != null && !filterNames.Contains(parcelName)) continue;
-            var area = parcel.Area;
             var perimeter = ParcelEditingCommands.GetParcelPerimeter(parcel);
-            var perimeterText = perimeter.HasValue ? perimeter.Value.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
-            sb.AppendLine($"Parcel,{EscapeCsv(currentSiteName)},{EscapeCsv(parcelName)},{area:F3},{perimeterText},{CivilObjectUtils.LinearUnits(database)}");
+            Row("Parcel", currentSiteName, parcelName, Math.Round(parcel.Area, 3), DesignMath.NativeAreaUnit(linearUnits),
+              perimeter.HasValue ? Math.Round(perimeter.Value, 3) : null, linearUnits);
             rowsWritten++;
           }
         }
@@ -543,8 +786,7 @@ public static class QuantityCommands
           var group = CivilObjectUtils.GetRequiredObject<PointGroup>(transaction, groupId, OpenMode.ForRead);
           var groupName = group.Name;
           if (filterNames != null && !filterNames.Contains(groupName)) continue;
-          var count = group.GetPointNumbers().Length;
-          sb.AppendLine($"PointGroup,{EscapeCsv(groupName)},{count}");
+          Row("PointGroup", groupName, group.GetPointNumbers().Length);
           rowsWritten++;
         }
         sb.AppendLine();
@@ -558,8 +800,11 @@ public static class QuantityCommands
         ["outputPath"] = canonicalOutputPath,
         ["rowsWritten"] = rowsWritten,
         ["sectionsIncluded"] = sectionsIncluded,
+        ["notes"] = notes,
       };
-    });
+    };
+
+    return measureVolumes ? CivilExecution.MeasureAsync(export) : CivilExecution.ReadAsync(export);
   }
 
   // -------------------------------------------------------------------------
@@ -567,16 +812,31 @@ public static class QuantityCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Not supported: QTO material lists belong to sample-line groups, and corridor baselines don't expose them. Reads
-  /// <c>corridorName</c> (required, CIVIL3D.INVALID_INPUT without it) and then always throws CIVIL3D.API_ERROR rather
-  /// than return an empty list. No TS domain calls it.
+  /// The QTO material lists for corridor <c>corridorName</c> (required): QTO material lists belong to the sample-line
+  /// groups on the corridor's baseline alignments, so this lists each group's lists and their material names
+  /// (SampleLineGroup.MaterialLists / GetMaterialNamesInMapping), without volumes (qtyCorridorVolumes has those).
+  /// Read-only. An empty <c>materialLists</c> comes with a <c>note</c>. CIVIL3D.INVALID_INPUT without
+  /// <c>corridorName</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor. No TS domain calls it yet.
   /// </summary>
   public static Task<object?> QtyMaterialListGetAsync(JsonObject? parameters)
   {
-    _ = PluginRuntime.GetRequiredString(parameters, "corridorName");
-    throw new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      "Civil 3D QTO material lists belong to SampleLineGroup objects. Corridor baselines do not expose GetMaterials/GetMaterialQuantities; no empty or zero-valued material list was fabricated.");
+    var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var lists = CorridorMaterialLists(civilDoc, transaction, corridorName, withVolumes: false);
+      return new Dictionary<string, object?>
+      {
+        ["corridorName"] = corridorName,
+        ["materialLists"] = lists.Select(list => new Dictionary<string, object?>
+        {
+          ["sampleLineGroup"] = list.SampleLineGroup,
+          ["alignment"] = list.Alignment,
+          ["materialList"] = list.MaterialList,
+          ["materials"] = list.Materials,
+        }).ToList(),
+        ["note"] = lists.Count == 0 ? NoMaterialListNote(corridorName) : null,
+      };
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -675,22 +935,23 @@ public static class QuantityCommands
 
   /// <summary>
   /// Child object ids of <paramref name="owner"/>, trying each member name both as a method and as a property, for
-  /// members named differently across releases. Null ids are skipped. Ids are not de-duplicated: a name that works as
-  /// both, or two names that reach the same list, would give an id more than once.
+  /// members named differently across releases. Null ids are skipped, and each id is given once even when a name works
+  /// as both or two names reach the same list (a length would otherwise be counted twice).
   /// </summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(AcDbObject owner, params string[] memberNames)
   {
+    var seen = new HashSet<ObjectId>();
     foreach (var memberName in memberNames)
     {
       var methodResult = CivilObjectUtils.InvokeMethod(owner, memberName);
       foreach (var objectId in CivilObjectUtils.ToObjectIds(methodResult))
       {
-        if (objectId != ObjectId.Null) yield return objectId;
+        if (objectId != ObjectId.Null && seen.Add(objectId)) yield return objectId;
       }
       var propVal = CivilObjectUtils.GetPropertyValue<object>(owner, memberName);
       foreach (var objectId in CivilObjectUtils.ToObjectIds(propVal))
       {
-        if (objectId != ObjectId.Null) yield return objectId;
+        if (objectId != ObjectId.Null && seen.Add(objectId)) yield return objectId;
       }
     }
   }
@@ -726,29 +987,5 @@ public static class QuantityCommands
       if (!string.IsNullOrWhiteSpace(v)) return v;
     }
     return null;
-  }
-
-  /// <summary>The surface elevation at (x, y), or null when Civil 3D throws (for example outside the surface).
-  /// Not called anywhere at present.</summary>
-  private static double? InvokeSurfaceElevationSafe(CivilSurface surface, double x, double y)
-  {
-    try
-    {
-      var result = surface.FindElevationAtXY(x, y);
-      return result;
-    }
-    catch
-    {
-      // Point may be outside surface boundary
-      return null;
-    }
-  }
-
-  /// <summary>Quotes a CSV field that holds a comma, a double quote or a line feed, doubling any quotes inside.</summary>
-  private static string EscapeCsv(string value)
-  {
-    if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
-      return $"\"{value.Replace("\"", "\"\"")}\"";
-    return value;
   }
 }

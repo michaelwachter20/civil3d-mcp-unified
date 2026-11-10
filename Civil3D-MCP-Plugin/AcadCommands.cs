@@ -21,16 +21,13 @@ public static class AcadCommands
   /// createPolyline: adds a 2D lightweight polyline to model space (changes the drawing). Reads <c>points</c>
   /// (required, array of at least two <c>{x, y}</c>), <c>closed</c> (optional int, 1 = closed) and <c>layer</c>
   /// (optional). Returns <c>handle</c>, <c>vertexCount</c>, <c>closed</c>, <c>layer</c>. Throws CIVIL3D.INVALID_INPUT
-  /// for fewer than two points or a point missing x/y, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// for fewer than two points, a point that isn't an object or one missing a numeric x/y (naming the point;
+  /// StationMath.ReadVertices), CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
   /// </summary>
   public static Task<object?> CreatePolylineAsync(JsonObject? parameters)
   {
-    var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
-    if (pointsNode == null || pointsNode.Count < 2)
-    {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "createPolyline requires at least two points.");
-    }
-
+    // Read and checked before the host queue: every point becomes a vertex, so its index is the vertex index.
+    var vertices = StationMath.ReadVertices(PluginRuntime.GetParameter(parameters, "points") as JsonArray, "createPolyline");
     var closed = PluginRuntime.GetOptionalInt(parameters, "closed") == 1;
     var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
 
@@ -40,16 +37,9 @@ public static class AcadCommands
       var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
       using var polyline = new Polyline();
-      for (var index = 0; index < pointsNode.Count; index++)
+      for (var index = 0; index < vertices.Count; index++)
       {
-        if (pointsNode[index] is not JsonObject point)
-        {
-          continue;
-        }
-
-        var x = point["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Point is missing x.");
-        var y = point["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Point is missing y.");
-        polyline.AddVertexAt(index, new Point2d(x, y), 0, 0, 0);
+        polyline.AddVertexAt(index, new Point2d(vertices[index].X, vertices[index].Y), 0, 0, 0);
       }
 
       polyline.Closed = closed;
@@ -133,16 +123,13 @@ public static class AcadCommands
   /// create3dPolyline: adds a simple 3D polyline to model space (changes the drawing). Reads <c>points</c> (required,
   /// at least two <c>{x, y, z}</c>, z required), <c>closed</c> (optional int, 1 = closed) and <c>layer</c> (optional).
   /// Returns <c>handle</c>, <c>vertexCount</c>, <c>closed</c>, <c>layer</c>. Throws CIVIL3D.INVALID_INPUT for fewer
-  /// than two (valid) points or a missing coordinate, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// than two points, a point that isn't an object or a missing or non-numeric coordinate (naming the point),
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
   /// </summary>
   public static Task<object?> Create3dPolylineAsync(JsonObject? parameters)
   {
-    var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
-    if (pointsNode == null || pointsNode.Count < 2)
-    {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "create3dPolyline requires at least two points.");
-    }
-
+    // Read and checked before the host queue (StationMath.ReadVertices), z required.
+    var vertices = StationMath.ReadVertices(PluginRuntime.GetParameter(parameters, "points") as JsonArray, "create3dPolyline", requireZ: true);
     var closed = PluginRuntime.GetOptionalInt(parameters, "closed") == 1;
     var layerName = PluginRuntime.GetOptionalString(parameters, "layer");
 
@@ -152,22 +139,9 @@ public static class AcadCommands
       var modelSpace = CivilObjectUtils.GetRequiredObject<BlockTableRecord>(transaction, blockTable[BlockTableRecord.ModelSpace], OpenMode.ForWrite);
 
       var pointCollection = new Point3dCollection();
-      for (var index = 0; index < pointsNode.Count; index++)
+      foreach (var vertex in vertices)
       {
-        if (pointsNode[index] is not JsonObject point)
-        {
-          continue;
-        }
-
-        var x = point["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Point is missing x.");
-        var y = point["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Point is missing y.");
-        var z = point["z"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Point is missing z.");
-        pointCollection.Add(new Point3d(x, y, z));
-      }
-
-      if (pointCollection.Count < 2)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "create3dPolyline requires at least two valid points.");
+        pointCollection.Add(new Point3d(vertex.X, vertex.Y, vertex.Z));
       }
 
       using var polyline3d = new Polyline3d(Poly3dType.SimplePoly, pointCollection, closed);

@@ -13,6 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { approvalPolicy, isApprovalRequired } from "./approvalPolicy.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
+import { approvalTargetFor } from "./domainRuntime.js";
 import { findManifestAction, findManifestActionByCall } from "./toolManifest.js";
 
 type JsonObject = Record<string, unknown>;
@@ -26,7 +27,7 @@ const approvalInputShape = {
 };
 
 const PreviewResponseSchema = z.object({
-  status: z.enum(["approval_required", "ready"]),
+  status: z.enum(["approval_required", "ready", "unsupported"]),
   toolName: z.string(),
   action: z.string(),
   capabilities: z.array(z.string()),
@@ -63,8 +64,9 @@ function resolveApprovalTarget(args: { toolName: string; action: string; paramet
       "Include the tool action in parameters when calling a multi-action tool.",
     );
   }
-  target.actionDefinition.inputSchema.parse(resolved.args);
-  return target;
+  const parsedArgs = target.actionDefinition.inputSchema.parse(resolved.args) as JsonObject;
+  // Decided as the real call decides (a dryRun or an unsupported action needs no token).
+  return { ...target, approvalTarget: approvalTargetFor(args.toolName, target.actionDefinition, parsedArgs) };
 }
 
 /** An MCP result carrying `structuredContent` both as pretty JSON text and as structured content. */
@@ -78,18 +80,25 @@ function successResult(structuredContent: JsonObject) {
   };
 }
 
-/** An `isError` MCP result ("<tool> failed: <message>"); unlike domainRuntime's, it carries no errorCode. */
+/**
+ * An `isError` MCP result ("<tool> failed: <message>"). It carries `errorCode` / `rpcCode` when the error has them
+ * (ApprovalValidationError, plugin errors); otherwise none, and the HTTP bridge classifies the message.
+ */
 function errorResult(toolName: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+  const rpcCode = error && typeof error === "object" && "rpcCode" in error && typeof error.rpcCode === "number" ? error.rpcCode : undefined;
   return {
     content: [{ type: "text" as const, text: `${toolName} failed: ${message}` }],
     isError: true,
+    ...(code ? { errorCode: code, ...(rpcCode !== undefined ? { rpcCode } : {}) } : {}),
   };
 }
 
 /**
  * Registers both tools with the MCP server and captures their handlers for the HTTP bridge. The preview never
- * changes anything; the request refuses (an error result) for an action that doesn't need approval, and asks the
+ * changes anything and says "unsupported" for an action Civil 3D can't do; the request refuses (an error result,
+ * CIVIL3D.INVALID_INPUT) for a call that doesn't need approval (decided like the real call, so a dryRun needs none), and asks the
  * plugin for the drawing fingerprint (getDrawingInfo), so it needs Civil 3D running; only an action that needs no
  * drawing may get a token with none open. Failures come back as `isError` results with the message, not thrown.
  */
@@ -98,22 +107,19 @@ export function registerApprovalTool(server: McpServer) {
     try {
       const args = rawArgs as { toolName: string; action: string; parameters: JsonObject };
       const target = resolveApprovalTarget(args);
-      const requiresApproval = isApprovalRequired({
-        toolName: args.toolName,
-        action: target.actionDefinition.action,
-        capabilities: target.actionDefinition.capabilities,
-        safeForRetry: target.actionDefinition.safeForRetry,
-        requiresActiveDrawing: target.actionDefinition.requiresActiveDrawing,
-      });
+      const unsupported = target.actionDefinition.unsupported;
+      const requiresApproval = isApprovalRequired(target.approvalTarget);
       return successResult({
-        status: requiresApproval ? "approval_required" : "ready",
+        status: unsupported !== undefined ? "unsupported" : requiresApproval ? "approval_required" : "ready",
         toolName: args.toolName,
         action: args.action,
         capabilities: target.actionDefinition.capabilities,
         safeForRetry: target.actionDefinition.safeForRetry,
-        instruction: requiresApproval
-          ? "Call civil3d_request_approval with the same toolName, action, and parameters before execution."
-          : "This action may be executed directly.",
+        instruction: unsupported !== undefined
+          ? `Civil 3D can't do this from here; the call would change nothing. ${unsupported}`
+          : requiresApproval
+            ? "Call civil3d_request_approval with the same toolName, action, and parameters before execution."
+            : "This action may be executed directly.",
       });
     } catch (error) {
       return errorResult("civil3d_preview_action", error);
@@ -130,13 +136,7 @@ export function registerApprovalTool(server: McpServer) {
       };
       const target = resolveApprovalTarget(args);
       const receipt = await approvalPolicy.requestApproval(
-        {
-          toolName: args.toolName,
-          action: target.actionDefinition.action,
-          capabilities: target.actionDefinition.capabilities,
-          safeForRetry: target.actionDefinition.safeForRetry,
-          requiresActiveDrawing: target.actionDefinition.requiresActiveDrawing,
-        },
+        target.approvalTarget,
         // Through the tool's own input shape, as the call itself will be: its defaults (a point's z) count in the hash.
         z.object(target.exposure.inputShape).parse(args.parameters) as JsonObject,
         (args.ttlSeconds ?? 300) * 1000,

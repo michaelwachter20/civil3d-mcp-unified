@@ -4,8 +4,10 @@
 // Rules it enforces: absolute paths only, canonicalized, inside CIVIL3D_IMPORT_ROOTS / CIVIL3D_EXPORT_ROOTS (else
 // CIVIL3D_FILE_ROOTS, else the user's Documents folder); per-command extension allowlist; no links or junctions on the
 // way; never importing from the suite's shared knowledge folder (SharedFolder.Root, job databases are reference only),
-// except a job's User Knowledge folder for reference reads; no overwrite unless overwrite=true; writes go to a hidden
-// temp file and are moved into place atomically, with the export directory chain held open against swaps.
+// except a job's User Knowledge folder for reference reads, and never exporting into it (the plugin's own saved
+// scripts there go through WriteFileWithinDirectoryAtomic); no overwrite unless overwrite=true; writes go to a hidden
+// temp file and are moved into place atomically, with the target folder (and the export directory chain) held open
+// against swaps. Short-lived working copies go to the plugin's own %TEMP%\civil3d-mcp folder (WriteTemporaryFile).
 // It never touches the drawing.
 using System.Text;
 using System.ComponentModel;
@@ -24,6 +26,7 @@ internal static class FileBoundary
   private const string SharedRootsVariable = "CIVIL3D_FILE_ROOTS";
   private const string ImportRootsVariable = "CIVIL3D_IMPORT_ROOTS";
   private const string ExportRootsVariable = "CIVIL3D_EXPORT_ROOTS";
+  private const uint FileListDirectory = 0x00000001;
   private const uint FileFlagBackupSemantics = 0x02000000;
   private const uint FileFlagOpenReparsePoint = 0x00200000;
   private const int FileAttributeTagInfoClass = 9;
@@ -71,8 +74,10 @@ internal static class FileBoundary
 
   /// <summary>
   /// The canonical path for a file to write, inside the export roots with an allowed extension. Writes nothing.
-  /// Throws CIVIL3D.CONFLICT when the file exists and <paramref name="overwrite"/> is false, plus every
-  /// <see cref="ResolvePath"/> error. Unlike imports, the shared knowledge folder is not excluded here.
+  /// Throws CIVIL3D.PATH_NOT_ALLOWED inside the suite's shared knowledge folder (the default export root, Documents,
+  /// contains it; the plugin's own saved scripts are written there through <see cref="WriteFileWithinDirectoryAtomic"/>,
+  /// not through this), CIVIL3D.CONFLICT when the file exists and <paramref name="overwrite"/> is false, plus every
+  /// <see cref="ResolvePath"/> error.
   /// </summary>
   public static string ResolveExportPath(
     string rawPath,
@@ -80,6 +85,14 @@ internal static class FileBoundary
     params string[] allowedExtensions)
   {
     var path = ResolvePath(rawPath, ExportRoots.Value, "export", allowedExtensions);
+    if (IsInSharedKnowledgeFolder(path))
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.PATH_NOT_ALLOWED",
+        $"'{path}' is in the suite's shared knowledge folder (job databases, backups, User Knowledge), which the Civil 3D " +
+        "tools never write to. Save it in the job folder or another folder the user names.");
+    }
+
     if (File.Exists(path) && !overwrite)
     {
       throw new JsonRpcDispatchException(
@@ -152,7 +165,10 @@ internal static class FileBoundary
   /// <summary>
   /// Writes a file inside a plugin-owned directory (for example the saved-script
   /// library). The file name must be a bare name: separators, traversal, and
-  /// reparse-point directories are rejected, and the write is atomic.
+  /// reparse-point directories are rejected, and the write is atomic. The directory
+  /// is held open (<see cref="LockDirectory"/>) for the whole write, so it can't be
+  /// renamed or swapped for a junction, nor can any folder above it, between the
+  /// check and the move.
   /// </summary>
   public static string WriteFileWithinDirectoryAtomic(
     string directory,
@@ -161,6 +177,7 @@ internal static class FileBoundary
     bool overwrite)
   {
     var path = ResolveFileWithinDirectory(directory, fileName, createDirectory: true);
+    using var directoryLock = LockDirectory(Path.GetDirectoryName(path)!);
     if (File.Exists(path) && !overwrite)
     {
       throw new JsonRpcDispatchException(
@@ -218,6 +235,71 @@ internal static class FileBoundary
       throw new JsonRpcDispatchException("CIVIL3D.FILE_IO_ERROR", $"Unable to delete '{path}': {exception.Message}");
     }
   }
+
+  /// <summary>The plugin's own folder for short-lived working copies: %TEMP%\civil3d-mcp. Nothing else is written there.</summary>
+  public static string TemporaryDirectory => Path.Combine(Path.GetTempPath(), "civil3d-mcp");
+
+  /// <summary>
+  /// Writes <paramref name="content"/> to a new uniquely named file in <see cref="TemporaryDirectory"/> (with
+  /// <paramref name="extension"/>, e.g. ".txt", so a program that goes by extension reads it right) and returns its
+  /// path. For working copies the plugin hands to Civil 3D, such as a point file in the Windows code page; the caller
+  /// removes it with <see cref="DeleteTemporaryFile"/>. CIVIL3D.INVALID_INPUT for an extension that isn't a short
+  /// alphanumeric one, CIVIL3D.FILE_IO_ERROR when the write fails.
+  /// </summary>
+  public static string WriteTemporaryFile(byte[] content, string extension)
+  {
+    if (extension.Length > 0
+        && (extension.Length > 10 || extension[0] != '.' || !extension.Skip(1).All(char.IsAsciiLetterOrDigit)))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{extension}' can't be a temporary file's extension.");
+    }
+
+    var path = ResolveFileWithinDirectory(TemporaryDirectory, $"copy-{Guid.NewGuid():N}{extension}", createDirectory: true);
+    using var directoryLock = LockDirectory(Path.GetDirectoryName(path)!);
+    try
+    {
+      using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+      stream.Write(content);
+      return path;
+    }
+    catch (Exception exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.FILE_IO_ERROR", $"Unable to write a temporary copy '{path}': {exception.Message}");
+    }
+  }
+
+  /// <summary>
+  /// Removes a file <see cref="WriteTemporaryFile"/> made. Only files directly in <see cref="TemporaryDirectory"/> are
+  /// touched (anything else is CIVIL3D.INVALID_INPUT). Best effort: called from <c>finally</c> blocks, so a file that
+  /// can't be deleted is logged and left (false) rather than hiding the caller's own error; true when it was deleted.
+  /// </summary>
+  public static bool DeleteTemporaryFile(string path)
+  {
+    var fullPath = Path.GetFullPath(path);
+    if (!string.Equals(Path.GetDirectoryName(fullPath), Path.GetFullPath(TemporaryDirectory), StringComparison.OrdinalIgnoreCase))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"'{path}' is not one of the plugin's temporary files.");
+    }
+
+    try
+    {
+      return DeleteFileWithinDirectory(TemporaryDirectory, Path.GetFileName(fullPath));
+    }
+    catch (JsonRpcDispatchException exception) when (exception.Code == "CIVIL3D.FILE_IO_ERROR")
+    {
+      PluginLog.Warn("FileBoundary", exception.Message);
+      return false;
+    }
+  }
+
+  /// <summary>
+  /// Holds <paramref name="directory"/> open until disposed, without following a link (CIVIL3D.PATH_NOT_ALLOWED when it
+  /// is one): while held, neither it nor any folder above it can be renamed or replaced, so a path checked once still
+  /// leads to the same place when the file is written. Files inside can still be created, replaced and deleted.
+  /// CIVIL3D.FILE_IO_ERROR when it can't be opened.
+  /// </summary>
+  internal static IDisposable LockDirectory(string directory) =>
+    new DirectoryChainLock([OpenLockedDirectory(Path.GetFullPath(directory))]);
 
   /// <summary>
   /// Resolves a bare file name inside <paramref name="directory"/>, rejecting traversal (CIVIL3D.INVALID_INPUT for a
@@ -510,12 +592,15 @@ internal static class FileBoundary
   /// <summary>
   /// Opens a folder handle without following reparse points (Win32 CreateFileW with backup semantics, read/write
   /// sharing only) and refuses it if it is a link. CIVIL3D.FILE_IO_ERROR when it can't be opened or inspected.
+  /// The handle asks for FILE_LIST_DIRECTORY: Windows checks sharing only against handles with data access, so a
+  /// handle with no access at all (0) didn't stop the folder itself from being renamed and swapped for a junction
+  /// (only the folders above it); with it, the missing delete sharing refuses that rename.
   /// </summary>
   private static SafeFileHandle OpenLockedDirectory(string path)
   {
     var handle = CreateFileW(
       path,
-      0,
+      FileListDirectory,
       FileShare.ReadWrite,
       IntPtr.Zero,
       FileMode.Open,

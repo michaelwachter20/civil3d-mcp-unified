@@ -3,9 +3,11 @@
 // dataShortcutPublishSyncWorkflow, dataShortcutReferenceSyncWorkflow, projectStartupWorkflow,
 // projectReferenceSetupWorkflow, drawingReadinessAuditWorkflow, featureLineToGradingWorkflow,
 // planProductionPublishWorkflow, qcFixAndVerifyWorkflow. Each one only calls other handlers (QcCommands,
-// SurfaceCommands, DataShortcutCommands, DrawingCommands, GradingCommands, PlanProductionCommands) in order; those do
-// their own CivilExecution reads/writes and FileBoundary checks. So a workflow is several host-queue turns and several
-// undo steps, not one, and a failing step stops it with the earlier steps kept. Approval is enforced once, in Node.
+// SurfaceCommands, DataShortcutCommands, DrawingCommands, PlanProductionCommands) in order; those do their own
+// CivilExecution reads/writes and FileBoundary checks. So a workflow is several host-queue turns and several undo
+// steps, not one, and a failing step stops it with the earlier steps kept. A dry run writes nothing (no save either).
+// featureLineToGradingWorkflow always refuses (no grading API, GradingCommands.OutOfReach). Approval is enforced once,
+// in Node.
 using System.Linq;
 using System.Text.Json.Nodes;
 
@@ -148,10 +150,10 @@ public static class WorkflowCommands
     var projectFolder = PluginRuntime.GetOptionalString(parameters, "projectFolder");
     var dryRun = PluginRuntime.GetOptionalBool(parameters, "dryRun") ?? false;
 
-    // A dry run stops short of publishing and only checks it could.
+    // A dry run stops short of publishing and only checks it could: through the host gate, loading nothing.
     if (dryRun)
     {
-      DataShortcutCommands.RequireShortcutFolder();
+      await DataShortcutCommands.CheckShortcutFolderAsync();
     }
 
     var publishResult = dryRun ? new Dictionary<string, object?> { ["dryRun"] = true, ["status"] = "skipped" } : await RequireDictionary(
@@ -310,8 +312,9 @@ public static class WorkflowCommands
 
   /// <summary>References each data shortcut in <c>references</c> ({projectFolder, shortcutName, shortcutType,
   /// layer}), synchronizes (against the first reference's project folder), lists the shortcuts, and saves to
-  /// <c>saveAs</c> when given. <c>dryRun</c> skips the references and dry-runs the sync, but a given <c>saveAs</c> still
-  /// saves. CIVIL3D.INVALID_INPUT without at least one reference.</summary>
+  /// <c>saveAs</c> when given. <c>dryRun</c> skips the references, dry-runs the sync and skips the save too (a dry run
+  /// writes nothing; a warning says the save was left out). CIVIL3D.INVALID_INPUT without at least one
+  /// reference.</summary>
   public static async Task<object?> ProjectReferenceSetupWorkflowAsync(JsonObject? parameters)
   {
     if (PluginRuntime.GetParameter(parameters, "references") is not JsonArray referencesArray || referencesArray.Count == 0)
@@ -364,7 +367,13 @@ public static class WorkflowCommands
     steps.Add(WorkflowStep("List data shortcuts after setup", "project.data_shortcut_list", "completed", dataShortcutsResult));
 
     object? saveResult = null;
-    if (!string.IsNullOrWhiteSpace(saveAs))
+    var warnings = new List<string>();
+    if (!string.IsNullOrWhiteSpace(saveAs) && dryRun)
+    {
+      warnings.Add($"Dry run: the drawing was not saved to '{saveAs}'.");
+      steps.Add(WorkflowStep("Save drawing after reference setup", "drawing.save", "skipped"));
+    }
+    else if (!string.IsNullOrWhiteSpace(saveAs))
     {
       saveResult = await RequireDictionary(
         DrawingCommands.SaveDrawingAsync(new JsonObject { ["saveAs"] = saveAs, ["overwrite"] = overwrite }),
@@ -388,7 +397,8 @@ public static class WorkflowCommands
         ["sync"] = syncResult,
         ["dataShortcuts"] = dataShortcutsResult,
         ["save"] = saveResult,
-      });
+      },
+      warnings);
   }
 
   /// <summary>A read-only audit in one answer: health, drawing info and settings, object types, the selection (up to
@@ -439,90 +449,16 @@ public static class WorkflowCommands
   }
 
   /// <summary>
-  /// Inspects feature line <c>featureLineName</c>, creates grading group <c>groupName</c> when <c>createGroup</c>,
-  /// creates a grading from the feature line (<c>criteriaName</c>, <c>side</c>), and builds a surface from the group
-  /// when <c>surfaceName</c> is given.
+  /// featureLineToGradingWorkflow: would make a grading group, a grading from feature line <c>featureLineName</c> and
+  /// the group's surface, but Civil 3D's API (.NET and COM) can't create grading groups or gradings
+  /// (GradingCommands.OutOfReach), so it refuses at once with CIVIL3D.API_ERROR before any step runs: nothing is
+  /// read or changed, rather than inspecting the feature line and then failing halfway. The feature line itself can
+  /// still be read with civil3d_grading.
   /// </summary>
-  public static async Task<object?> FeatureLineToGradingWorkflowAsync(JsonObject? parameters)
+  public static Task<object?> FeatureLineToGradingWorkflowAsync(JsonObject? parameters)
   {
-    var featureLineName = PluginRuntime.GetRequiredString(parameters, "featureLineName");
-    var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
-    var groupDescription = PluginRuntime.GetOptionalString(parameters, "groupDescription");
-    var createGroup = PluginRuntime.GetOptionalBool(parameters, "createGroup") ?? false;
-    var useProjection = PluginRuntime.GetOptionalBool(parameters, "useProjection");
-    var criteriaName = PluginRuntime.GetOptionalString(parameters, "criteriaName");
-    var side = PluginRuntime.GetOptionalString(parameters, "side");
-    var surfaceName = PluginRuntime.GetOptionalString(parameters, "surfaceName");
-
-    var featureLine = await RequireDictionary(
-      GradingCommands.GetFeatureLineAsync(new JsonObject { ["name"] = featureLineName }),
-      "getFeatureLine");
-
-    var steps = new List<Dictionary<string, object?>>
-    {
-      WorkflowStep("Inspect source feature line", "grading.feature_line_get", "completed", featureLine),
-    };
-    var warnings = new List<string>();
-    object? groupResult = null;
-
-    if (createGroup)
-    {
-      groupResult = await RequireDictionary(
-        GradingCommands.CreateGradingGroupAsync(new JsonObject
-        {
-          ["name"] = groupName,
-          ["description"] = groupDescription,
-          ["useProjection"] = useProjection,
-        }),
-        "createGradingGroup");
-      steps.Add(WorkflowStep("Create grading group", "grading.group_create", "completed", groupResult));
-    }
-    else
-    {
-      steps.Add(WorkflowStep("Create grading group", "grading.group_create", "skipped"));
-    }
-
-    var gradingResult = await RequireDictionary(
-      GradingCommands.CreateGradingAsync(new JsonObject
-      {
-        ["groupName"] = groupName,
-        ["featureLineName"] = featureLineName,
-        ["criteriaName"] = criteriaName,
-        ["side"] = side,
-      }),
-      "createGrading");
-    steps.Add(WorkflowStep("Create grading from feature line", "grading.create", "completed", gradingResult));
-
-    object? surfaceResult = null;
-    if (!string.IsNullOrWhiteSpace(surfaceName))
-    {
-      surfaceResult = await RequireDictionary(
-        GradingCommands.CreateSurfaceFromGradingGroupAsync(new JsonObject
-        {
-          ["name"] = groupName,
-          ["surfaceName"] = surfaceName,
-        }),
-        "createSurfaceFromGradingGroup");
-      steps.Add(WorkflowStep("Create grading surface", "grading.group_surface_create", "completed", surfaceResult));
-    }
-    else
-    {
-      warnings.Add("No surfaceName was provided, so grading-surface creation was skipped.");
-      steps.Add(WorkflowStep("Create grading surface", "grading.group_surface_create", "skipped"));
-    }
-
-    return WorkflowResult(
-      "feature_line_to_grading",
-      $"Converted feature line '{featureLineName}' into grading in group '{groupName}'.",
-      steps,
-      new Dictionary<string, object?>
-      {
-        ["featureLine"] = featureLine,
-        ["group"] = groupResult,
-        ["grading"] = gradingResult,
-        ["surface"] = surfaceResult,
-      },
-      warnings);
+    _ = PluginRuntime.GetRequiredString(parameters, "featureLineName");
+    throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", GradingCommands.OutOfReach);
   }
 
   /// <summary>Exports sheet set <c>sheetSetName</c> when given, otherwise publishes the named <c>layoutNames</c> to a
@@ -562,7 +498,7 @@ public static class WorkflowCommands
       publishResult = await RequireDictionary(
         PlanProductionCommands.PublishSheetPdfAsync(new JsonObject
         {
-          ["layoutNames"] = JsonSerializerHelper.StringArray(layoutNames),
+          ["layoutNames"] = ToJsonArray(layoutNames),
           ["outputPath"] = outputPath,
           ["plotStyleTable"] = plotStyleTable,
           ["paperSize"] = paperSize,
@@ -719,19 +655,5 @@ public static class WorkflowCommands
     }
 
     return array;
-  }
-
-  /// <summary>Same as <see cref="ToJsonArray"/> (kept as it is used by the publish workflow).</summary>
-  private static class JsonSerializerHelper
-  {
-    public static JsonArray StringArray(IEnumerable<string> values)
-    {
-      var array = new JsonArray();
-      foreach (var value in values)
-      {
-        array.Add(value);
-      }
-      return array;
-    }
   }
 }

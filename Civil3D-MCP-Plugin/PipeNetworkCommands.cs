@@ -495,59 +495,6 @@ public static class PipeNetworkCommands
     }
   }
 
-  /// <summary>Network ids from whichever of several member names exist (ids can repeat). Not called in this file:
-  /// EnumeratePipeNetworks reads GetPipeNetworkIds() directly.</summary>
-  private static IEnumerable<ObjectId> GetPipeNetworkIds(object civilDoc)
-  {
-    var candidates = new[]
-    {
-      CivilObjectUtils.InvokeMethod(civilDoc, "GetPipeNetworkIds"),
-      GetNamedMemberValue(civilDoc, "PipeNetworkCollection"),
-      GetNamedMemberValue(civilDoc, "NetworkCollection"),
-      GetNamedMemberValue(civilDoc, "PipeNetworks"),
-      GetNamedMemberValue(civilDoc, "Networks"),
-    };
-
-    foreach (var candidate in candidates)
-    {
-      foreach (var objectId in ToObjectIdsFlexible(candidate))
-      {
-        if (objectId != ObjectId.Null)
-        {
-          yield return objectId;
-        }
-      }
-    }
-  }
-
-  /// <summary>Object ids in a collection, plus the ObjectId/Id of items that aren't ids themselves (ids can repeat).
-  /// Used only by the unused GetPipeNetworkIds and GetChildObjectIds.</summary>
-  private static IEnumerable<ObjectId> ToObjectIdsFlexible(object? value)
-  {
-    foreach (var objectId in CivilObjectUtils.ToObjectIds(value))
-    {
-      yield return objectId;
-    }
-
-    if (value is IEnumerable enumerable)
-    {
-      foreach (var item in enumerable)
-      {
-        if (item is ObjectId objectId && objectId != ObjectId.Null)
-        {
-          yield return objectId;
-          continue;
-        }
-
-        var itemObjectId = GetAnyObjectId(item, "ObjectId", "Id");
-        if (itemObjectId != ObjectId.Null)
-        {
-          yield return itemObjectId;
-        }
-      }
-    }
-  }
-
   /// <summary>The gravity network named <paramref name="name"/> (case-insensitive), or CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static Network FindPipeNetworkByName(object civilDoc, Transaction transaction, string name, OpenMode openMode)
   {
@@ -775,22 +722,6 @@ public static class PipeNetworkCommands
     return createdId;
   }
 
-  /// <summary>Child ids read late-bound from several member names. Not called in this file.</summary>
-  private static IEnumerable<ObjectId> GetChildObjectIds(object owner, params string[] memberNames)
-  {
-    foreach (var memberName in memberNames)
-    {
-      object? memberValue = CivilObjectUtils.InvokeMethod(owner, memberName) ?? GetNamedMemberValue(owner, memberName);
-      foreach (var objectId in ToObjectIdsFlexible(memberValue))
-      {
-        if (objectId != ObjectId.Null)
-        {
-          yield return objectId;
-        }
-      }
-    }
-  }
-
   /// <summary>A property or field read by name through Civil3DCompatibility (null when neither exists).</summary>
   private static object? GetNamedMemberValue(object? value, string memberName)
   {
@@ -817,92 +748,8 @@ public static class PipeNetworkCommands
     }
   }
 
-  private static ObjectId GetAnyObjectId(object? value, params string[] propertyNames)
-  {
-    foreach (var propertyName in propertyNames)
-    {
-      var objectId = CivilObjectUtils.GetPropertyValue<ObjectId>(value, propertyName);
-      if (objectId != ObjectId.Null)
-      {
-        return objectId;
-      }
-    }
-
-    return ObjectId.Null;
-  }
-
-  // GetAnyDouble, GetAnyString, GetPointProperty, Distance, CalculateSlope and EnumerateNamedObjects below are not
-  // called in this file.
-  private static double? GetAnyDouble(object? value, params string[] propertyNames)
-  {
-    foreach (var propertyName in propertyNames)
-    {
-      var propertyValue = CivilObjectUtils.GetPropertyValue<double?>(value, propertyName);
-      if (propertyValue.HasValue)
-      {
-        return propertyValue.Value;
-      }
-    }
-
-    return null;
-  }
-
-  private static string? GetAnyString(object? value, params string[] propertyNames)
-  {
-    foreach (var propertyName in propertyNames)
-    {
-      var propertyValue = CivilObjectUtils.GetStringProperty(value, propertyName);
-      if (!string.IsNullOrWhiteSpace(propertyValue))
-      {
-        return propertyValue;
-      }
-    }
-
-    return null;
-  }
-
-  private static Point3d? GetPointProperty(object? value, params string[] propertyNames)
-  {
-    foreach (var propertyName in propertyNames)
-    {
-      var propertyValue = CivilObjectUtils.GetPropertyValue<Point3d?>(value, propertyName);
-      if (propertyValue.HasValue)
-      {
-        return propertyValue.Value;
-      }
-    }
-
-    return null;
-  }
-
-  private static double Distance(Point3d? startPoint, Point3d? endPoint)
-  {
-    if (!startPoint.HasValue || !endPoint.HasValue)
-    {
-      return 0.0;
-    }
-
-    return startPoint.Value.DistanceTo(endPoint.Value);
-  }
-
-  private static double CalculateSlope(Point3d? startPoint, Point3d? endPoint)
-  {
-    if (!startPoint.HasValue || !endPoint.HasValue)
-    {
-      return 0.0;
-    }
-
-    var horizontal = Math.Sqrt(Math.Pow(endPoint.Value.X - startPoint.Value.X, 2) + Math.Pow(endPoint.Value.Y - startPoint.Value.Y, 2));
-    if (horizontal <= 1.0e-9)
-    {
-      return 0.0;
-    }
-
-    return (endPoint.Value.Z - startPoint.Value.Z) / horizontal;
-  }
-
   /// <summary>Parameter <paramref name="parameterName"/> as a point {x, y, z}, or null when it isn't an object. A
-  /// missing x, y or z is CIVIL3D.INVALID_INPUT: elevation 0 is never assumed.</summary>
+  /// missing or non-numeric x, y or z is CIVIL3D.INVALID_INPUT: elevation 0 is never assumed.</summary>
   private static Point3d? ReadPoint(JsonObject? parameters, string parameterName)
   {
     if (PluginRuntime.GetParameter(parameters, parameterName) is not JsonObject pointNode)
@@ -910,9 +757,13 @@ public static class PipeNetworkCommands
       return null;
     }
 
-    var x = pointNode["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{parameterName}.x is required.");
-    var y = pointNode["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{parameterName}.y is required.");
-    var z = pointNode["z"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{parameterName}.z is required; elevation 0 will not be assumed.");
+    double Coordinate(string axis, string missing) =>
+      pointNode[axis] is JsonValue value && value.TryGetValue<double>(out var number)
+        ? number
+        : throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", missing);
+    var x = Coordinate("x", $"{parameterName}.x is required as a number.");
+    var y = Coordinate("y", $"{parameterName}.y is required as a number.");
+    var z = Coordinate("z", $"{parameterName}.z is required as a number; elevation 0 will not be assumed.");
     return new Point3d(x, y, z);
   }
 
@@ -979,22 +830,6 @@ public static class PipeNetworkCommands
       for (var sizeIndex = 0; sizeIndex < family.PartSizeCount; sizeIndex++)
       {
         yield return CivilObjectUtils.GetRequiredObject<PartSize>(transaction, family[sizeIndex], OpenMode.ForRead).Name;
-      }
-    }
-  }
-
-  private static IEnumerable<object> EnumerateNamedObjects(object? collection)
-  {
-    if (collection is IEnumerable enumerable)
-    {
-      foreach (var item in enumerable)
-      {
-        if (item == null)
-        {
-          continue;
-        }
-
-        yield return item;
       }
     }
   }

@@ -183,17 +183,19 @@ public static class CorridorCommands
         PluginLog.Error("Corridor", $"Rebuild failed for corridor '{name}' (job {job.JobId}).", ex);
         try
         {
-          JobRegistry.Fail(job.JobId, ex.Message);
+          // A CIVIL3D.* code (e.g. the drawing changed) is kept as the failure category, as JobCommands does.
+          JobRegistry.Fail(job.JobId, ex.Message, (ex as JsonRpcDispatchException)?.Code);
         }
         catch (Exception failEx)
         {
           PluginLog.Error("Corridor", $"Unable to mark job {job.JobId} as failed.", failEx);
         }
-        job.CancellationSource = null;
       }
       finally
       {
-        // Release the cancellation source once the worker has exited.
+        // Release the cancellation source once the worker has exited, whether it completed, was cancelled or failed
+        // (clearing it in the failure catch first left a failed job's source undisposed), then clear it so a later
+        // Cancel finds nothing to signal. Same order as JobCommands.StartJob.
         try
         {
           job.CancellationSource?.Dispose();
@@ -202,6 +204,7 @@ public static class CorridorCommands
         {
           // Already disposed (e.g. by Cancel/Dispose race); safe to ignore.
         }
+        job.CancellationSource = null;
       }
     }, CancellationToken.None);
 

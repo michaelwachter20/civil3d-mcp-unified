@@ -30,10 +30,13 @@ public static class PipeHydraulicsCommands
   /// <summary>
   /// A simple hydraulic grade line for network <c>networkName</c> (required). Optional: <c>tailwaterElevation</c>
   /// (default the outlet pipe's invert out), <c>designFlow</c> (default each pipe's full-flow capacity) and
-  /// <c>manningsN</c> (default 0.013). Pipes are sorted by start invert, highest first, and walked as one chain up
-  /// from the lowest, each adding its full-pipe Manning friction loss; a pipe is surcharged when the HGL at its upper
-  /// end is above its crown. Returns one node per pipe, from the outlet up. A network with no pipes gives an empty
-  /// node list with a warning. Read only.
+  /// <c>manningsN</c> (default 0.013). The HGL is walked over the network's connections (PipeMath.WalkHgl): water
+  /// runs from each pipe's higher invert to its lower one, each outfall (a structure or free end no pipe leaves)
+  /// starts at the tailwater (without one, the lowest invert reaching it), each pipe adds its full-pipe Manning
+  /// friction loss to the HGL at its downstream end, and where pipes split the highest HGL controls. So a branch only
+  /// carries the losses between it and its own outfall. A pipe is surcharged when the HGL at its upper end is above
+  /// its crown. Returns one node per pipe (with its structures and outfall), outfalls first, and <c>outfalls</c> with
+  /// each one's starting HGL. A network with no pipes gives an empty node list with a warning. Read only.
   /// </summary>
   public static Task<object?> CalculatePipeNetworkHglAsync(JsonObject? parameters)
   {
@@ -47,7 +50,6 @@ public static class PipeHydraulicsCommands
       var network = FindPipeNetworkByName(civilDoc, transaction, networkName);
       var units = CivilObjectUtils.LinearUnits(database);
       var pipes = GetPipeData(network, transaction);
-      var structures = GetStructureData(network, transaction);
 
       if (pipes.Count == 0)
       {
@@ -60,56 +62,82 @@ public static class PipeHydraulicsCommands
         };
       }
 
-      // Sort pipes upstream to downstream by invert elevation (lowest invert = downstream)
-      var sortedPipes = pipes.OrderByDescending(p => p.InvertIn).ToList();
-      var outletInvert = sortedPipes.Last().InvertOut;
-      var hglAtOutlet = tailwaterElevation ?? outletInvert;
-
-      // Build HGL table — simple backwater walk
-      var nodes = new List<Dictionary<string, object?>>();
-      var currentHgl = hglAtOutlet;
-
-      for (int i = sortedPipes.Count - 1; i >= 0; i--)
+      // Each pipe's full-flow capacity and its friction loss at the flow (Manning's, in the drawing's units):
+      // L (nQ / (k A R^(2/3)))^2. Water runs from the higher invert to the lower one.
+      var byName = new Dictionary<string, (PipeInfo Pipe, double QFull, double HeadLoss)>(StringComparer.Ordinal);
+      var walk = new List<PipeMath.HglPipe>();
+      var nodeNames = new Dictionary<string, string>(StringComparer.Ordinal);
+      foreach (var pipe in pipes)
       {
-        var pipe = sortedPipes[i];
         double diameter = pipe.Diameter;
-        double length = pipe.Length;
         double area = Math.PI * diameter * diameter / 4.0;
         double hydraulicRadius = diameter / 4.0;
         double qFull = PipeMath.FullFlowCapacity(diameter, pipe.Slope, manningsN, units);
-
-        // Friction loss along the pipe at the flow (Manning's, in the drawing's units): L (nQ / (k A R^(2/3)))^2.
         double flow = designFlow ?? qFull;
-        double headLoss = length * Math.Pow(manningsN * flow / (PipeMath.ManningsK(units) * area
-                          * Math.Pow(hydraulicRadius, 2.0 / 3.0)), 2.0);
-        headLoss = Math.Max(0, headLoss);
+        double headLoss = area > 0
+          ? Math.Max(0, pipe.Length * Math.Pow(manningsN * flow / (PipeMath.ManningsK(units) * area
+              * Math.Pow(hydraulicRadius, 2.0 / 3.0)), 2.0))
+          : 0;
+        var key = $"{pipe.Name}#{walk.Count}";
+        byName[key] = (pipe, qFull, headLoss);
+        nodeNames[pipe.StartNode] = pipe.StartStructure ?? $"{pipe.Name} start (no structure)";
+        nodeNames[pipe.EndNode] = pipe.EndStructure ?? $"{pipe.Name} end (no structure)";
+        var startDown = pipe.InvertIn >= pipe.InvertOut;
+        walk.Add(new PipeMath.HglPipe(key,
+          startDown ? pipe.EndNode : pipe.StartNode,
+          startDown ? pipe.StartNode : pipe.EndNode,
+          headLoss,
+          Math.Min(pipe.InvertIn, pipe.InvertOut)));
+      }
 
-        var hglAtUpstream = currentHgl + headLoss;
-        var isSurcharged = hglAtUpstream > pipe.InvertIn + diameter;
-
+      // Walked over the network's connections, outfall by outfall, so a branch carries only its own path's losses.
+      var hglNodes = PipeMath.WalkHgl(walk, tailwaterElevation);
+      var nodes = new List<Dictionary<string, object?>>();
+      foreach (var hglNode in hglNodes)
+      {
+        var (pipe, qFull, headLoss) = byName[hglNode.Name];
+        var upstreamInvert = Math.Max(pipe.InvertIn, pipe.InvertOut);
+        var isSurcharged = hglNode.HglUpstream > upstreamInvert + pipe.Diameter;
+        var startDown = pipe.InvertIn >= pipe.InvertOut;
         nodes.Add(new Dictionary<string, object?>
         {
           ["pipeName"] = pipe.Name,
+          ["upstreamStructure"] = startDown ? pipe.StartStructure : pipe.EndStructure,
+          ["downstreamStructure"] = startDown ? pipe.EndStructure : pipe.StartStructure,
+          ["outfall"] = nodeNames[hglNode.Outfall],
           ["invertIn"] = Math.Round(pipe.InvertIn, 3),
           ["invertOut"] = Math.Round(pipe.InvertOut, 3),
-          ["diameter"] = Math.Round(diameter, 3),
-          ["length"] = Math.Round(length, 2),
+          ["diameter"] = Math.Round(pipe.Diameter, 3),
+          ["length"] = Math.Round(pipe.Length, 2),
           ["slopePct"] = Math.Round(pipe.Slope, 4),
           ["qFullCfs"] = Math.Round(qFull, 3),
-          ["hglDownstream"] = Math.Round(currentHgl, 3),
-          ["hglUpstream"] = Math.Round(hglAtUpstream, 3),
+          ["hglDownstream"] = Math.Round(hglNode.HglDownstream, 3),
+          ["hglUpstream"] = Math.Round(hglNode.HglUpstream, 3),
           ["headLoss"] = Math.Round(headLoss, 3),
           ["surcharged"] = isSurcharged,
           ["status"] = isSurcharged ? "SURCHARGED" : "FREE_SURFACE",
         });
-
-        currentHgl = hglAtUpstream;
       }
+
+      // Where each outfall's HGL starts: the tailwater, else the lowest invert reaching it.
+      var downstreamOf = walk.ToDictionary(pipe => pipe.Name, pipe => pipe.DownstreamNode, StringComparer.Ordinal);
+      var outfalls = hglNodes
+        .Where(node => downstreamOf[node.Name] == node.Outfall)
+        .GroupBy(node => node.Outfall)
+        .Select(group => new Dictionary<string, object?>
+        {
+          ["name"] = nodeNames[group.Key],
+          ["startHgl"] = Math.Round(group.First().HglDownstream, 3),
+        })
+        .ToList();
+      var hglAtOutlet = tailwaterElevation ?? hglNodes.Where(node => downstreamOf[node.Name] == node.Outfall)
+        .Select(node => node.HglDownstream).DefaultIfEmpty(0).Min();
 
       return new Dictionary<string, object?>
       {
         ["networkName"] = networkName,
         ["tailwaterElevation"] = Math.Round(hglAtOutlet, 3),
+        ["outfalls"] = outfalls,
         ["manningsN"] = manningsN,
         ["designFlow"] = designFlow,
         // The *Cfs / *Fps keys keep their names; their values are in these units (cms and m/s in a drawing in meters).
@@ -128,7 +156,7 @@ public static class PipeHydraulicsCommands
   /// Checks every pipe of network <c>networkName</c> (required) against design limits. Optional: <c>designFlow</c>
   /// (default each pipe's full-flow capacity), <c>manningsN</c> (0.013), <c>minSlope</c> (percent, 0.5),
   /// <c>minCoverDepth</c> (2 ft), <c>minVelocity</c> (2 ft/s) and <c>maxVelocity</c> (10 ft/s); the three feet
-  /// defaults are converted when the drawing is in meters. Per pipe: full-flow capacity, part-full velocity, depth
+  /// defaults are converted to meters when the drawing isn't in feet. Per pipe: full-flow capacity, part-full velocity, depth
   /// ratio, Froude number, cover, and the limits it breaks (status OK or FAIL). Cover is checked only for pipes with a
   /// reference surface. Also lists each structure's rim, sump and depth. Read only.
   /// </summary>
@@ -149,8 +177,9 @@ public static class PipeHydraulicsCommands
       var pipes = GetPipeData(network, transaction);
       var structures = GetStructureData(network, transaction);
 
-      // The defaults are the usual feet and ft/s limits, so a metric drawing gets them in metres.
-      var toDrawingUnits = database.Insunits == UnitsValue.Meters ? 0.3048 : 1.0;
+      // The defaults are the usual feet and ft/s limits, so any drawing not in feet (which PipeMath works in meters)
+      // gets them in metres.
+      var toDrawingUnits = units == "feet" ? 1.0 : 0.3048;
       var minCoverLimit = minCoverDepth ?? 2.0 * toDrawingUnits;
       var minVelocityLimit = minVelocity ?? 2.0 * toDrawingUnits;
       var maxVelocityLimit = maxVelocity ?? 10.0 * toDrawingUnits;
@@ -294,7 +323,11 @@ public static class PipeHydraulicsCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
-  private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut, double? Cover = null);
+  /// <summary>A pipe as the hydraulics need it. StartNode / EndNode name what each end connects to: the structure's
+  /// handle, or a key of its own for an end with no structure; StartStructure / EndStructure are the structures'
+  /// names (null for a free end).</summary>
+  private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut,
+    double? Cover, string StartNode, string EndNode, string? StartStructure, string? EndStructure);
   private sealed record StructureInfo(string Name, double RimElevation, double SumpElevation, List<string> ConnectedPipes);
 
   /// <summary>The network named <paramref name="name"/> (case-insensitive), found through whichever of several
@@ -369,8 +402,8 @@ public static class PipeHydraulicsCommands
     }
   }
 
-  /// <summary>Each pipe's name, inner diameter (default 1.0 when unreadable), 3D length, percent slope, inverts and
-  /// least cover, read late-bound with fallbacks.</summary>
+  /// <summary>Each pipe's name, inner diameter (default 1.0 when unreadable), 3D length, percent slope, inverts, least
+  /// cover and the structures at its ends, read late-bound with fallbacks.</summary>
   private static List<PipeInfo> GetPipeData(DBObject network, Transaction transaction)
   {
     var results = new List<PipeInfo>();
@@ -387,7 +420,13 @@ public static class PipeHydraulicsCommands
       var slope = (startPt is Point3d a && endPt is Point3d b ? PipeMath.SlopePercent(a.X, a.Y, a.Z, b.X, b.Y, b.Z) : null)
         ?? GetAnyDouble(pipe, "Slope", "FlowSlope") ?? (length > 0 ? (invertIn - invertOut) / length * 100 : 0);
       var diameter = GetAnyDouble(pipe, "InnerDiameterOrWidth", "InnerDiameter", "Diameter") ?? 1.0;
-      results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut, CoverOf(pipe)));
+      // What each end connects to, for the HGL walk over the network's topology.
+      var startStructureId = pipe is Pipe connectedStart ? connectedStart.StartStructureId : ObjectId.Null;
+      var endStructureId = pipe is Pipe connectedEnd ? connectedEnd.EndStructureId : ObjectId.Null;
+      var startNode = startStructureId.IsNull ? $"free:{objectId.Handle}:start" : $"structure:{startStructureId.Handle}";
+      var endNode = endStructureId.IsNull ? $"free:{objectId.Handle}:end" : $"structure:{endStructureId.Handle}";
+      results.Add(new PipeInfo(CivilObjectUtils.GetName(pipe) ?? objectId.Handle.ToString(), diameter, length, slope, invertIn, invertOut,
+        CoverOf(pipe), startNode, endNode, ResolveObjectName(transaction, startStructureId), ResolveObjectName(transaction, endStructureId)));
     }
     return results;
   }

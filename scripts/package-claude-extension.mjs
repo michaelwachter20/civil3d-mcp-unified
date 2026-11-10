@@ -142,9 +142,8 @@ const runtimePackageJson = {
   description: packageJson.description,
   type: packageJson.type,
   private: true,
-  engines: {
-    node: ">=18.17.0",
-  },
+  // The server's own requirement (node:sqlite needs 22.15+), taken from package.json so the two can't disagree.
+  engines: packageJson.engines,
   dependencies: packageJson.dependencies,
 };
 await writeFile(

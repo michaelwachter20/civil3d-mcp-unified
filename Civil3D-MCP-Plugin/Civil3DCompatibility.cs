@@ -1,9 +1,10 @@
 // The plugin's only reflection: late-bound property, field and method access for Civil 3D members missing from the
 // referenced API or differing between releases, COM late binding (sheet sets, AutoCAD COM objects), and the loaded
-// assembly list Roslyn scripts compile against. tests/reflection_boundary.test.ts fails if reflection appears in any
-// other plugin file. Serves no JSON-RPC method; used through CivilObjectUtils and directly by command classes,
-// ScriptEngine and SheetSetCom. Lookups are cached per type and name. Reads never throw (null/false on
-// failure); it never writes files and never touches the drawing except through the setters callers invoke.
+// assembly list Roslyn scripts compile against, and making closed generic instances (ScriptResultSerializer's JSON
+// converters). tests/reflection_boundary.test.ts fails if reflection appears in any other plugin file. Serves no
+// JSON-RPC method; used through CivilObjectUtils and directly by command classes, ScriptEngine, ScriptResultSerializer
+// and SheetSetCom. Lookups are cached per type and name. Reads never throw (null/false on failure); it never writes
+// files and never touches the drawing except through the setters callers invoke.
 using System.Collections.Concurrent;
 using System.Reflection;
 
@@ -564,4 +565,13 @@ internal static class Civil3DCompatibility
 
     return false;
   }
+
+  /// <summary>
+  /// A new instance of <paramref name="openGeneric"/> closed over <paramref name="typeArgument"/> (its parameterless
+  /// constructor), as <typeparamref name="T"/>: what a JsonConverterFactory needs to make a converter for the exact
+  /// type it was asked about (ScriptResultSerializer). Unlike the reads above this throws, since a converter that
+  /// can't be made is a programming error, not a missing host member.
+  /// </summary>
+  public static T CreateClosedGeneric<T>(Type openGeneric, Type typeArgument) =>
+    (T)Activator.CreateInstance(openGeneric.MakeGenericType(typeArgument))!;
 }

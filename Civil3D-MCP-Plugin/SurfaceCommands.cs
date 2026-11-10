@@ -932,8 +932,9 @@ public static class SurfaceCommands
     });
   }
 
-  /// <summary>The statistics of GetSurfaceStatisticsAsync with horizontal, vertical and area units. Unlike that method
-  /// it has no empty-surface case, so a surface with no points fails (the API throws).</summary>
+  /// <summary>The statistics of GetSurfaceStatisticsAsync with horizontal, vertical and area units. A surface with no
+  /// points (whose statistics the API can't give) answers zero statistics with <c>isEmpty</c> and a note, as
+  /// getSurface does, instead of failing.</summary>
   public static Task<object?> GetSurfaceStatisticsDetailedAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -941,9 +942,26 @@ public static class SurfaceCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var surface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
+      var units = CivilObjectUtils.LinearUnits(database);
+      var unitNames = new Dictionary<string, object?>
+      {
+        ["horizontal"] = units,
+        ["vertical"] = units,
+        ["area"] = $"{units}^2",
+      };
+
+      if (IsEmpty(surface))
+      {
+        var empty = EmptyStatistics();
+        empty["surfaceName"] = surface.Name;
+        empty["isEmpty"] = true;
+        empty["note"] = "This surface has no points yet, so it has no elevations or area.";
+        empty["units"] = unitNames;
+        return empty;
+      }
+
       var generalProperties = surface.GetGeneralProperties();
       var terrainProperties = GetTerrainProperties(surface);
-      var units = CivilObjectUtils.LinearUnits(database);
 
       return new Dictionary<string, object?>
       {
@@ -955,22 +973,23 @@ public static class SurfaceCommands
         ["area3d"] = terrainProperties?.SurfaceArea3D,
         ["numberOfPoints"] = generalProperties.NumberOfPoints,
         ["numberOfTriangles"] = GetTriangleCount(surface),
-        ["units"] = new Dictionary<string, object?>
-        {
-          ["horizontal"] = units,
-          ["vertical"] = units,
-          ["area"] = $"{units}^2",
-        },
+        ["isEmpty"] = false,
+        ["units"] = unitNames,
       };
     });
   }
+
+  /// <summary>The most grid points one sampleSurfaceElevations call samples: every one is a surface lookup on the host
+  /// queue and a row in the answer.</summary>
+  private const int MaxGridSamples = 1_000_000;
 
   /// <summary>
   /// Samples surface <c>name</c> by <c>method</c>: <c>grid</c> (every <c>gridSpacing</c> over the surface extents,
   /// optionally only inside <c>boundary</c>), <c>points</c> (the given points), or <c>transect</c> (<c>numSamples</c>,
   /// default 50, evenly spaced from <c>startPoint</c> to <c>endPoint</c>, with the distance as <c>station</c>).
   /// Points off the surface are left out instead of failing the call, so a sample may have fewer points than asked.
-  /// A small grid spacing over a large surface can return a very large answer.
+  /// A small grid spacing over a large surface can return a very large answer; a spacing that isn't positive, or one
+  /// giving more than <see cref="MaxGridSamples"/> grid points, is CIVIL3D.INVALID_INPUT.
   /// </summary>
   public static Task<object?> SampleSurfaceElevationsAsync(JsonObject? parameters)
   {
@@ -986,6 +1005,12 @@ public static class SurfaceCommands
       if (method == "grid")
       {
         var gridSpacing = PluginRuntime.GetRequiredDouble(parameters, "gridSpacing");
+        if (!(gridSpacing > 0) || double.IsInfinity(gridSpacing))
+        {
+          // Zero or less never moves across the surface, so the grid loop below would not end.
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"gridSpacing must be a positive distance in drawing units ({units}), not {gridSpacing}.");
+        }
+
         if (IsEmpty(surface))
         {
           throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Surface '{name}' has no points yet, so there's nothing to sample.");
@@ -1001,6 +1026,13 @@ public static class SurfaceCommands
         var maxX = extents.Value.MaxPoint.X;
         var minY = extents.Value.MinPoint.Y;
         var maxY = extents.Value.MaxPoint.Y;
+        var gridPoints = (Math.Floor((maxX - minX) / gridSpacing) + 1) * (Math.Floor((maxY - minY) / gridSpacing) + 1);
+        if (gridPoints > MaxGridSamples)
+        {
+          throw new JsonRpcDispatchException(
+            "CIVIL3D.INVALID_INPUT",
+            $"gridSpacing {gridSpacing} gives about {gridPoints:0} grid points over surface '{name}' ({maxX - minX:0.##} x {maxY - minY:0.##} {units}), more than {MaxGridSamples}: use a larger spacing.");
+        }
 
         var boundaryNode = PluginRuntime.GetParameter(parameters, "boundary") as JsonArray;
         var boundaryPoints = boundaryNode != null

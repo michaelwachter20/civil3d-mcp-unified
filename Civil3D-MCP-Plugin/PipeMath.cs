@@ -1,5 +1,6 @@
 // Pure gravity-pipe arithmetic: slope from the pipe's ends, Manning full-flow capacity, part-full depth, velocity and
-// Froude number, closest distance between two pipe centerlines, sample spacing along a pipe, unit names.
+// Froude number, closest distance between two pipe centerlines, sample spacing along a pipe, unit names, and the
+// hydraulic grade line walked over the network's topology (WalkHgl).
 // Used by PipeNetworkCommands (checkPipeNetworkInterference, pipe data's slopePercent) and PipeHydraulicsCommands
 // (HGL, hydraulic analysis), which serve civil3d_pipe (src/tools/domains/pipeDomain.ts); the TS size_network action
 // has its own Manning's code. Serves no JSON-RPC method itself.
@@ -171,6 +172,101 @@ public static class PipeMath
     var count = spacing > 0 ? (int)Math.Ceiling(horizontalLength / spacing) : 1;
     count = Math.Clamp(count, 1, 999);
     return Enumerable.Range(0, count + 1).Select(i => (double)i / count).ToList();
+  }
+
+  /// <summary>One pipe of a network for <see cref="WalkHgl"/>: the node (structure, or a free pipe end) water leaves
+  /// it at downstream and enters it at upstream, its friction loss, and its invert at the downstream end.</summary>
+  public sealed record HglPipe(string Name, string UpstreamNode, string DownstreamNode, double HeadLoss, double DownstreamInvert);
+
+  /// <summary>A pipe's place on the hydraulic grade line: HGL at its downstream and upstream ends, the outfall node its
+  /// controlling path drains to, and its order (the step at which the walk reached its downstream node: outfalls
+  /// first, rising upstream).</summary>
+  public sealed record HglNode(string Name, double HglDownstream, double HglUpstream, string Outfall, int Order);
+
+  /// <summary>
+  /// The hydraulic grade line of a gravity network by its topology, not as one chain: each outfall (a node no pipe
+  /// leaves) starts at <paramref name="tailwater"/>, or without one at the lowest downstream invert of the pipes that
+  /// reach it; every pipe adds its own loss to the HGL at its downstream node, and a node takes the highest HGL of the
+  /// pipes leaving it (the controlling path when a network splits). So a branch only carries the losses of the pipes
+  /// between it and its outfall, never those of an unrelated branch. A loop is broken at the node where it is first
+  /// reached; a loop that reaches no outfall starts at its lowest invert. Returns one entry per pipe, outfalls first.
+  /// </summary>
+  public static IReadOnlyList<HglNode> WalkHgl(IReadOnlyList<HglPipe> pipes, double? tailwater)
+  {
+    var leaving = pipes.GroupBy(pipe => pipe.UpstreamNode).ToDictionary(group => group.Key, group => group.Count());
+    var entering = pipes.GroupBy(pipe => pipe.DownstreamNode).ToDictionary(group => group.Key, group => group.ToList());
+    var nodes = pipes.SelectMany(pipe => new[] { pipe.UpstreamNode, pipe.DownstreamNode }).Distinct().ToList();
+
+    var hgl = new Dictionary<string, double>();          // final HGL of a node
+    var outfallOf = new Dictionary<string, string>();
+    var candidate = new Dictionary<string, (double Hgl, string Outfall)>();
+    var remaining = nodes.ToDictionary(node => node, node => leaving.GetValueOrDefault(node));
+    var order = new List<string>();
+    var queue = new Queue<string>();
+
+    double LowestInvertAt(string node) =>
+      entering.TryGetValue(node, out var into) ? into.Min(pipe => pipe.DownstreamInvert) : 0;
+
+    void Finalize(string node, double value, string outfall)
+    {
+      hgl[node] = value;
+      outfallOf[node] = outfall;
+      order.Add(node);
+      queue.Enqueue(node);
+    }
+
+    foreach (var node in nodes.Where(node => remaining[node] == 0))
+    {
+      Finalize(node, tailwater ?? LowestInvertAt(node), node);
+    }
+
+    while (hgl.Count < nodes.Count || queue.Count > 0)
+    {
+      while (queue.Count > 0)
+      {
+        var downstream = queue.Dequeue();
+        if (!entering.TryGetValue(downstream, out var into)) continue;
+        foreach (var pipe in into)
+        {
+          var upstream = pipe.UpstreamNode;
+          if (hgl.ContainsKey(upstream)) continue;
+          var value = hgl[downstream] + pipe.HeadLoss;
+          if (!candidate.TryGetValue(upstream, out var best) || value > best.Hgl)
+          {
+            candidate[upstream] = (value, outfallOf[downstream]);
+          }
+
+          if (--remaining[upstream] == 0)
+          {
+            Finalize(upstream, candidate[upstream].Hgl, candidate[upstream].Outfall);
+          }
+        }
+      }
+
+      if (hgl.Count == nodes.Count) break;
+
+      // What is left is in a loop: settle the node the walk already reached with the highest HGL, else (a loop with no
+      // outfall at all) the lowest node of it.
+      var open = nodes.Where(node => !hgl.ContainsKey(node)).ToList();
+      var reached = open.Where(candidate.ContainsKey).OrderByDescending(node => candidate[node].Hgl).FirstOrDefault();
+      if (reached != null)
+      {
+        Finalize(reached, candidate[reached].Hgl, candidate[reached].Outfall);
+      }
+      else
+      {
+        var lowest = open.OrderBy(LowestInvertAt).First();
+        Finalize(lowest, LowestInvertAt(lowest), lowest);
+      }
+    }
+
+    var rank = order.Select((node, index) => (node, index)).ToDictionary(item => item.node, item => item.index);
+    return pipes
+      .Select(pipe => new HglNode(pipe.Name, hgl[pipe.DownstreamNode], hgl[pipe.DownstreamNode] + pipe.HeadLoss,
+        outfallOf[pipe.DownstreamNode], rank[pipe.DownstreamNode]))
+      .OrderBy(node => node.Order)
+      .ThenBy(node => node.Name, StringComparer.Ordinal)
+      .ToList();
   }
 
   /// <summary>

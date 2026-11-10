@@ -208,9 +208,10 @@ public static class AssemblyCreationCommands
 
   /// <summary>
   /// editAssembly on assembly <c>assemblyName</c> (required). Without <c>subassemblyName</c>: lists its subassemblies
-  /// (still run as a write, though nothing changes). With it: <c>delete</c> true erases that subassembly; otherwise the
-  /// <c>parameters</c> object sets its stock parameters or properties. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown
-  /// assembly or subassembly, CIVIL3D.INVALID_INPUT when any parameter couldn't be written (nothing is committed).
+  /// as a read (CivilExecution.ReadAsync: no undo step, the view doesn't move). With it, a write (one undo step):
+  /// <c>delete</c> true erases that subassembly; otherwise the <c>parameters</c> object sets its stock parameters or
+  /// properties. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown assembly or subassembly, CIVIL3D.INVALID_INPUT when any
+  /// parameter couldn't be written (nothing is committed).
   /// </summary>
   public static Task<object?> EditAssemblyAsync(JsonObject? parameters)
   {
@@ -219,15 +220,13 @@ public static class AssemblyCreationCommands
     var deleteSubassembly = PluginRuntime.GetOptionalBool(parameters, "delete") ?? false;
     var editParameters = ReadParameters(parameters?["parameters"] as JsonObject);
 
-    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    if (string.IsNullOrWhiteSpace(subassemblyName))
     {
-      var openMode = deleteSubassembly || editParameters.Count > 0 ? OpenMode.ForWrite : OpenMode.ForRead;
-      var assembly = FindAssemblyByName(civilDoc, transaction, assemblyName, openMode);
-      var subassemblyIds = GetSubassemblyIds(assembly);
-
-      if (string.IsNullOrWhiteSpace(subassemblyName))
+      // Only a listing: a write here added an empty undo step and moved the view for nothing.
+      return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
       {
-        var subassemblies = subassemblyIds
+        var assembly = FindAssemblyByName(civilDoc, transaction, assemblyName, OpenMode.ForRead);
+        var subassemblies = GetSubassemblyIds(assembly)
           .Select(id => CivilObjectUtils.GetRequiredObject<AcDbObject>(transaction, id, OpenMode.ForRead))
           .Select(ToSubassemblySummary)
           .ToList();
@@ -237,7 +236,14 @@ public static class AssemblyCreationCommands
           ["subassemblyCount"] = subassemblies.Count,
           ["subassemblies"] = subassemblies,
         };
-      }
+      });
+    }
+
+    return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
+    {
+      var openMode = deleteSubassembly || editParameters.Count > 0 ? OpenMode.ForWrite : OpenMode.ForRead;
+      var assembly = FindAssemblyByName(civilDoc, transaction, assemblyName, openMode);
+      var subassemblyIds = GetSubassemblyIds(assembly);
 
       var targetId = subassemblyIds.FirstOrDefault(id =>
       {

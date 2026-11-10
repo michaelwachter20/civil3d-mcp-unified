@@ -78,14 +78,23 @@ describe("no job data in Civil 3D's general know-how", () => {
     expect((await recordLesson("CogoPoint.LabelLocation can't be set before the label exists.", ["CogoPoint.LabelLocation"], "2027")).action).toBe("recorded");
   });
 
-  it("refuses skills and skill sections with job data, in any field", () => {
+  it("reports every problem of a kind (bounded), not just the first", () => {
+    const problems = jobDataProblems("Copy C-101.dwg, C-102.dwg and C-103.dwg from P:\\Jobs\\A and Q:\\Jobs\\B", []);
+    expect(problems.filter((problem) => problem.includes("file name"))).toHaveLength(3);
+    expect(problems.filter((problem) => problem.includes("absolute path"))).toHaveLength(2);
+    const many = jobDataProblems(Array.from({ length: 8 }, (_, index) => `C-10${index}.dwg`).join(" "), []);
+    expect(many).toHaveLength(6);
+    expect(many[5]).toBe("3 more drawing or job file name(s)");
+  });
+
+  it("refuses skills and skill sections with job data, in any field", async () => {
     const skill = { name: "label_structures", category: "pipes", description: "Label structures MH-n.", content: "Run the script." };
-    expect(() => writeSkill({ ...skill, content: "Open C-104.dwg first." }, "2027")).toThrow(/Not saved: this skill .*C-104\.dwg/);
-    expect(() => writeSkill({ ...skill, description: "Labels for Elm Street Drainage." }, "2027")).toThrow(/Elm Street Drainage/);
-    expect(() => writeSkill({ ...skill, parameters: [{ name: "folder", type: "string", default: "P:\\Jobs\\Current" }] } as never, "2027")).toThrow(/absolute path/);
+    await expect(writeSkill({ ...skill, content: "Open C-104.dwg first." }, "2027")).rejects.toThrow(/Not saved: this skill .*C-104\.dwg/);
+    await expect(writeSkill({ ...skill, description: "Labels for Elm Street Drainage." }, "2027")).rejects.toThrow(/Elm Street Drainage/);
+    await expect(writeSkill({ ...skill, parameters: [{ name: "folder", type: "string", default: "P:\\Jobs\\Current" }] } as never, "2027")).rejects.toThrow(/absolute path/);
     expect(existsSync(personalSkillsDirectory())).toBe(false);
-    expect(writeSkill(skill, "2027").action).toBe("created");
-    expect(() => appendVersionSection("label_structures", "On oak-ridge use MH-100.", "2028")).toThrow(/Not saved: this skill section/);
+    expect((await writeSkill(skill, "2027")).action).toBe("created");
+    await expect(appendVersionSection("label_structures", "On oak-ridge use MH-100.", "2028")).rejects.toThrow(/Not saved: this skill section/);
   });
 
   it("refuses to send a script with job data to Civil 3D", async () => {

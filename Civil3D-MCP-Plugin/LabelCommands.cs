@@ -3,8 +3,8 @@
 // listLabelStyles and listLabels run in CivilExecution.ReadAsync (main thread, no undo step). addLabel runs in
 // CivilExecution.WriteAsync (command context, document lock, one transaction, one undo step) and only creates labels
 // or assigns a label set (an alignment's or profile's LabelSetId); it never moves or reshapes the labeled object.
-// COGO points and their labels are not handled here at all. Late-bound lookups (style collections, label ids, network members,
-// release-specific label classes) go through Civil3DCompatibility only. No file access.
+// COGO points and their labels are not handled here at all. Labels are made with the typed Create methods; late-bound
+// lookups (some style collections, label ids, network members) go through Civil3DCompatibility only. No file access.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -17,17 +17,11 @@ namespace Civil3DMcpPlugin;
 /// styles per object type, the labels on an object, and new labels on alignments, profiles, surfaces, pipes and
 /// structures.
 ///
-/// The label API differs between Civil 3D releases (class names moved between namespaces, Create overloads take
-/// different arguments), so some label classes and style collections are reached late-bound through
-/// Civil3DCompatibility and CivilObjectUtils: a Create* helper lists candidate type names and tries every static
-/// Create overload whose parameters the matching Build*Arguments method can fill. That keeps the plugin loading on
-/// a release where one name is missing, at the cost of failing at run time ("Unable to create a ... label with the
-/// available Civil 3D API overloads") instead of at compile time.
-///
-/// Today only profile station labels go that way (CreateProfileStationLabel). Alignment station, surface spot
-/// elevation, pipe and structure labels call the typed Create methods (StationOffsetLabel, SurfaceElevationLabel,
-/// PipeLabel, StructureLabel). CreateSurfaceSpotLabel, BuildSingleObjectLabelArguments and
-/// BuildAlignmentStationLabelArguments are not called.
+/// Every label is made with the typed Create methods: StationOffsetLabel (alignment station), StationElevationLabel
+/// (profile station, in the first profile view of the profile's alignment), SurfaceElevationLabel, PipeLabel and
+/// StructureLabel. The label classes the earlier late-bound path looked for (ProfileStationLabel and the like) don't
+/// exist in Civil 3D 2027, so it always failed. Some style collections (label sets, pipe network label styles) and
+/// label ids are still read late-bound through Civil3DCompatibility and CivilObjectUtils.
 /// </summary>
 public static class LabelCommands
 {
@@ -40,7 +34,7 @@ public static class LabelCommands
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
     if (!new[] { "alignment", "profile", "surface", "pipe", "pipe_network", "structure" }.Contains(objectType, StringComparer.OrdinalIgnoreCase))
     {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"No label styles for '{objectType}'. Use alignment, profile, surface, pipe or structure.");
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"No label styles for '{objectType}'. Use alignment, profile, surface, pipe, pipe_network or structure.");
     }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -103,13 +97,15 @@ public static class LabelCommands
   /// <summary>
   /// Adds a label to object <c>objectName</c> of <c>objectType</c>. Supported combinations: alignment or profile with
   /// <c>labelType = "label_set"</c> (assigns the label set named by <c>labelStyle</c>, replacing the current one),
-  /// alignment or profile <c>station</c> (needs <c>station</c>), surface <c>spot_elevation</c> / <c>spot</c> (needs
+  /// alignment or profile <c>station</c> (needs <c>station</c>; a profile's goes in the first profile view of its
+  /// alignment, styled from the profile view Station Elevation label styles), surface <c>spot_elevation</c> / <c>spot</c> (needs
   /// <c>point</c> {x, y}), and pipe or structure labels (any <c>labelType</c>; a pipe label sits at mid-length, a
   /// structure label at the structure). Anything else is CIVIL3D.INVALID_INPUT listing what is supported.
   /// <c>objectType</c>, <c>objectName</c> and <c>labelType</c> are required. With no <c>labelStyle</c> the
   /// collection's first style is used; a <c>labelStyle</c> that isn't there is CIVIL3D.OBJECT_NOT_FOUND listing the
-  /// names that are. A missing station or point, or an alignment station off the alignment, is
-  /// CIVIL3D.INVALID_INPUT; an unknown object is CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step). The
+  /// names that are. A missing station or point, a station off the alignment or profile, or a profile whose alignment
+  /// has no profile view, is CIVIL3D.INVALID_INPUT; an unknown object, or no marker style for a label that needs one,
+  /// is CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step). The
   /// answer gives the style used and the new label's handle (none for a label set).
   /// </summary>
   public static Task<object?> AddLabelAsync(JsonObject? parameters)
@@ -145,7 +141,7 @@ public static class LabelCommands
         AlignmentCommands.RequireStation(alignment, station);
         // Station offset and spot elevation labels need a marker style too; the drawing's first one is used.
         var styleId = FindNamedStyle(((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.AlignmentLabelStyles.StationOffsetLabelStyles, transaction, labelStyle);
-        var labelId = CreateAlignmentStationLabel(alignment, styleId, station, ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.MarkerStyles.First());
+        var labelId = CreateAlignmentStationLabel(alignment, styleId, station, RequireMarkerStyle((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc));
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -176,9 +172,31 @@ public static class LabelCommands
       {
         var station = PluginRuntime.GetOptionalDouble(parameters, "station")
           ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Profile station labels require 'station'.");
-        // For "profile", GetLabelStyleCollection gives the profile label set styles, so the style comes from there.
-        var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
-        var labelId = CreateProfileStationLabel(target, styleId, station);
+        // A label at one station of a profile is a station elevation label in a profile view, styled from the profile
+        // view's Station Elevation label styles (not the profile label set styles, which are for label_set).
+        var typedCivilDoc = (Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc;
+        var profile = (Autodesk.Civil.DatabaseServices.Profile)target;
+        var styleId = FindNamedStyle(typedCivilDoc.Styles.LabelStyles.ProfileViewLabelStyles.StationElevationLabelStyles, transaction, labelStyle);
+        if (styleId.IsNull)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "The drawing has no profile view Station Elevation label style; add one (or import one from a template) first.");
+        }
+
+        var profileViewId = FirstProfileViewId(transaction, profile)
+          ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+            $"Profile station labels are placed in a profile view, and the alignment of profile '{objectName}' has none. Create a profile view first.");
+        double elevation;
+        try
+        {
+          elevation = profile.ElevationAt(station);
+        }
+        catch (Exception exception) when (exception is not JsonRpcDispatchException)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+            $"Station {station} is outside profile '{objectName}' ({profile.StartingStation:0.###} to {profile.EndingStation:0.###}).");
+        }
+
+        var labelId = Autodesk.Civil.DatabaseServices.StationElevationLabel.Create(profileViewId, styleId, RequireMarkerStyle(typedCivilDoc), station, elevation);
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -186,6 +204,8 @@ public static class LabelCommands
           ["labelType"] = labelType,
           ["labelStyle"] = ResolveObjectName(transaction, styleId),
           ["station"] = station,
+          ["elevation"] = elevation,
+          ["profileView"] = ResolveObjectName(transaction, profileViewId),
           ["handle"] = ResolveHandle(transaction, labelId),
           ["created"] = true,
         };
@@ -196,11 +216,11 @@ public static class LabelCommands
         var pointNode = PluginRuntime.GetParameter(parameters, "point") as JsonObject
           ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require 'point'.");
         var point = new Point2d(
-          pointNode["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.x."),
-          pointNode["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.y.")
+          pointNode["x"] is JsonValue xValue && xValue.TryGetValue<double>(out var x) ? x : throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.x as a number."),
+          pointNode["y"] is JsonValue yValue && yValue.TryGetValue<double>(out var y) ? y : throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Surface spot labels require point.y as a number.")
         );
         var styleId = FindNamedStyle(((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.SurfaceLabelStyles.SpotElevationLabelStyles, transaction, labelStyle);
-        var labelId = Autodesk.Civil.DatabaseServices.SurfaceElevationLabel.Create(target.ObjectId, point, styleId, ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.MarkerStyles.First());
+        var labelId = Autodesk.Civil.DatabaseServices.SurfaceElevationLabel.Create(target.ObjectId, point, styleId, RequireMarkerStyle((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc));
         return new Dictionary<string, object?>
         {
           ["objectType"] = objectType,
@@ -428,35 +448,29 @@ public static class LabelCommands
     return named ? throw LookupUtils.NotFound("Label style", labelStyle!, names) : ObjectId.Null;
   }
 
-  /// <summary>A surface spot elevation label through the late-bound Create overloads. Not called: AddLabelAsync uses
-  /// SurfaceElevationLabel.Create.</summary>
-  private static ObjectId CreateSurfaceSpotLabel(DBObject surface, ObjectId styleId, Point2d point)
+  /// <summary>The drawing's first marker style, which station offset, spot elevation and station elevation labels need;
+  /// CIVIL3D.OBJECT_NOT_FOUND when the drawing has none (a bare drawing not started from a Civil 3D template).</summary>
+  private static ObjectId RequireMarkerStyle(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc)
   {
-    return TryCreateLabel(
-      new[]
-      {
-        "Autodesk.Civil.DatabaseServices.Labels.SurfaceSpotElevationLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.SurfaceSpotElevationLabel, AeccDbMgd",
-      },
-      "surface spot elevation",
-      parameters => BuildSurfaceSpotLabelArguments(parameters, surface.ObjectId, styleId, point)
-    );
+    foreach (ObjectId markerStyleId in civilDoc.Styles.MarkerStyles)
+    {
+      if (!markerStyleId.IsNull) return markerStyleId;
+    }
+
+    throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+      "This label needs a marker style and the drawing has none. Add one (Settings > General > Multipurpose Styles > Marker Styles) or import one from a template, then try again.");
   }
 
-  /// <summary>A profile station label through the late-bound Create overloads of the candidate label classes; none
-  /// that works is CIVIL3D.TRANSACTION_FAILED (from TryCreateLabel).</summary>
-  private static ObjectId CreateProfileStationLabel(DBObject profile, ObjectId styleId, double station)
+  /// <summary>The first profile view of the profile's alignment, or null when it has none.</summary>
+  private static ObjectId? FirstProfileViewId(Transaction transaction, Autodesk.Civil.DatabaseServices.Profile profile)
   {
-    return TryCreateLabel(
-      new[]
-      {
-        "Autodesk.Civil.DatabaseServices.Labels.ProfileStationLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.ProfileStationLabel, AeccDbMgd",
-        "Autodesk.Civil.DatabaseServices.Labels.ProfileStationElevationLabel, AeccDbMgd",
-      },
-      "profile station",
-      parameters => BuildProfileStationLabelArguments(parameters, profile.ObjectId, styleId, station)
-    );
+    var alignment = CivilObjectUtils.GetRequiredObject<Autodesk.Civil.DatabaseServices.Alignment>(transaction, profile.AlignmentId, OpenMode.ForRead);
+    foreach (ObjectId profileViewId in alignment.GetProfileViewIds())
+    {
+      if (!profileViewId.IsNull) return profileViewId;
+    }
+
+    return null;
   }
 
   /// <summary>A station offset label on the alignment at <paramref name="station"/>, offset 0 (the label is placed
@@ -494,311 +508,6 @@ public static class LabelCommands
     }
 
     throw LookupUtils.NotFound("Label style", name, names);
-  }
-
-  /// <summary>
-  /// Creates a label by trying each candidate type's static Create overloads until one accepts arguments from
-  /// <paramref name="argumentBuilder"/> (which returns null for an overload it can't fill) and yields an object id.
-  /// When none does, throws CIVIL3D.TRANSACTION_FAILED.
-  /// </summary>
-  private static ObjectId TryCreateLabel(
-    IEnumerable<string> candidateTypeNames,
-    string labelDescription,
-    Func<Civil3DCompatibility.ParameterShape[], object?[]?> argumentBuilder)
-  {
-    foreach (var typeName in candidateTypeNames)
-    {
-      var type = Civil3DCompatibility.FindLoadedType(typeName);
-      if (type == null)
-      {
-        continue;
-      }
-
-      if (Civil3DCompatibility.TryInvokeStaticOverloads(
-        type,
-        "Create",
-        argumentBuilder,
-        out var result,
-        out var args))
-      {
-        var objectId = ExtractCreatedObjectId(result, args ?? Array.Empty<object?>());
-        if (objectId != ObjectId.Null)
-        {
-          return objectId;
-        }
-      }
-    }
-
-    throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Unable to create a {labelDescription} label with the available Civil 3D API overloads.");
-  }
-
-  /// <summary>
-  /// Fills a Create overload's parameters by type, in order: ObjectIds get the target then the style, points get the
-  /// label location, doubles get the coordinates; bool, int and string get neutral values. Returns null when a
-  /// parameter has any other type, so TryCreateLabel moves to the next overload. The other Build*Arguments methods
-  /// follow the same pattern.
-  /// </summary>
-  private static object?[]? BuildSurfaceSpotLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId surfaceId, ObjectId styleId, Point2d point)
-  {
-    var args = new object?[parameters.Length];
-    var objectIds = new Queue<ObjectId>(new[] { surfaceId, styleId });
-    var points2d = new Queue<Point2d>(new[] { point });
-    var doubles = new Queue<double>(new[] { point.X, point.Y, 0.0, 0.0 });
-
-    for (var i = 0; i < parameters.Length; i++)
-    {
-      var parameterType = parameters[i].Type;
-
-      if (parameterType == typeof(ObjectId))
-      {
-        args[i] = objectIds.Count > 0 ? objectIds.Dequeue() : ObjectId.Null;
-        continue;
-      }
-
-      if (parameterType == typeof(Point2d))
-      {
-        args[i] = points2d.Count > 0 ? points2d.Dequeue() : point;
-        continue;
-      }
-
-      if (parameterType == typeof(Point3d))
-      {
-        args[i] = new Point3d(point.X, point.Y, 0.0);
-        continue;
-      }
-
-      if (parameterType == typeof(double))
-      {
-        args[i] = doubles.Count > 0 ? doubles.Dequeue() : 0.0;
-        continue;
-      }
-
-      if (parameterType == typeof(bool))
-      {
-        args[i] = false;
-        continue;
-      }
-
-      if (parameterType == typeof(int))
-      {
-        args[i] = 0;
-        continue;
-      }
-
-      if (parameterType == typeof(string))
-      {
-        args[i] = string.Empty;
-        continue;
-      }
-
-      return null;
-    }
-
-    return args;
-  }
-
-  /// <summary>Create arguments for a profile station label: ids get the profile then the style, the first double gets
-  /// the station; see BuildSurfaceSpotLabelArguments.</summary>
-  private static object?[]? BuildProfileStationLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId profileId, ObjectId styleId, double station)
-  {
-    var args = new object?[parameters.Length];
-    var objectIds = new Queue<ObjectId>(new[] { profileId, styleId });
-    var doubles = new Queue<double>(new[] { station, 0.0, 0.0 });
-
-    for (var i = 0; i < parameters.Length; i++)
-    {
-      var parameterType = parameters[i].Type;
-
-      if (parameterType == typeof(ObjectId))
-      {
-        args[i] = objectIds.Count > 0 ? objectIds.Dequeue() : ObjectId.Null;
-        continue;
-      }
-
-      if (parameterType == typeof(double))
-      {
-        args[i] = doubles.Count > 0 ? doubles.Dequeue() : 0.0;
-        continue;
-      }
-
-      if (parameterType == typeof(Point2d))
-      {
-        args[i] = new Point2d(0.0, 0.0);
-        continue;
-      }
-
-      if (parameterType == typeof(Point3d))
-      {
-        args[i] = Point3d.Origin;
-        continue;
-      }
-
-      if (parameterType == typeof(bool))
-      {
-        args[i] = false;
-        continue;
-      }
-
-      if (parameterType == typeof(int))
-      {
-        args[i] = 0;
-        continue;
-      }
-
-      if (parameterType == typeof(string))
-      {
-        args[i] = string.Empty;
-        continue;
-      }
-
-      return null;
-    }
-
-    return args;
-  }
-
-  /// <summary>Create arguments for a label needing only the object and style ids. Not called.</summary>
-  private static object?[]? BuildSingleObjectLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId objectId, ObjectId styleId)
-  {
-    var args = new object?[parameters.Length];
-    var objectIds = new Queue<ObjectId>(new[] { objectId, styleId });
-
-    for (var i = 0; i < parameters.Length; i++)
-    {
-      var parameterType = parameters[i].Type;
-
-      if (parameterType == typeof(ObjectId))
-      {
-        args[i] = objectIds.Count > 0 ? objectIds.Dequeue() : ObjectId.Null;
-        continue;
-      }
-
-      if (parameterType == typeof(Point2d))
-      {
-        args[i] = new Point2d(0.0, 0.0);
-        continue;
-      }
-
-      if (parameterType == typeof(Point3d))
-      {
-        args[i] = Point3d.Origin;
-        continue;
-      }
-
-      if (parameterType == typeof(double))
-      {
-        args[i] = 0.0;
-        continue;
-      }
-
-      if (parameterType == typeof(bool))
-      {
-        args[i] = false;
-        continue;
-      }
-
-      if (parameterType == typeof(int))
-      {
-        args[i] = 0;
-        continue;
-      }
-
-      if (parameterType == typeof(string))
-      {
-        args[i] = string.Empty;
-        continue;
-      }
-
-      return null;
-    }
-
-    return args;
-  }
-
-  /// <summary>Create arguments for an alignment station label. Not called: alignment station labels use
-  /// StationOffsetLabel.Create.</summary>
-  private static object?[]? BuildAlignmentStationLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId alignmentId, ObjectId styleId, double station)
-  {
-    var args = new object?[parameters.Length];
-    var objectIds = new Queue<ObjectId>(new[] { alignmentId, styleId });
-    var doubles = new Queue<double>(new[] { station, 0.0, 0.0 });
-
-    for (var i = 0; i < parameters.Length; i++)
-    {
-      var parameterType = parameters[i].Type;
-
-      if (parameterType == typeof(ObjectId))
-      {
-        args[i] = objectIds.Count > 0 ? objectIds.Dequeue() : ObjectId.Null;
-        continue;
-      }
-
-      if (parameterType == typeof(double))
-      {
-        args[i] = doubles.Count > 0 ? doubles.Dequeue() : 0.0;
-        continue;
-      }
-
-      if (parameterType == typeof(Point2d))
-      {
-        args[i] = new Point2d(0.0, 0.0);
-        continue;
-      }
-
-      if (parameterType == typeof(Point3d))
-      {
-        args[i] = Point3d.Origin;
-        continue;
-      }
-
-      if (parameterType == typeof(bool))
-      {
-        args[i] = false;
-        continue;
-      }
-
-      if (parameterType == typeof(int))
-      {
-        args[i] = 0;
-        continue;
-      }
-
-      if (parameterType == typeof(string))
-      {
-        args[i] = string.Empty;
-        continue;
-      }
-
-      return null;
-    }
-
-    return args;
-  }
-
-  /// <summary>The new label's id: the return value, its ObjectId property, or an out argument's ObjectId.</summary>
-  private static ObjectId ExtractCreatedObjectId(object? result, object?[] args)
-  {
-    if (result is ObjectId objectId && objectId != ObjectId.Null)
-    {
-      return objectId;
-    }
-
-    var resultId = CivilObjectUtils.GetPropertyValue<ObjectId>(result, "ObjectId");
-    if (resultId != ObjectId.Null)
-    {
-      return resultId;
-    }
-
-    foreach (var arg in args)
-    {
-      var argId = CivilObjectUtils.GetPropertyValue<ObjectId>(arg, "ObjectId");
-      if (argId != ObjectId.Null)
-      {
-        return argId;
-      }
-    }
-
-    return ObjectId.Null;
   }
 
   /// <summary>An object's handle, or null for a null id or an object that can't be opened.</summary>

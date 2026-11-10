@@ -1,30 +1,28 @@
 // StmCommands.cs - starts Civil 3D's Storm and Sanitary Analysis / Hydraflow (.STM) dialogs. Methods
 // (CommandDispatcher.cs): exportStm, importStm, openStormSanitaryAnalysis, listSsaCapabilities. Caller:
-// src/tools/domains/hydrologyDomain.ts (civil3d_hydrology). Each handler queues an AutoCAD command (ExportSSA,
-// ImportSSA, AnalyzeGravityNetwork) with SendStringToExecute from inside CivilExecution.ReadAsync and returns at once;
-// the command and its dialog run after the request, outside the host gate, and the user picks the file there. So no
-// caller-supplied path is accepted (nothing to send through FileBoundary), and whatever ImportSSA changes is the
-// user's own command, not part of this request.
+// src/tools/domains/hydrologyDomain.ts (civil3d_hydrology). Each handler runs an AutoCAD command (ExportSSA,
+// ImportSSA, AnalyzeGravityNetwork) with Editor.CommandAsync inside CivilExecution.ExecuteInCommandContextAsync (the
+// host gate, command context, the verified drawing) and answers when the user has closed its dialog; the user picks
+// the file there. So no caller-supplied path is accepted (nothing to send through FileBoundary), and whatever ImportSSA
+// or the analysis changes happens inside the request as one undo step, not behind the host gate's back.
 using System.Text.Json.Nodes;
-using Autodesk.AutoCAD.ApplicationServices;
-using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace Civil3DMcpPlugin;
 
 /// <summary>
 /// Backend commands for STM (Storm and Sanitary Analysis) import/export.
-/// Uses SendStringToExecute for the AutoCAD command-line SSA commands.
-/// These commands invoke Civil 3D's built-in Storm and Sanitary Analysis
-/// dialog workflows via command line.
+/// Runs Civil 3D's built-in Storm and Sanitary Analysis dialog commands through
+/// the host gate (Editor.CommandAsync in command context) and waits for them.
 /// </summary>
 public static class StmCommands
 {
   // ──────────────────────────────────────────────
   //  Export to STM (Hydraflow Storm Sewers file)
   // ──────────────────────────────────────────────
-  /// <summary><c>exportStm</c>: queues ExportSSA, which opens Civil 3D's export dialog. <c>filePath</c> must be absent
-  /// (CIVIL3D.INVALID_INPUT otherwise: the dialog can't take one). Returns status "initiated" and notes; the drawing
-  /// isn't changed. CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
+  /// <summary><c>exportStm</c>: runs ExportSSA, which opens Civil 3D's export dialog, and answers when the user has
+  /// closed it (<see cref="RunDialogCommandAsync"/>). <c>filePath</c> must be absent (CIVIL3D.INVALID_INPUT otherwise:
+  /// the dialog can't take one). Returns status "completed" and notes; the drawing isn't changed.
+  /// CIVIL3D.COMMAND_FAILED when the command fails.</summary>
   public static Task<object?> ExportStmAsync(JsonObject? parameters)
   {
     var filePath = PluginRuntime.GetOptionalString(parameters, "filePath");
@@ -35,43 +33,30 @@ public static class StmCommands
         "ExportSSA is an interactive dialog and cannot bind a caller-supplied filePath. Omit filePath and choose the destination in Civil 3D.");
     }
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      // The ExportSSA command opens the Storm and Sanitary Analysis export dialog.
-      // The user chooses the destination in the dialog (a filePath was refused above).
-      var commandString = "ExportSSA\n";
-
-      try
-      {
-        doc.SendStringToExecute(commandString, true, false, false);
-      }
-      catch (System.Exception ex)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED",
-          $"Failed to execute ExportSSA command: {ex.Message}");
-      }
-
-      return new Dictionary<string, object?>
+    // The ExportSSA command opens the Storm and Sanitary Analysis export dialog.
+    // The user chooses the destination in the dialog (a filePath was refused above).
+    return RunDialogCommandAsync("ExportSSA", "Failed to execute ExportSSA command", () =>
+      new Dictionary<string, object?>
       {
         ["command"] = "ExportSSA",
-        ["status"] = "initiated",
-        ["message"] = "ExportSSA dialog opened. Choose a location to save the .STM file.",
+        ["status"] = "completed",
+        ["message"] = "The ExportSSA dialog was shown and closed; the .STM file is wherever the user saved it (or nowhere if they cancelled).",
         ["notes"] = new List<string>
         {
           "The ExportSSA command opens a dialog for exporting pipe network and catchment data to a Hydraflow Storm Sewers (.STM) file.",
           "The export includes pipe sizes, invert elevations, structure data, and catchment parameters.",
           "After export, the .STM file can be opened in Hydraflow Storm Sewers for detailed analysis.",
         },
-      };
-    });
+      });
   }
 
   // ──────────────────────────────────────────────
   //  Import from STM
   // ──────────────────────────────────────────────
-  /// <summary><c>importStm</c>: queues ImportSSA, which opens Civil 3D's import dialog; the user picks the .STM file
-  /// and the import (which can change pipes and catchments) runs as their command after this returns. <c>filePath</c>
-  /// must be absent (CIVIL3D.INVALID_INPUT). CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
+  /// <summary><c>importStm</c>: runs ImportSSA, which opens Civil 3D's import dialog; the user picks the .STM file and
+  /// the import (which can change pipes and catchments) runs inside this request, through the host gate, and is one
+  /// undo step (<see cref="RunDialogCommandAsync"/>). <c>filePath</c> must be absent (CIVIL3D.INVALID_INPUT).
+  /// CIVIL3D.COMMAND_FAILED when the command fails.</summary>
   public static Task<object?> ImportStmAsync(JsonObject? parameters)
   {
     var filePath = PluginRuntime.GetOptionalString(parameters, "filePath");
@@ -82,69 +67,75 @@ public static class StmCommands
         "ImportSSA is an interactive dialog and cannot bind a caller-supplied filePath. Omit filePath and choose the source in Civil 3D.");
     }
 
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
-    {
-      // The ImportSSA command opens the Storm and Sanitary Analysis import dialog.
-      var commandString = "ImportSSA\n";
-
-      try
-      {
-        doc.SendStringToExecute(commandString, true, false, false);
-      }
-      catch (System.Exception ex)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED",
-          $"Failed to execute ImportSSA command: {ex.Message}");
-      }
-
-      return new Dictionary<string, object?>
+    // The ImportSSA command opens the Storm and Sanitary Analysis import dialog.
+    return RunDialogCommandAsync("ImportSSA", "Failed to execute ImportSSA command", () =>
+      new Dictionary<string, object?>
       {
         ["command"] = "ImportSSA",
-        ["status"] = "initiated",
-        ["message"] = "ImportSSA dialog opened. Select the .STM file to import.",
+        ["status"] = "completed",
+        ["message"] = "The ImportSSA dialog was shown and closed. Whatever the user imported is in the drawing now (one undo step); check the pipes before relying on them.",
         ["notes"] = new List<string>
         {
           "The ImportSSA command opens a dialog for importing Hydraflow Storm Sewers (.STM) analysis results back into Civil 3D.",
           "Imported data updates pipe network sizes, invert elevations, and catchment parameters.",
           "Part matching settings should be configured before importing to ensure correct pipe/structure mapping.",
         },
-      };
-    });
+      });
   }
 
   // ──────────────────────────────────────────────
   //  Open Storm and Sanitary Analysis
   // ──────────────────────────────────────────────
-  /// <summary><c>openStormSanitaryAnalysis</c>: no parameters used. Queues AnalyzeGravityNetwork (the analysis dialog)
-  /// and returns status "initiated". CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
+  /// <summary><c>openStormSanitaryAnalysis</c>: takes no file (<c>filePath</c> is CIVIL3D.INVALID_INPUT, as on the
+  /// TypeScript side). Runs AnalyzeGravityNetwork (the analysis dialog, which can resize pipes and change their results
+  /// in the drawing) inside this request through the host gate, and answers status "completed" when the user has
+  /// closed it (<see cref="RunDialogCommandAsync"/>). CIVIL3D.COMMAND_FAILED when the command fails.</summary>
   public static Task<object?> OpenStormSanitaryAnalysisAsync(JsonObject? parameters)
   {
-    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+    if (!string.IsNullOrWhiteSpace(PluginRuntime.GetOptionalString(parameters, "filePath")))
     {
-      var commandString = "AnalyzeGravityNetwork\n";
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        "The analysis dialog works on the drawing's gravity networks and takes no file. Leave out filePath (to bring in an .stm file, use import_stm).");
+    }
 
-      try
-      {
-        doc.SendStringToExecute(commandString, true, false, false);
-      }
-      catch (System.Exception ex)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED",
-          $"Failed to open Storm and Sanitary Analysis: {ex.Message}");
-      }
-
-      return new Dictionary<string, object?>
+    return RunDialogCommandAsync("AnalyzeGravityNetwork", "Failed to open Storm and Sanitary Analysis", () =>
+      new Dictionary<string, object?>
       {
         ["command"] = "AnalyzeGravityNetwork",
-        ["status"] = "initiated",
-        ["message"] = "Storm and Sanitary Analysis dialog opened for gravity network analysis.",
+        ["status"] = "completed",
+        ["message"] = "The gravity network analysis dialog was shown and closed. Anything it changed in the drawing is one undo step.",
         ["notes"] = new List<string>
         {
           "Use this to perform detailed hydraulic analysis of gravity pipe networks.",
           "The analysis includes HGL/EGL calculations, capacity checks, and flow routing.",
           "Results can be exported to .STM format for further analysis.",
         },
-      };
+      });
+  }
+
+  /// <summary>
+  /// Runs <paramref name="commandName"/> (a dialog command) through the host gate in command context with
+  /// Editor.CommandAsync, as acad_command does, and answers with <paramref name="answer"/> once the command has ended:
+  /// whatever it changes in the drawing happens inside this request, on the verified drawing, as one undo step, with
+  /// no other request running meanwhile. While the user has the dialog open, other requests wait (or are refused as
+  /// busy after a minute, HostGuard). CIVIL3D.COMMAND_FAILED, starting with <paramref name="failure"/>, when it fails.
+  /// </summary>
+  private static Task<object?> RunDialogCommandAsync(string commandName, string failure, Func<Dictionary<string, object?>> answer)
+  {
+    return CivilExecution.ExecuteInCommandContextAsync<object?>(async () =>
+    {
+      var (doc, _) = CivilExecution.GetVerifiedActiveDocuments();
+      try
+      {
+        await doc.Editor.CommandAsync(commandName);
+      }
+      catch (System.Exception ex)
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.COMMAND_FAILED", $"{failure}: {ex.Message}");
+      }
+
+      return answer();
     });
   }
 

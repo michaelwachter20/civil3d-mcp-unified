@@ -5,7 +5,9 @@
 // Both run in CivilExecution.MeasureAsync: earthwork needs a temporary TIN volume surface, which is created in a
 // transaction that is never committed (the drawing keeps nothing; the lock leaves one blank undo step). The CSV is
 // written only through FileBoundary.WriteAllTextAtomic (allowed roots, .csv only, no overwrite unless asked). Pipe
-// network access is late-bound through CivilObjectUtils. Corridor material quantities are not supported (API_ERROR).
+// network access is late-bound through CivilObjectUtils. Corridor material quantities come from the corridor's QTO
+// material lists (QuantityCommands.CorridorMaterialLists); when there are none the estimate goes on with a note. CSV
+// fields are RFC 4180 quoted by DesignMath; lengths and volumes are labelled in the drawing's units (LF/CY or M/M3).
 using System.Collections;
 using System.Text;
 using System.Text.Json;
@@ -29,10 +31,13 @@ public static class CostEstimationCommands
   /// cut/fill when <c>includeEarthwork</c> (default true) and both <c>baseSurface</c> and <c>designSurface</c> are
   /// given, pipe network lengths (<c>includePipeLengths</c>), structure counts by part type
   /// (<c>includeStructureCounts</c>). Optional <c>payItems</c> (<c>{code, description, unit, unitPrice}</c>) add price
-  /// columns when a line matches by code or description; <c>overwrite</c> allows replacing the file. Doesn't change
-  /// the drawing; writes one file. Throws CIVIL3D.API_ERROR when <c>corridorName</c> is given with
-  /// <c>includeCorridorMaterials</c> (default true) or the drawing units aren't feet or meters, CIVIL3D.OBJECT_NOT_FOUND
-  /// / INVALID_INPUT for the surfaces, and FileBoundary's path errors (e.g. CIVIL3D.PATH_NOT_ALLOWED).
+  /// columns when a line matches by code or description; <c>overwrite</c> allows replacing the file. With
+  /// <c>corridorName</c> and <c>includeCorridorMaterials</c> (default true) each QTO material list of the corridor
+  /// (QuantityCommands.CorridorMaterialLists) adds a cut and a fill line; when there is none, or Civil 3D can't compute
+  /// one, the estimate goes on without it and <c>notes</c> says why. Lengths are LF in a feet drawing and M in meters,
+  /// volumes CY or M3. Doesn't change the drawing; writes one file (RFC 4180 CSV). Throws CIVIL3D.API_ERROR when
+  /// volumes are needed and the drawing units aren't feet or meters, CIVIL3D.OBJECT_NOT_FOUND / INVALID_INPUT for the
+  /// surfaces or the corridor, and FileBoundary's path errors (e.g. CIVIL3D.PATH_NOT_ALLOWED).
   /// </summary>
   public static Task<object?> ExportPayItemsAsync(JsonObject? parameters)
   {
@@ -54,6 +59,7 @@ public static class CostEstimationCommands
     return CivilExecution.MeasureAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var quantityLines = new List<Dictionary<string, object?>>();
+      var notes = new List<string>();
 
       // Earthwork volumes
       if (includeEarthwork && !string.IsNullOrWhiteSpace(baseSurface) && !string.IsNullOrWhiteSpace(designSurface))
@@ -63,20 +69,23 @@ public static class CostEstimationCommands
         quantityLines.Add(MakeLine("203.02", "Embankment (Fill)", unit, Math.Round(fill, 1), payItems));
       }
 
-      // Civil 3D exposes QTO totals through SampleLineGroup material lists,
-      // not through a Corridor.GetMaterialVolumes member.
+      // Civil 3D keeps corridor material totals in the QTO material lists of the sample-line groups, not on the corridor.
       if (includeCorridorMaterials && !string.IsNullOrWhiteSpace(corridorName))
       {
-        throw CorridorMaterialCapabilityError(corridorName!);
+        foreach (var (description, unit, quantity) in CorridorMaterialQuantities(civilDoc, database, transaction, corridorName!, notes))
+        {
+          quantityLines.Add(MakeLine(string.Empty, description, unit, quantity, payItems));
+        }
       }
 
       // Pipe network lengths
       if (includePipeLengths)
       {
+        var lengthUnit = DesignMath.LengthPayUnit(CivilObjectUtils.LinearUnits(database));
         var pipeNetworks = GetAllPipeNetworkLengths(civilDoc, transaction);
-        foreach (var (netName, lengthLf) in pipeNetworks)
+        foreach (var (netName, length) in pipeNetworks)
         {
-          quantityLines.Add(MakeLine(string.Empty, $"Pipe Network '{netName}' — Total Length", "LF", Math.Round(lengthLf, 1), payItems));
+          quantityLines.Add(MakeLine(string.Empty, $"Pipe Network '{netName}' — Total Length", lengthUnit, Math.Round(length, 1), payItems));
         }
       }
 
@@ -101,6 +110,7 @@ public static class CostEstimationCommands
         ["lineItemCount"] = quantityLines.Count,
         ["hasPricing"] = payItems.Count > 0,
         ["quantityLines"] = quantityLines,
+        ["notes"] = notes,
         ["exported"] = true,
       };
     });
@@ -112,9 +122,12 @@ public static class CostEstimationCommands
   /// calculateMaterialCostEstimate: prices the drawing's quantities (earthwork when <c>baseSurface</c> and
   /// <c>designSurface</c> are given, every pipe network's length, structure counts) with <c>payItems</c> (required, at
   /// least one with a description), adds <c>mobilizationPercent</c> (default 5) and <c>contingencyPercent</c> (default
-  /// 0), and returns line items, totals and the pay items that matched nothing. With <c>outputPath</c> also writes a
-  /// CSV (<c>overwrite</c> optional). Doesn't change the drawing. Throws CIVIL3D.INVALID_INPUT without pay items,
-  /// CIVIL3D.API_ERROR for any <c>corridorName</c> or unsupported units, plus surface and FileBoundary errors.
+  /// 0), and returns line items, totals and the pay items that matched nothing. <c>corridorName</c> adds the cut and
+  /// fill of each of the corridor's QTO material lists as in exportPayItems (skipped with a <c>notes</c> entry when
+  /// there are none or Civil 3D can't compute them). Lengths are LF in a feet drawing and M in meters. With
+  /// <c>outputPath</c> also writes an RFC 4180 CSV (<c>overwrite</c> optional). Doesn't change the drawing. Throws
+  /// CIVIL3D.INVALID_INPUT without pay items, CIVIL3D.API_ERROR for volumes in unsupported units, plus surface,
+  /// corridor and FileBoundary errors.
   /// </summary>
   public static Task<object?> CalculateMaterialCostEstimateAsync(JsonObject? parameters)
   {
@@ -139,6 +152,7 @@ public static class CostEstimationCommands
     {
       var lineItems = new List<Dictionary<string, object?>>();
       var matched = new HashSet<PayItem>();
+      var notes = new List<string>();
       double subtotal = 0;
 
       // Earthwork
@@ -149,17 +163,21 @@ public static class CostEstimationCommands
         AddCostLine(lineItems, payItems, matched, "203.02", "Embankment (Fill)", unit, Math.Round(fill, 1), ref subtotal);
       }
 
-      // Corridor materials
+      // Corridor materials, from the QTO material lists (see exportPayItems)
       if (!string.IsNullOrWhiteSpace(corridorName))
       {
-        throw CorridorMaterialCapabilityError(corridorName!);
+        foreach (var (description, unit, quantity) in CorridorMaterialQuantities(civilDoc, database, transaction, corridorName!, notes))
+        {
+          AddCostLine(lineItems, payItems, matched, string.Empty, description, unit, quantity, ref subtotal);
+        }
       }
 
       // Pipe lengths
+      var lengthUnit = DesignMath.LengthPayUnit(CivilObjectUtils.LinearUnits(database));
       var pipeNetworks = GetAllPipeNetworkLengths(civilDoc, transaction);
-      foreach (var (netName, lengthLf) in pipeNetworks)
+      foreach (var (netName, length) in pipeNetworks)
       {
-        AddCostLine(lineItems, payItems, matched, string.Empty, $"Pipe Network '{netName}'", "LF", Math.Round(lengthLf, 1), ref subtotal);
+        AddCostLine(lineItems, payItems, matched, string.Empty, $"Pipe Network '{netName}'", lengthUnit, Math.Round(length, 1), ref subtotal);
       }
 
       // Structure counts
@@ -184,6 +202,7 @@ public static class CostEstimationCommands
         ["totalEstimatedCost"] = Math.Round(total, 2),
         ["totalFormatted"] = $"${total:N2}",
         ["unmatchedPayItems"] = payItems.Where(item => !matched.Contains(item)).Select(item => item.Description).ToList(),
+        ["notes"] = notes,
         ["note"] = "Estimate is preliminary. Field verification of quantities required for bid documents. "
           + "Pay items are prices: each is matched to a quantity from the drawing by code or description, and one that matches nothing adds nothing.",
       };
@@ -280,38 +299,62 @@ public static class CostEstimationCommands
     var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurf.ObjectId, desSurf.ObjectId);
     var volumeSurface = CivilObjectUtils.GetRequiredObject<TinVolumeSurface>(transaction, volumeSurfaceId, OpenMode.ForRead);
     var properties = volumeSurface.GetVolumeProperties();
-    if (database.Insunits == UnitsValue.Meters)
-    {
-      return (properties.UnadjustedCutVolume, properties.UnadjustedFillVolume, "M3");
-    }
-
-    var cubicUnitsToCubicYards = database.Insunits == UnitsValue.Feet || database.Insunits.ToString().Contains("Survey", StringComparison.OrdinalIgnoreCase)
-        ? 1.0 / 27.0
-        : throw new JsonRpcDispatchException(
-          "CIVIL3D.API_ERROR",
-          $"Cannot convert drawing units '{database.Insunits}' to cubic yards for cost estimation.");
-
-    return (
-      properties.UnadjustedCutVolume * cubicUnitsToCubicYards,
-      properties.UnadjustedFillVolume * cubicUnitsToCubicYards,
-      "CY");
+    var (factor, unit) = PayVolumeUnit(database);
+    return (properties.UnadjustedCutVolume * factor, properties.UnadjustedFillVolume * factor, unit);
   }
 
-  /// <summary>The CIVIL3D.API_ERROR for corridor materials, which the Corridor API can't give (sample-line-group material lists can).</summary>
-  private static JsonRpcDispatchException CorridorMaterialCapabilityError(string corridorName)
+  /// <summary>How a volume in the drawing's cubic units becomes a pay quantity: M3 as is in a meters drawing, CY (cubic
+  /// feet / 27) in a feet or survey-feet drawing. CIVIL3D.API_ERROR for other units.</summary>
+  private static (double Factor, string Unit) PayVolumeUnit(Database database)
   {
-    return new JsonRpcDispatchException(
-      "CIVIL3D.API_ERROR",
-      $"Corridor material quantities for '{corridorName}' cannot be read from Corridor in the Civil 3D .NET API. " +
-      "Civil 3D exposes material totals through SampleLineGroup.GetTotalVolumeResultDataForMaterialList(Guid); " +
-      "supply a sample-line-group/material-list mapping in a dedicated QTO workflow instead.");
+    return CivilObjectUtils.LinearUnits(database) switch
+    {
+      "meters" => (1.0, "M3"),
+      "feet" => (1.0 / 27.0, "CY"),
+      _ => throw new JsonRpcDispatchException(
+        "CIVIL3D.API_ERROR",
+        $"Cannot convert drawing units '{database.Insunits}' to cubic yards or cubic meters for cost estimation."),
+    };
   }
 
   /// <summary>
-  /// Total pipe length (3D, else 2D, else Length) per gravity pipe network, read late-bound; networks with no length
-  /// are left out. Named "Lf" but in drawing units. Any error yields whatever was collected so far.
+  /// Pay quantities from corridor <paramref name="corridorName"/>'s QTO material lists (QuantityCommands
+  /// .CorridorMaterialLists): a cut and a fill line per list, in CY or M3. Never fails the estimate for what Civil 3D
+  /// can't give: no material list, or a list it can't compute, adds a line to <paramref name="notes"/> instead. An
+  /// unknown corridor is still CIVIL3D.OBJECT_NOT_FOUND (a wrong name should be fixed, not skipped).
   /// </summary>
-  private static List<(string NetworkName, double LengthLf)> GetAllPipeNetworkLengths(object civilDoc, Transaction transaction)
+  private static List<(string Description, string Unit, double Quantity)> CorridorMaterialQuantities(
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Database database, Transaction transaction, string corridorName, List<string> notes)
+  {
+    var lines = new List<(string, string, double)>();
+    var lists = QuantityCommands.CorridorMaterialLists(civilDoc, transaction, corridorName, withVolumes: true);
+    if (lists.Count == 0)
+    {
+      notes.Add(QuantityCommands.NoMaterialListNote(corridorName) + " Corridor materials were left out of this estimate.");
+      return lines;
+    }
+
+    var (factor, unit) = PayVolumeUnit(database);
+    foreach (var list in lists)
+    {
+      if (list.Error != null || list.CutVolume is null || list.FillVolume is null)
+      {
+        notes.Add($"Material list '{list.MaterialList}' ({list.SampleLineGroup}) was left out: {list.Error ?? "it has no sample-line results"}");
+        continue;
+      }
+
+      lines.Add(($"Corridor '{corridorName}' {list.MaterialList} — Cut", unit, Math.Round(list.CutVolume.Value * factor, 1)));
+      lines.Add(($"Corridor '{corridorName}' {list.MaterialList} — Fill", unit, Math.Round(list.FillVolume.Value * factor, 1)));
+    }
+
+    return lines;
+  }
+
+  /// <summary>
+  /// Total pipe length (3D, else 2D, else Length) per gravity pipe network, in drawing units, read late-bound; networks
+  /// with no length are left out. Any error yields whatever was collected so far.
+  /// </summary>
+  private static List<(string NetworkName, double Length)> GetAllPipeNetworkLengths(object civilDoc, Transaction transaction)
   {
     var results = new List<(string, double)>();
     try
@@ -387,7 +430,8 @@ public static class CostEstimationCommands
     return counts.Select(kv => ($"{kv.Key} (Structure)", (double)kv.Value)).ToList();
   }
 
-  /// <summary>The pay-item CSV text, with price columns only when pay items were given. Text fields are quoted but not escaped.</summary>
+  /// <summary>The pay-item CSV text, with price columns only when pay items were given. Every field is RFC 4180 quoted
+  /// when it needs it and numbers use a dot (DesignMath.CsvLine).</summary>
   private static string BuildCsv(List<Dictionary<string, object?>> lines, bool hasPricing)
   {
     var sb = new StringBuilder();
@@ -397,26 +441,26 @@ public static class CostEstimationCommands
 
     foreach (var line in lines)
     {
-      if (hasPricing)
-        sb.AppendLine($"\"{line["payItemCode"]}\",\"{line["description"]}\",\"{line["unit"]}\",{line["quantity"]},{line["unitPrice"] ?? ""},{ line["totalCost"] ?? ""}");
-      else
-        sb.AppendLine($"\"{line["payItemCode"]}\",\"{line["description"]}\",\"{line["unit"]}\",{line["quantity"]}");
+      sb.AppendLine(hasPricing
+        ? DesignMath.CsvLine([line["payItemCode"], line["description"], line["unit"], line["quantity"], line["unitPrice"], line["totalCost"]])
+        : DesignMath.CsvLine([line["payItemCode"], line["description"], line["unit"], line["quantity"]]));
     }
     return sb.ToString();
   }
 
-  /// <summary>The cost-estimate CSV text: line items, then subtotal, mobilization, contingency and total rows.</summary>
+  /// <summary>The cost-estimate CSV text: line items, then subtotal, mobilization, contingency and total rows, quoted
+  /// and formatted like <see cref="BuildCsv"/>.</summary>
   private static string BuildCostCsv(List<Dictionary<string, object?>> lineItems, double subtotal, double mob, double contingency, double total)
   {
     var sb = new StringBuilder();
     sb.AppendLine("Pay Item Code,Description,Unit,Quantity,Unit Price,Line Total");
     foreach (var item in lineItems)
-      sb.AppendLine($"\"{item["payItemCode"]}\",\"{item["description"]}\",\"{item["unit"]}\",{item["quantity"]},{item["unitPrice"]},{item["lineTotal"]}");
+      sb.AppendLine(DesignMath.CsvLine([item["payItemCode"], item["description"], item["unit"], item["quantity"], item["unitPrice"], item["lineTotal"]]));
     sb.AppendLine();
-    sb.AppendLine($",,,,Subtotal,{subtotal:F2}");
-    sb.AppendLine($",,,,Mobilization,{mob:F2}");
-    sb.AppendLine($",,,,Contingency,{contingency:F2}");
-    sb.AppendLine($",,,,TOTAL,{total:F2}");
+    sb.AppendLine(DesignMath.CsvLine([null, null, null, null, "Subtotal", Math.Round(subtotal, 2)]));
+    sb.AppendLine(DesignMath.CsvLine([null, null, null, null, "Mobilization", Math.Round(mob, 2)]));
+    sb.AppendLine(DesignMath.CsvLine([null, null, null, null, "Contingency", Math.Round(contingency, 2)]));
+    sb.AppendLine(DesignMath.CsvLine([null, null, null, null, "TOTAL", Math.Round(total, 2)]));
     return sb.ToString();
   }
 }

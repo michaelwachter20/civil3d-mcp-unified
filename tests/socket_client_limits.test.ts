@@ -1,5 +1,6 @@
 // Guards the response limits and text decoding of src/utils/SocketClient.ts: an oversized plugin reply is rejected, and a
-// character split across two TCP chunks is kept whole. Uses a fake plugin server; no Civil 3D.
+// character split across two TCP chunks is kept whole, and a method that waits on a Civil 3D dialog gets the long
+// timeout. Uses a fake plugin server; no Civil 3D.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as net from "node:net";
@@ -7,6 +8,18 @@ import * as net from "node:net";
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.resetModules();
+});
+
+describe("command timeouts", () => {
+  it("gives methods that wait for the user to close a Civil 3D dialog the long dialog timeout", async () => {
+    vi.stubEnv("CIVIL3D_COMMAND_TIMEOUT", "120000");
+    vi.stubEnv("CIVIL3D_DIALOG_TIMEOUT", "1800000");
+    const { commandTimeoutMs } = await import("../src/utils/SocketClient.js");
+    for (const method of ["exportStm", "importStm", "openStormSanitaryAnalysis", "syncDataShortcuts", "dataShortcutReferenceSyncWorkflow"]) {
+      expect(commandTimeoutMs(method)).toBe(1_800_000);
+    }
+    expect(commandTimeoutMs("listAlignments")).toBe(120_000);
+  });
 });
 
 describe("ApplicationClientConnection response limits", () => {

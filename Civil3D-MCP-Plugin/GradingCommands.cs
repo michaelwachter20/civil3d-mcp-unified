@@ -22,7 +22,10 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class GradingCommands
 {
-  private const string OutOfReach =
+  /// <summary>The refusal every grading-group/grading method gives (also WorkflowCommands' feature-line-to-grading
+  /// workflow). Checked against Civil 3D 2027: the .NET Grading class has no public members, there is no public
+  /// GradingGroup type, Site has no grading access, and the COM land interop has only grading styles and settings.</summary>
+  internal const string OutOfReach =
     "Civil 3D's API doesn't reach grading groups or gradings, in .NET or COM. Use the Grading Creation Tools. A group's surface is an ordinary surface, so the surface tools can read it and its volumes. Nothing was changed.";
 
   // -------------------------------------------------------------------------

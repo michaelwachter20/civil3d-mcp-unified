@@ -2,8 +2,8 @@
 // is one call to PointCommands.cs or PointGroupCommands.cs. Safety: COGO points are survey data, so every write here
 // (create, import, import_file, delete, group_*, transform) needs an approvalToken (approvalPolicy.ts), create and
 // typed-in import are also confirmed by the user inside Civil 3D, and transform refuses to move every point unless
-// allPoints: true is given (the one check done in Node). Export also needs approval (export capability) although it
-// only returns text. Details per schema and action are in the comments below.
+// allPoints: true is given (the one check done in Node). Export also needs approval (its name, "export", matches
+// approvalPolicy's name rule) although it only returns text. Details per schema and action are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -69,6 +69,14 @@ const PointTransformSelectionShape = {
   allPoints: z.boolean().optional().describe("transform: true to move every point in the drawing (needed when no pointNumbers or groupName is given)"),
 };
 
+const BASE_POINT_DESCRIPTION = "transform: base point (drawing coordinates) the scale/rotation turns about; required when scaleFactor != 1 or rotateRadians != 0";
+
+/** The base point `transform` scales and rotates about. */
+const PointTransformBaseShape = {
+  baseX: z.number().optional().describe(BASE_POINT_DESCRIPTION),
+  baseY: z.number().optional().describe(BASE_POINT_DESCRIPTION),
+};
+
 /**
  * Every argument any `civil3d_point` action takes, all optional except `action`: the one input schema MCP clients
  * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
@@ -92,7 +100,7 @@ const canonicalPointInputShape = {
   groupName: z.string().optional(),
   limit: z.number().optional(),
   offset: z.number().optional(),
-  pointNumber: z.number().optional(),
+  pointNumber: z.number().int().positive().optional(),
   points: z.array(PointCreateSchema).optional(),
   startNumber: z.number().int().positive().optional(),
   format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
@@ -116,6 +124,7 @@ const canonicalPointInputShape = {
   translateZ: z.number().optional(),
   rotateRadians: z.number().optional(),
   scaleFactor: z.number().positive().optional(),
+  ...PointTransformBaseShape,
   easting: z.number().optional(),
   northing: z.number().optional(),
   elevation: z.number().optional(),
@@ -131,7 +140,7 @@ const PointListArgsSchema = z.object({
 
 const PointGetArgsSchema = z.object({
   action: z.literal("get"),
-  pointNumber: z.number(),
+  pointNumber: z.number().int().positive(),
 });
 
 const PointCreateArgsSchema = z.object({
@@ -170,7 +179,7 @@ const PointListFormatsArgsSchema = z.object({
 
 const PointDeleteArgsSchema = z.object({
   action: z.literal("delete"),
-  pointNumbers: z.array(z.number()).min(1),
+  pointNumbers: z.array(z.number().int().positive()).min(1),
 });
 
 /**
@@ -215,7 +224,7 @@ const PointExportArgsSchema = z.object({
 
 /**
  * `transform`: moves points in place. The plugin scales, then rotates (radians, counter-clockwise), both about the
- * drawing origin (0,0), not about the points, then translates; elevations are only translated.
+ * base point (baseX, baseY; required when it scales or rotates), then translates; elevations are only translated.
  */
 const PointTransformArgsSchema = z.object({
   action: z.literal("transform"),
@@ -225,6 +234,13 @@ const PointTransformArgsSchema = z.object({
   translateZ: z.number().optional(),
   rotateRadians: z.number().optional(),
   scaleFactor: z.number().positive().optional(),
+  ...PointTransformBaseShape,
+}).refine((value) => {
+  const turns = (value.scaleFactor !== undefined && value.scaleFactor !== 1) || (value.rotateRadians !== undefined && value.rotateRadians !== 0);
+  return !turns || (value.baseX !== undefined && value.baseY !== undefined);
+}, {
+  message: "A scale or rotation turns about a base point: give baseX and baseY (drawing coordinates).",
+  path: ["baseX"],
 });
 
 /**
@@ -241,7 +257,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
   // approval: create (createCogoPoints), import (importCogoPoints), import_file (importPointFile), delete
   // (deleteCogoPoints), group_create / group_update / group_delete (createPointGroup / updatePointGroup /
   // deletePointGroup; deleting a group keeps its points), transform (transformCogoPoints). export (exportCogoPoints)
-  // reads only but is approval-gated by its export capability.
+  // reads only (declared query/inspect) but is approval-gated by its name.
   actions: {
     list: {
       action: "list",
@@ -413,11 +429,13 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Returns the points as text and writes no file, so it is declared a read (`export` means a file). Its name is
+    // "export", so approvalPolicy's name rule still asks for a token.
     export: {
       action: "export",
       inputSchema: PointExportArgsSchema,
       responseSchema: PointMutationResponseSchema,
-      capabilities: ["query", "export"],
+      capabilities: ["query", "inspect"],
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["exportCogoPoints"],
@@ -440,7 +458,8 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
       safeForRetry: false,
       pluginMethods: ["transformCogoPoints"],
       // Without pointNumbers or groupName the plugin moves every point in the drawing; that has to be asked for
-      // in so many words (allPoints: true), so a forgotten selection can't move all the survey data.
+      // in so many words (allPoints: true), so a forgotten selection can't move all the survey data. allPoints is
+      // also sent: the plugin refuses a whole-drawing transform without it.
       execute: async (args) => {
         const named = Array.isArray(args.pointNumbers) && args.pointNumbers.length > 0;
         if (!named && !args.groupName && args.allPoints !== true) {
@@ -450,11 +469,14 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("transformCogoPoints", {
           pointNumbers: args.pointNumbers ?? null,
           groupName: args.groupName ?? null,
+          allPoints: args.allPoints === true,
           translateX: args.translateX ?? 0,
           translateY: args.translateY ?? 0,
           translateZ: args.translateZ ?? 0,
           rotateRadians: args.rotateRadians ?? 0,
           scaleFactor: args.scaleFactor ?? 1.0,
+          baseX: args.baseX ?? null,
+          baseY: args.baseY ?? null,
         }),
         );
       },
@@ -593,6 +615,7 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
         translateZ: z.number().optional(),
         rotateRadians: z.number().optional(),
         scaleFactor: z.number().optional(),
+        ...PointTransformBaseShape,
       },
       supportedActions: ["transform"],
       resolveAction: (rawArgs) => ({
@@ -607,6 +630,8 @@ export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
           translateZ: rawArgs.translateZ,
           rotateRadians: rawArgs.rotateRadians,
           scaleFactor: rawArgs.scaleFactor,
+          baseX: rawArgs.baseX,
+          baseY: rawArgs.baseY,
         },
       }),
     },

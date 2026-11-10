@@ -1,12 +1,15 @@
 // civil3d_skills: the skill library. Reads the built-in skills shipped in skills\ (read-only) and the user's skills in
 // <shared folder>\civil3d\skills (or CIVIL3D_USER_SKILLS_DIR), and writes only the user's. Used by scriptingDomain.ts
 // (the tool) and serverInstructions.ts (the list of skills in every AI's instructions). Every written skill passes the
-// job-data check (generalKnowledge.ts); a replaced or retired skill is moved to skills\_archive, never deleted; files
-// are written with an atomic rename (writeAtomically from knowledgeBase.ts; no lock file here). Never calls the plugin:
-// the AI runs a skill's C# itself through civil3d_query / civil3d_execute. Format and rules in the block below.
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+// job-data check (generalKnowledge.ts); a replaced or retired skill is kept in skills\_archive, never deleted. Every
+// change holds <user skills>\skills.lock (withFileLock, like the other knowledge files), keeps the previous version in
+// the archive before the new one is written, and writes with an atomic rename (writeAtomically), so a failed write
+// never leaves the skill only in the archive. Never calls the plugin: the AI runs a skill's C# itself through
+// civil3d_query / civil3d_execute. Format and rules in the block below.
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withFileLock } from "../utils/atomicFiles.js";
 import { checkGeneral } from "./generalKnowledge.js";
 import { knowHowPath, knowledgeError, writeAtomically } from "./knowledgeBase.js";
 
@@ -332,14 +335,46 @@ export function readSkill(skillName: string, current?: string) {
 
 const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 
-/** Keeps the previous version of a user skill in skills\_archive (add, never delete). */
-function archive(file: string, reason: string) {
+/**
+ * Keeps a version of a user skill in skills\_archive (add, never delete): `move` takes the file out of the library
+ * (retire, or a skill whose new version went to another category), otherwise a copy is kept and the file stays until
+ * the new version replaces it.
+ */
+function archive(file: string, reason: string, mode: "move" | "copy" = "move") {
   const archiveDir = path.join(personalSkillsDirectory(), ARCHIVE_FOLDER);
   mkdirSync(archiveDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const target = path.join(archiveDir, `${path.basename(file, ".skill.md")}.${stamp}.${reason}.skill.md`);
-  renameSync(file, target);
+  if (mode === "move") renameSync(file, target);
+  else copyFileSync(file, target);
   return target;
+}
+
+/** Runs one change of the user's skills while holding <user skills>\skills.lock; the cache is re-read inside it. */
+async function withSkillsLock<T>(work: () => T): Promise<T> {
+  const root = personalSkillsDirectory();
+  mkdirSync(root, { recursive: true });
+  return await withFileLock(path.join(root, "skills"), () => {
+    invalidateSkillCache();
+    return work();
+  });
+}
+
+const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+
+/**
+ * Writes a new version of a skill to `target`, keeping `previous` (the user's current file, if any) in the archive
+ * first: a copy when the new version replaces it in place, else (another category) it is moved there only after the
+ * new file is written. Either way a failed write leaves the current version where it was.
+ */
+function replaceSkillFile(target: string, text: string, previous: string | undefined, reason: string): string | undefined {
+  if (previous && samePath(previous, target)) {
+    const archived = archive(previous, reason, "copy");
+    writeAtomically(target, text);
+    return archived;
+  }
+  writeAtomically(target, text);
+  return previous ? archive(previous, reason, "move") : undefined;
 }
 
 /**
@@ -389,9 +424,9 @@ export interface SkillWriteInput {
  * Creates or improves a user skill, verified on `release`. The previous version is archived. A skill verified
  * only on other releases is refused (use appendVersionSection). Writing a built-in skill's name saves the
  * user's version, which then replaces the built-in one. Throws INVALID_INPUT for a bad name or category, an empty
- * description or body, or job data. Writes <personal skills>\<category>\<name>.skill.md.
+ * description or body, or job data. Writes <personal skills>\<category>\<name>.skill.md under the skills lock.
  */
-export function writeSkill(input: SkillWriteInput, release: string) {
+export async function writeSkill(input: SkillWriteInput, release: string) {
   const name = input.name.trim().toLowerCase();
   const category = (input.category ?? "general").trim().toLowerCase();
   if (!NAME_PATTERN.test(name)) throw knowledgeError("CIVIL3D.INVALID_INPUT", `Invalid skill name '${input.name}'. Use 1-64 lowercase letters, digits, '-' or '_'.`);
@@ -400,71 +435,80 @@ export function writeSkill(input: SkillWriteInput, release: string) {
   if (!input.content.trim()) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Skill content is empty.");
   checkGeneral("skill", name, category, input.description, input.content, input.parameters);
 
-  const existing = findSkill(name);
-  if (existing && existing.versions.length > 0 && !existing.versions.includes(release)) {
-    throw knowledgeError("CIVIL3D.CONFLICT",
-      `'${name}' was verified on Civil 3D ${existing.versions.join(", ")}, not ${release}. Keep that version and add what's different ` +
-      `for ${release} with action=append_version_section.`);
-  }
+  return await withSkillsLock(() => {
+    const existing = findSkill(name);
+    if (existing && existing.versions.length > 0 && !existing.versions.includes(release)) {
+      throw knowledgeError("CIVIL3D.CONFLICT",
+        `'${name}' was verified on Civil 3D ${existing.versions.join(", ")}, not ${release}. Keep that version and add what's different ` +
+        `for ${release} with action=append_version_section.`);
+    }
 
-  const versions = [...new Set([...(existing?.versions ?? []), release])];
-  const text = render({
-    name, category, description: input.description, requiresWrite: Boolean(input.requiresWrite),
-    parameters: input.parameters ?? [], versions,
-  }, `${banner(versions)}\n\n${stripBanner(input.content.trim())}`);
+    const versions = [...new Set([...(existing?.versions ?? []), release])];
+    const text = render({
+      name, category, description: input.description, requiresWrite: Boolean(input.requiresWrite),
+      parameters: input.parameters ?? [], versions,
+    }, `${banner(versions)}\n\n${stripBanner(input.content.trim())}`);
 
-  const archived = existing?.source === "personal" && existing.filePath ? archive(existing.filePath, "replaced") : undefined;
-  const target = path.join(personalSkillsDirectory(), category, `${name}.skill.md`);
-  writeAtomically(target, text);
-  invalidateSkillCache();
-  const replacesBuiltIn = existing?.source === "built-in" || Boolean(existing?.overridesBuiltIn);
-  return {
-    success: true,
-    name,
-    category,
-    civil3dVersions: versions,
-    path: target,
-    action: existing?.source === "personal" ? "updated" : "created",
-    ...(archived ? { previousVersionArchived: archived } : {}),
-    ...(replacesBuiltIn ? {
-      overridesBuiltIn: true,
-      note: `Your version now replaces the built-in '${name}' skill. Retire it to go back to the built-in one.`,
-    } : {}),
-  };
+    const target = path.join(personalSkillsDirectory(), category, `${name}.skill.md`);
+    const previous = existing?.source === "personal" && existing.filePath ? existing.filePath : undefined;
+    const archived = replaceSkillFile(target, text, previous, "replaced");
+    invalidateSkillCache();
+    const replacesBuiltIn = existing?.source === "built-in" || Boolean(existing?.overridesBuiltIn);
+    return {
+      success: true,
+      name,
+      category,
+      civil3dVersions: versions,
+      path: target,
+      action: existing?.source === "personal" ? "updated" : "created",
+      ...(archived ? { previousVersionArchived: archived } : {}),
+      ...(replacesBuiltIn ? {
+        overridesBuiltIn: true,
+        note: `Your version now replaces the built-in '${name}' skill. Retire it to go back to the built-in one.`,
+      } : {}),
+    };
+  });
 }
 
-/** Adds a "## Civil 3D <release>" section to a skill verified on other releases, keeping everything else. */
-export function appendVersionSection(skillName: string, sectionContent: string, release: string) {
-  const skill = findSkill(skillName);
-  if (!skill) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `Skill '${skillName}' not found.`);
+/**
+ * Adds a "## Civil 3D <release>" section to a skill verified on other releases, keeping everything else; under the
+ * skills lock, the previous version archived first (replaceSkillFile).
+ */
+export async function appendVersionSection(skillName: string, sectionContent: string, release: string) {
   if (!sectionContent.trim()) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The section is empty.");
   checkGeneral("skill section", sectionContent);
-  if (skill.versions.includes(release)) {
-    throw knowledgeError("CIVIL3D.CONFLICT", `'${skill.name}' is already verified on Civil 3D ${release}; improve it with action=write instead.`);
-  }
+  return await withSkillsLock(() => {
+    const skill = findSkill(skillName);
+    if (!skill) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `Skill '${skillName}' not found.`);
+    if (skill.versions.includes(release)) {
+      throw knowledgeError("CIVIL3D.CONFLICT", `'${skill.name}' is already verified on Civil 3D ${release}; improve it with action=write instead.`);
+    }
 
-  const versions = [...skill.versions, release];
-  const body = `${banner(versions)}\n\n${stripBanner(skill.content)}\n\n## Civil 3D ${release}\n\n${sectionContent.replace(/\r\n?/g, "\n").trim()}`;
-  const text = render({ ...skill, versions }, body);
-  const archived = skill.source === "personal" && skill.filePath ? archive(skill.filePath, "before-" + release) : undefined;
-  const target = path.join(personalSkillsDirectory(), skill.category, `${skill.name}.skill.md`);
-  writeAtomically(target, text);
-  invalidateSkillCache();
-  return { success: true, name: skill.name, civil3dVersions: versions, path: target, ...(archived ? { previousVersionArchived: archived } : {}) };
+    const versions = [...skill.versions, release];
+    const body = `${banner(versions)}\n\n${stripBanner(skill.content)}\n\n## Civil 3D ${release}\n\n${sectionContent.replace(/\r\n?/g, "\n").trim()}`;
+    const text = render({ ...skill, versions }, body);
+    const target = path.join(personalSkillsDirectory(), skill.category, `${skill.name}.skill.md`);
+    const previous = skill.source === "personal" && skill.filePath ? skill.filePath : undefined;
+    const archived = replaceSkillFile(target, text, previous, "before-" + release);
+    invalidateSkillCache();
+    return { success: true, name: skill.name, civil3dVersions: versions, path: target, ...(archived ? { previousVersionArchived: archived } : {}) };
+  });
 }
 
-/** Retires a user skill: moves it to skills\_archive. Built-in skills can't be retired, only replaced. */
-export function retireSkill(skillName: string) {
+/** Retires a user skill: moves it to skills\_archive, under the skills lock. Built-in skills can't be retired, only replaced. */
+export async function retireSkill(skillName: string) {
   const name = skillName.trim().toLowerCase().replace(/\.skill\.md$/, "");
-  const root = personalSkillsDirectory();
-  const files = existsSync(root) ? findSkillFiles(root).filter((file) => path.basename(file, ".skill.md").toLowerCase() === name) : [];
-  const builtIn = loadFrom(resolveSkillsDirectory(), "built-in").some((skill) => skill.name.toLowerCase() === name);
-  if (files.length === 0) {
-    throw builtIn
-      ? knowledgeError("CIVIL3D.INVALID_INPUT", `'${name}' is a built-in skill and can't be retired. To change it, write your own version with the same name.`)
-      : knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No user skill named '${name}'.`);
-  }
-  const archived = files.map((file) => archive(file, "retired"));
-  invalidateSkillCache();
-  return { success: true, retired: name, archivedTo: archived, builtInVersionActiveAgain: builtIn };
+  return await withSkillsLock(() => {
+    const root = personalSkillsDirectory();
+    const files = existsSync(root) ? findSkillFiles(root).filter((file) => path.basename(file, ".skill.md").toLowerCase() === name) : [];
+    const builtIn = loadFrom(resolveSkillsDirectory(), "built-in").some((skill) => skill.name.toLowerCase() === name);
+    if (files.length === 0) {
+      throw builtIn
+        ? knowledgeError("CIVIL3D.INVALID_INPUT", `'${name}' is a built-in skill and can't be retired. To change it, write your own version with the same name.`)
+        : knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No user skill named '${name}'.`);
+    }
+    const archived = files.map((file) => archive(file, "retired"));
+    invalidateSkillCache();
+    return { success: true, retired: name, archivedTo: archived, builtInVersionActiveAgain: builtIn };
+  });
 }

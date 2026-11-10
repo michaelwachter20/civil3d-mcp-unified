@@ -321,6 +321,9 @@ try
   var samples = PipeMath.SampleParameters(12, 5);
   Assert(samples.Count == 4 && samples[0] == 0 && samples[^1] == 1, "A 12-unit pipe sampled every 5: 0, 1/3, 2/3, 1.");
 
+  // HGL over a network's topology, units, detention sizing and CSV quoting (NetworkMathChecks.cs).
+  NetworkMathChecks.Run();
+
   // A section keeps its ends and thins evenly (StationMath.EvenIndices).
   Assert(StationMath.EvenIndices(5, 200).SequenceEqual(new[] { 0, 1, 2, 3, 4 }), "A short section is left alone.");
   var thinned = StationMath.EvenIndices(1377, 200);
@@ -360,6 +363,7 @@ try
     $"Downhill takes longer than uphill: {SightMath.StoppingFeet(40, -3)}, {SightMath.StoppingFeet(40, 3)}");
   Assert(SightMath.PassingDistanceFeet(10) == 400 && SightMath.PassingDistanceFeet(90) == 1400 && SightMath.PassingDistanceFeet(42.5) == 650,
     "Passing distance interpolates, and holds at the ends of the table.");
+  CheckUnitsVerticesCurvesAndProjection();
 
   // Stations every interval (StationMath): the end kept despite rounding, names with a dot on any PC.
   var tenths = StationMath.IntervalStations(0, 1, 0.1);
@@ -410,6 +414,9 @@ try
          && !PointCreationRules.IsCreateCommand("IMPORTPOINTS"),
     "CREATEPOINTS asks; IMPORTPOINTS (Civil 3D's own importer) doesn't.");
 
+  // Safety fixes: no exports into the shared folder, held folder locks, temporary copies, strict point numbers (SafetyFixChecks.cs).
+  SafetyFixChecks.Run(testRoot, allowedRoot);
+
   Console.WriteLine("P1 disconnect cancellation, P2 filesystem/JSON-RPC, P4 bounded-job, UTF-8 request, point text, pipe arithmetic, station and point creation checks passed.");
 }
 finally
@@ -446,6 +453,114 @@ static int GetFreeTcpPort()
   var port = ((IPEndPoint)listener.LocalEndpoint).Port;
   listener.Stop();
   return port;
+}
+
+// Drawing units for K (SightMath), a caller's vertex list (StationMath.ReadVertices), the circular curve solve
+// (CurveMath) and the central meridian lookup (CoordinateParameterMatch): pure pieces of the profile, sight distance,
+// geometry, alignment, COGO and coordinate system handlers.
+static void CheckUnitsVerticesCurvesAndProjection()
+{
+  // A metric drawing is any metric unit, and K converts to the drawing's own length unit.
+  Assert(SightMath.IsMetricUnits("Meters") && SightMath.IsMetricUnits("Millimeters") && SightMath.IsMetricUnits("centimeters")
+         && !SightMath.IsMetricUnits("Feet") && !SightMath.IsMetricUnits("USSurveyFeet") && !SightMath.IsMetricUnits("Undefined"),
+    "Millimetres and centimetres are metric; feet and undefined are not.");
+  Assert(SightMath.UnitsPerMetre("Millimeters") == 1000 && SightMath.UnitsPerMetre("Meters") == 1
+         && Math.Abs(SightMath.UnitsPerMetre("Feet")!.Value - 3.28084) < 1e-5 && SightMath.UnitsPerMetre("Undefined") == null,
+    "One metre is 1000 mm, 3.28084 ft; undefined units are unknown.");
+  Assert(Math.Abs(SightMath.KInDrawingUnits(13, true, SightMath.UnitsPerMetre("Millimeters")) - 13000) < 1e-6
+         && Math.Abs(SightMath.KInDrawingUnits(96, false, SightMath.UnitsPerMetre("Feet")) - 96) < 1e-9
+         && Math.Abs(SightMath.KInDrawingUnits(96, false, SightMath.UnitsPerMetre("Inches")) - 1152) < 1e-6
+         && SightMath.KInDrawingUnits(13, true, null) == 13,
+    "K 13 m/% is 13000 in millimetres; 96 ft/% stays 96 in feet and is 1152 in inches; unknown units leave it.");
+
+  // Every point becomes a vertex; a bad one is named instead of skipped.
+  var vertices = StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2},{"x":3.5,"y":-4}]""")!.AsArray(), "createPolyline");
+  Assert(vertices.Count == 2 && vertices[1].X == 3.5 && vertices[1].Y == -4 && vertices[1].Z == 0, "Two good points are two vertices.");
+  var vertices3d = StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2,"z":3},{"x":4,"y":5,"z":6}]""")!.AsArray(), "create3dPolyline", requireZ: true);
+  Assert(vertices3d[1].Z == 6, "A 3D point keeps its z.");
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "point 1 is not an object",
+    () => StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2},5,{"x":3,"y":4}]""")!.AsArray(), "createPolyline"));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "y of point 1 is missing",
+    () => StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2},{"x":3}]""")!.AsArray(), "createAlignment"));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "x of point 0 is not a number",
+    () => StationMath.ReadVertices(JsonNode.Parse("""[{"x":"1","y":2},{"x":3,"y":4}]""")!.AsArray(), "createAlignment"));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "z of point 0 is missing",
+    () => StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2},{"x":3,"y":4,"z":5}]""")!.AsArray(), "create3dPolyline", requireZ: true));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "at least two",
+    () => StationMath.ReadVertices(JsonNode.Parse("""[{"x":1,"y":2}]""")!.AsArray(), "createPolyline"));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "at least two", () => StationMath.ReadVertices(null, "createPolyline"));
+
+  // Any two of radius, delta, length, tangent and chord give back the same curve.
+  void SameCurve(double radius, double deltaDegrees)
+  {
+    var d = deltaDegrees * Math.PI / 180;
+    var length = radius * d;
+    var tangent = radius * Math.Tan(d / 2);
+    var chord = 2 * radius * Math.Sin(d / 2);
+    var pairs = new (string Pair, (double Radius, double Delta) Solved)[]
+    {
+      ("R+D", CurveMath.Solve(radius, deltaDegrees, null, null, null)),
+      ("R+L", CurveMath.Solve(radius, null, length, null, null)),
+      ("D+L", CurveMath.Solve(null, deltaDegrees, length, null, null)),
+      ("D+C", CurveMath.Solve(null, deltaDegrees, null, null, chord)),
+      ("L+C", CurveMath.Solve(null, null, length, null, chord)),
+    }.ToList();
+    if (deltaDegrees < 180)
+    {
+      pairs.Add(("R+T", CurveMath.Solve(radius, null, null, tangent, null)));
+      pairs.Add(("R+C", CurveMath.Solve(radius, null, null, null, chord)));
+      pairs.Add(("D+T", CurveMath.Solve(null, deltaDegrees, null, tangent, null)));
+      pairs.Add(("L+T", CurveMath.Solve(null, null, length, tangent, null)));
+      pairs.Add(("T+C", CurveMath.Solve(null, null, null, tangent, chord)));
+    }
+
+    foreach (var (pair, solved) in pairs)
+    {
+      Assert(Math.Abs(solved.Radius - radius) < 1e-6 * radius && Math.Abs(solved.Delta - d) < 1e-9,
+        $"Curve R {radius}, delta {deltaDegrees} from {pair}: R {solved.Radius}, delta {solved.Delta * 180 / Math.PI}.");
+    }
+  }
+
+  SameCurve(500, 40);
+  SameCurve(150, 2.5);
+  SameCurve(1200, 170);
+  SameCurve(80, 300);
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "exactly two", () => CurveMath.Solve(500, 40, 349, null, null));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "exactly two", () => CurveMath.Solve(500, null, null, null, null));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "longer than the diameter", () => CurveMath.Solve(100, null, null, null, 250));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "more than half the length", () => CurveMath.Solve(null, null, 100, 40, null));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "shorter than the arc length", () => CurveMath.Solve(null, null, 100, null, 100));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "twice the tangent", () => CurveMath.Solve(null, null, null, 50, 100));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "under 360", () => CurveMath.Solve(500, 360, null, null, null));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "under 180", () => CurveMath.Solve(null, 200, null, 50, null));
+  ExpectMessage("CIVIL3D.INVALID_INPUT", "positive", () => CurveMath.Solve(-500, 40, null, null, null));
+  ExpectMessage("CIVIL3D.API_ERROR", "did not converge", () => CurveMath.Bisect(x => x + 1, 0, 1, rising: true, "test"));
+
+  // The central meridian is a longitude, never the latitude of the same origin.
+  Assert(CoordinateParameterMatch.CentralMeridian(new Dictionary<string, double> { ["Latitude of natural origin"] = 40, ["Longitude of natural origin"] = -81 }) == -81,
+    "The natural origin's longitude, not its latitude.");
+  Assert(CoordinateParameterMatch.CentralMeridian(new Dictionary<string, double> { ["Origin_Latitude"] = 37, ["Origin_Longitude"] = -120 }) == -120,
+    "Origin longitude, with underscores.");
+  Assert(CoordinateParameterMatch.CentralMeridian(new Dictionary<string, double> { ["Longitude of natural origin"] = 3, ["Central Meridian"] = 9 }) == 9,
+    "A parameter called central meridian comes first.");
+  Assert(CoordinateParameterMatch.CentralMeridian(new Dictionary<string, double> { ["Latitude of natural origin"] = 40, ["False easting"] = 500000 }) == null,
+    "No longitude parameter, no central meridian.");
+}
+
+static void ExpectMessage(string expectedCode, string expectedText, Action action)
+{
+  try
+  {
+    action();
+  }
+  catch (JsonRpcDispatchException exception) when (exception.Code == expectedCode)
+  {
+    Assert(exception.Message.Contains(expectedText, StringComparison.OrdinalIgnoreCase),
+      $"Expected '{expectedText}' in the {expectedCode} message: {exception.Message}");
+    return;
+  }
+
+  throw new InvalidOperationException($"Expected JsonRpcDispatchException code {expectedCode} saying '{expectedText}'.");
 }
 
 /// <summary>The one global the loop guard needs, as ScriptContext gives it to a real script.</summary>

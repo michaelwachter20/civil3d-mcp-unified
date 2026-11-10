@@ -1,96 +1,20 @@
 // Guards the intended input and response shapes (zod) of the hydrology tool: trace flow path, runoff, watershed and
 // catchment actions, value ranges and the action enum.
-// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// The schemas are the REAL ones from src/tools/domains/hydrologyDomain.ts: input through the civil3d_hydrology tool as
+// a call is validated, responses as domainRuntime.ts checks them (tests/helpers/realSchemas.ts).
 // Pure schema tests: no Civil 3D, no plugin.
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
+import { HYDROLOGY_DOMAIN_DEFINITION } from "../src/tools/domains/hydrologyDomain.js";
+import { actionResponse, toolInput, toolShape } from "./helpers/realSchemas.js";
 
-// Re-declare the schemas here since they're not exported from the tool file.
-// This tests the schema logic independently of the MCP registration.
-
-const Civil3DHydrologyInputSchema = z.object({
-  action: z.enum(["list_capabilities", "trace_flow_path", "find_low_point", "estimate_runoff", "delineate_watershed", "calculate_catchment_area"]),
-  surfaceName: z.string().optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  outletX: z.number().optional(),
-  outletY: z.number().optional(),
-  stepDistance: z.number().optional(),
-  maxSteps: z.number().int().optional(),
-  sampleSpacing: z.number().optional(),
-  gridSpacing: z.number().optional(),
-  searchRadius: z.number().optional(),
-  maxDistance: z.number().optional(),
-  drainageArea: z.number().optional(),
-  runoffCoefficient: z.number().optional(),
-  rainfallIntensity: z.number().optional(),
-  areaUnits: z.enum(["acres", "hectares"]).optional(),
-  intensityUnits: z.enum(["in_per_hr", "mm_per_hr"]).optional(),
-});
-
-const HydrologyTraceFlowPathArgsSchema = Civil3DHydrologyInputSchema.extend({
-  action: z.literal("trace_flow_path"),
-  surfaceName: z.string(),
-  x: z.number(),
-  y: z.number(),
-  stepDistance: z.number().positive().optional(),
-  maxSteps: z.number().int().positive().optional(),
-});
-
-const HydrologyEstimateRunoffArgsSchema = Civil3DHydrologyInputSchema.extend({
-  action: z.literal("estimate_runoff"),
-  drainageArea: z.number().positive(),
-  runoffCoefficient: z.number().min(0).max(1),
-  rainfallIntensity: z.number().positive(),
-  areaUnits: z.enum(["acres", "hectares"]),
-  intensityUnits: z.enum(["in_per_hr", "mm_per_hr"]),
-});
-
-const HydrologyDelineateWatershedArgsSchema = Civil3DHydrologyInputSchema.extend({
-  action: z.literal("delineate_watershed"),
-  surfaceName: z.string(),
-  outletX: z.number(),
-  outletY: z.number(),
-  gridSpacing: z.number().positive().optional(),
-  searchRadius: z.number().positive().optional(),
-});
-
-const HydrologyCalculateCatchmentAreaArgsSchema = Civil3DHydrologyInputSchema.extend({
-  action: z.literal("calculate_catchment_area"),
-  surfaceName: z.string(),
-  outletX: z.number(),
-  outletY: z.number(),
-  sampleSpacing: z.number().positive().optional(),
-  maxDistance: z.number().positive().optional(),
-});
-
-const HydrologyWatershedResponseSchema = z.object({
-  surfaceName: z.string(),
-  outletPoint: z.object({ x: z.number(), y: z.number(), elevation: z.number() }),
-  gridSpacing: z.number(),
-  searchRadius: z.number(),
-  contributingPointCount: z.number(),
-  boundaryPoints: z.array(z.object({ x: z.number(), y: z.number(), elevation: z.number() })),
-  approximateArea: z.number(),
-  units: z.object({ horizontal: z.string(), vertical: z.string(), area: z.string() }),
-});
-
-const HydrologyCatchmentAreaResponseSchema = z.object({
-  surfaceName: z.string(),
-  outletPoint: z.object({ x: z.number(), y: z.number(), elevation: z.number() }),
-  sampleSpacing: z.number(),
-  maxDistance: z.number(),
-  contributingCellCount: z.number(),
-  catchmentArea: z.number(),
-  elevationStatistics: z.object({
-    minimum: z.number(),
-    maximum: z.number(),
-    average: z.number(),
-    relief: z.number(),
-  }),
-  units: z.object({ horizontal: z.string(), vertical: z.string(), area: z.string() }),
-});
+const Civil3DHydrologyInputSchema = toolShape("civil3d_hydrology");
+const HydrologyTraceFlowPathArgsSchema = toolInput("civil3d_hydrology");
+const HydrologyEstimateRunoffArgsSchema = toolInput("civil3d_hydrology");
+const HydrologyDelineateWatershedArgsSchema = toolInput("civil3d_hydrology");
+const HydrologyCalculateCatchmentAreaArgsSchema = toolInput("civil3d_hydrology");
+const HydrologyWatershedResponseSchema = actionResponse(HYDROLOGY_DOMAIN_DEFINITION, "delineate_watershed");
+const HydrologyCatchmentAreaResponseSchema = actionResponse(HYDROLOGY_DOMAIN_DEFINITION, "calculate_catchment_area");
 
 describe("Hydrology Input Schema Validation", () => {
   describe("trace_flow_path", () => {

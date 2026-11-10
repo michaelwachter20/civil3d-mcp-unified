@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Bug pass from the code review (plugin and server).** Highlights:
+  - Safety: `civil3d_point transform` with no point numbers or group refuses unless `allPoints: true`; scale and
+    rotation turn about `baseX`/`baseY` (required). Point numbers must be positive integers. Exports can't write into
+    the shared knowledge folder; held export folders can no longer be swapped for a link. Data shortcut sync and the
+    Storm and Sanitary Analysis dialogs run inside the host gate (one undo step, the call waits; new
+    `CIVIL3D_DIALOG_TIMEOUT`, default 30 min). A dry run of `project_reference_setup` no longer saves.
+  - Approval follows what a call does: dry runs, `applyChanges` off and calls without `outputPath` need no token;
+    file-writing `material_cost_estimate`, `corridor_qc_report` and `open_storm_sanitary_analysis` do. New error codes
+    `CIVIL3D.APPROVAL_REQUIRED` / `CIVIL3D.APPROVAL_INVALID`; bad arguments and unknown actions are
+    `CIVIL3D.INVALID_INPUT` with a readable message. Actions Civil 3D 2027 can't do are refused with
+    `CIVIL3D.API_ERROR` before approval; the grading group/grading tools and `feature_line_to_grading` are removed.
+  - New: `civil3d_alignment add_curve`, `civil3d_superelevation design_check`, quantity takeoff `corridor_volumes`
+    and `material_lists`; `cogo_curve_solve` takes any two of radius, delta, length, tangent, chord.
+  - Units: metric drawings get metric answers and defaults (detention, parcels, cost, QC design speed, pipe
+    hydraulics, K values, sight distance). The HGL follows the network's branches to each outfall.
+  - Fixes: surface QC no longer flags every surface "rebuild required"; profile entity numbers match `get` (by
+    station); profile station labels, pressure pipe resize by `newDiameter`, sheet view scale picks a model viewport;
+    endless loops on a zero interval/spacing refused; empty sample lists no longer give Infinity; corridor region
+    `frequencyAtKneePoints` replaced by `frequencyAlongProfileCurves` (+ `frequencyAlongSpirals`);
+    `civil3d_sheet_set_create` takes `outputPath`; `civil3d_surface_volume_calculate` offers only working methods.
+  - Server: orchestrator sends names filled from the selection; skills are written under a lock; unknown
+    `CIVIL3D_LOG_LEVEL` falls back to info; schema tests use the real schemas.
+
 - **The daily import ends with a paste-in:** the `daily_field_import` skill's last step gives a ready-to-paste summary
   of the day's work for the job's daily field report, every time, worded like the latest filled-in reports; the job's
   own wording lives in its project notes.

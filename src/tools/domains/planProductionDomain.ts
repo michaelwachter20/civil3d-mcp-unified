@@ -7,11 +7,12 @@
  * A sheet set is a .dst file, handled by the plugin's SheetSetCom: `sheet_set_create` makes one, `sheet_set_list` finds
  * the ones beside the drawing, and `sheet_set_get_info`, `sheet_get_properties`, `sheet_add` and `sheet_set_export` take
  * its path as the name. `sheet_set_export` plots with the same engine as `sheet_publish_pdf`, which answers once the
- * file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.) `sheet_set_title_block` and
- * `plan_profile_sheet_update_alignment` always refuse: neither is a setting Civil 3D has, and each answer says what to do.
+ * file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.) `sheet_set_title_block`,
+ * `plan_profile_sheet_create` and `plan_profile_sheet_update_alignment` are declared `unsupported`: Civil 3D has no API
+ * for them, so the runtime refuses (CIVIL3D.API_ERROR, saying what to do) without asking approval or calling the plugin.
  *
  * Approval (approvalPolicy.ts): sheet_set_list, sheet_set_get_info and sheet_get_properties are reads. Every other
- * action (create, add, edit, view, publish, export) needs an approvalToken.
+ * supported action (create, add, view, publish, export) needs an approvalToken.
  */
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
@@ -290,6 +291,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["setSheetTitleBlock"],
+      unsupported: "A sheet has no title block setting: the title block is a block on the sheet's layout. Insert or swap it on the layout.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("setSheetTitleBlock", {
           sheetSetName: args.sheetSetName,
@@ -298,8 +300,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Not in the canonical tool's supportedActions and has no alias, so only the orchestrator reaches it; the plugin
-    // always refuses (CIVIL3D.API_ERROR, nothing created) because there is no documented plan/profile sheet factory.
+    // Not in the canonical tool's supportedActions and has no alias, so only the orchestrator reaches it; unsupported
+    // (the plugin always refuses: there is no documented plan/profile sheet factory), so nothing is sent.
     plan_profile_sheet_create: {
       action: "plan_profile_sheet_create",
       inputSchema: PlanProfileSheetCreateArgsSchema,
@@ -314,6 +316,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["createPlanProfileSheet"],
+      unsupported: "Civil 3D documents no API that makes plan/profile sheets. Use Create View Frames and Create Sheets in Civil 3D.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("createPlanProfileSheet", {
           sheetSetName: args.sheetSetName,
@@ -326,8 +329,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // The plugin always refuses (CIVIL3D.API_ERROR, nothing changed): a view frame's alignment is read-only once made,
-    // so the answer tells the AI to make new view frames instead.
+    // Unsupported (the plugin always refuses): a view frame's alignment is read-only once made, so the runtime's answer
+    // tells the AI to make new view frames instead. sheet_set_title_block is unsupported the same way.
     plan_profile_sheet_update_alignment: {
       action: "plan_profile_sheet_update_alignment",
       inputSchema: PlanProfileSheetUpdateAlignmentArgsSchema,
@@ -336,6 +339,7 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["updatePlanProfileSheetAlignment"],
+      unsupported: "A view frame's alignment can't be changed once it's made. Make new view frames with Create View Frames.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("updatePlanProfileSheetAlignment", {
           sheetSetName: args.sheetSetName,
@@ -460,17 +464,28 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       supportedActions: ["sheet_set_get_info"],
       resolveAction: (rawArgs) => ({ action: "sheet_set_get_info", args: { action: "sheet_set_get_info", name: rawArgs.name } }),
     },
-    // NOTE: this alias takes no `outputPath`, which sheet_set_create's schema requires, so a call through it fails
-    // validation; the canonical tool works.
     {
       toolName: "civil3d_sheet_set_create",
       displayName: "Civil 3D Sheet Set Create",
-      description: "Creates a new Plan Production sheet set in the active drawing.",
-      inputShape: { name: z.string(), description: z.string().optional() },
+      description: "Creates a new Plan Production sheet set (.dst file at outputPath) from layouts of the active drawing.",
+      inputShape: {
+        name: z.string(),
+        outputPath: z.string(),
+        description: z.string().optional(),
+        layoutNames: z.array(z.string()).optional(),
+        overwrite: z.boolean().optional(),
+      },
       supportedActions: ["sheet_set_create"],
       resolveAction: (rawArgs) => ({
         action: "sheet_set_create",
-        args: { action: "sheet_set_create", name: rawArgs.name, description: rawArgs.description },
+        args: {
+          action: "sheet_set_create",
+          name: rawArgs.name,
+          outputPath: rawArgs.outputPath,
+          description: rawArgs.description,
+          layoutNames: rawArgs.layoutNames,
+          overwrite: rawArgs.overwrite,
+        },
       }),
     },
     {

@@ -14,12 +14,16 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Sight distance commands: AASHTO stopping (SSD), passing (PSD) and decision (DSD) distances for a design speed
 /// (SightMath), and a profile's vertical curves against the minimum K. A speed with no units follows the drawing: mph
-/// in a foot drawing, km/h in a metre one.
+/// in a foot drawing, km/h in a metric one (metres, millimetres...; ProfileEditCommands.DrawingLengthUnits), and a
+/// profile's K is compared with the minimum converted to the drawing's length unit (SightMath.KInDrawingUnits).
 /// </summary>
 public static class SightDistanceCommands
 {
   private const double KmhPerMph = 1.60934;
   private const double FeetPerMetre = 3.28084;
+
+  /// <summary>Most stations one checkStoppingDistance walks: a tiny interval would hold the host queue.</summary>
+  private const int MaxStationsChecked = 100_000;
 
   /// <summary>One vertical curve: the stations it runs between, its K, and whether it's a sag.</summary>
   private readonly record struct VerticalCurve(double Start, double End, double K, bool Sag);
@@ -49,7 +53,8 @@ public static class SightDistanceCommands
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
-      var metricDrawing = database.Insunits == UnitsValue.Meters;
+      var units = ProfileEditCommands.DrawingLengthUnits(database, civilDoc);
+      var metricDrawing = units.Metric;
       var mph = SpeedIsMph(speedUnits, metricDrawing);
       var speedKmh = mph ? designSpeed * KmhPerMph : designSpeed;
       var speedMph = mph ? designSpeed : designSpeed / KmhPerMph;
@@ -110,7 +115,9 @@ public static class SightDistanceCommands
           var profileId = FindProfileId(alignment, transaction, profileName!);
           var curve = CurveAtStation(ReadVerticalCurves(transaction, profileId), checkStation.Value);
           // A profile's K is in the drawing's units, whichever units the speed came in.
-          var (sagLimit, crestLimit) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedMph, metricDrawing);
+          var (sagTable, crestTable) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedMph, metricDrawing);
+          var sagLimit = SightMath.KInDrawingUnits(sagTable, metricDrawing, units.PerMetre);
+          var crestLimit = SightMath.KInDrawingUnits(crestTable, metricDrawing, units.PerMetre);
 
           result["stationChecked"] = checkStation;
           result["kValueAtStation"] = curve is { } found ? Math.Round(found.K, 1) : (object?)"N/A";
@@ -132,9 +139,11 @@ public static class SightDistanceCommands
   /// <summary>
   /// <c>checkStoppingDistance</c>: walks a profile every <c>stationInterval</c> (default 25) from <c>stationStart</c>
   /// to <c>stationEnd</c> (default: the whole alignment) and lists stations on a vertical curve whose K is below the
-  /// AASHTO minimum for <c>designSpeed</c> (FAIL under 75% of it, else WARN). Reads <c>alignmentName</c>,
-  /// <c>profileName</c>, <c>designSpeed</c> (required) and <c>speedUnits</c>. Read-only. CIVIL3D.OBJECT_NOT_FOUND for an
-  /// unknown alignment; an unknown profile name gives no curves (so no violations), not an error.
+  /// AASHTO minimum for <c>designSpeed</c> (FAIL under 75% of it, else WARN), the minimum in the drawing's length units
+  /// (ProfileEditCommands.DrawingLengthUnits). Reads <c>alignmentName</c>, <c>profileName</c>, <c>designSpeed</c>
+  /// (required) and <c>speedUnits</c>. Read-only. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment;
+  /// CIVIL3D.INVALID_INPUT for an unknown profile (naming the alignment's profiles), an interval or speed that isn't
+  /// positive, or an interval giving more than <see cref="MaxStationsChecked"/> stations.
   /// </summary>
   public static Task<object?> CheckStoppingDistanceAsync(JsonObject? parameters)
   {
@@ -145,11 +154,21 @@ public static class SightDistanceCommands
     var stationStart = PluginRuntime.GetOptionalDouble(parameters, "stationStart");
     var stationEnd = PluginRuntime.GetOptionalDouble(parameters, "stationEnd");
     var stationInterval = PluginRuntime.GetOptionalDouble(parameters, "stationInterval") ?? 25.0;
+    if (!(stationInterval > 0) || double.IsInfinity(stationInterval))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"stationInterval must be a positive distance in drawing units (e.g. 25), not {stationInterval}.");
+    }
+
+    if (!(designSpeed > 0) || double.IsInfinity(designSpeed))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"designSpeed must be a positive number, not {designSpeed}.");
+    }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       // K on a profile is in the drawing's units, so the limit is too. A speed with no units follows the drawing.
-      var metricDrawing = database.Insunits == UnitsValue.Meters;
+      var units = ProfileEditCommands.DrawingLengthUnits(database, civilDoc);
+      var metricDrawing = units.Metric;
       var mph = SpeedIsMph(speedUnits, metricDrawing);
       var speedKmh = mph ? designSpeed * KmhPerMph : designSpeed;
       var ssdMetres = mph ? SightMath.StoppingFeet(designSpeed) / FeetPerMetre : SightMath.StoppingMetres(designSpeed);
@@ -158,12 +177,31 @@ public static class SightDistanceCommands
       var alignmentLength = CivilObjectUtils.GetPropertyValue<double?>(alignment, "Length") ?? 0.0;
       var startSta = stationStart ?? CivilObjectUtils.GetPropertyValue<double?>(alignment, "StartingStation") ?? 0.0;
       var endSta = stationEnd ?? (startSta + alignmentLength);
+      if ((endSta - startSta) / stationInterval > MaxStationsChecked)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          $"stationInterval {stationInterval} gives more than {MaxStationsChecked} stations from {startSta} to {endSta}: use a larger interval or a shorter range.");
+      }
 
-      var curves = ReadVerticalCurves(transaction, FindProfileId(alignment, transaction, profileName));
-      var (ksagMin, kcrestMin) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / KmhPerMph, metricDrawing);
+      // A misspelt profile used to give no curves and so "compliant": an answer about nothing.
+      var profileId = FindProfileId(alignment, transaction, profileName, out var available);
+      if (profileId == ObjectId.Null)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          $"Alignment '{alignmentName}' has no profile '{profileName}'. Its profiles: "
+          + (available.Count == 0 ? "none." : string.Join(", ", available.Select(name => $"'{name}'")) + "."));
+      }
+
+      var curves = ReadVerticalCurves(transaction, profileId);
+      var (tableSag, tableCrest) = ProfileEditCommands.MinimumK(metricDrawing ? speedKmh : speedKmh / KmhPerMph, metricDrawing);
+      var ksagMin = SightMath.KInDrawingUnits(tableSag, metricDrawing, units.PerMetre);
+      var kcrestMin = SightMath.KInDrawingUnits(tableCrest, metricDrawing, units.PerMetre);
       var violations = new List<Dictionary<string, object?>>();
       var checkedCount = 0;
 
+      // The interval is checked positive and the count capped above, so this ends.
       for (double sta = startSta; sta <= endSta; sta += stationInterval)
       {
         checkedCount++;
@@ -210,8 +248,17 @@ public static class SightDistanceCommands
       : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
 
   /// <summary>The alignment's profile with this name (case-insensitive), or ObjectId.Null.</summary>
-  private static ObjectId FindProfileId(Autodesk.AutoCAD.DatabaseServices.DBObject alignment, Transaction transaction, string profileName)
+  private static ObjectId FindProfileId(Autodesk.AutoCAD.DatabaseServices.DBObject alignment, Transaction transaction, string profileName) =>
+    FindProfileId(alignment, transaction, profileName, out _);
+
+  /// <summary>As above, also giving the names of the alignment's profiles, for an error that lists them.</summary>
+  private static ObjectId FindProfileId(
+    Autodesk.AutoCAD.DatabaseServices.DBObject alignment,
+    Transaction transaction,
+    string profileName,
+    out List<string> available)
   {
+    available = new List<string>();
     var profileIds = CivilObjectUtils.InvokeMethod(alignment, "GetProfileIds") as IEnumerable;
     if (profileIds == null) return ObjectId.Null;
     foreach (var item in profileIds)
@@ -219,8 +266,10 @@ public static class SightDistanceCommands
       if (item is ObjectId id && id != ObjectId.Null)
       {
         var profile = transaction.GetObject(id, OpenMode.ForRead, false, true);
-        if (string.Equals(CivilObjectUtils.GetName(profile), profileName, StringComparison.OrdinalIgnoreCase))
+        var name = CivilObjectUtils.GetName(profile);
+        if (string.Equals(name, profileName, StringComparison.OrdinalIgnoreCase))
           return id;
+        if (!string.IsNullOrEmpty(name)) available.Add(name);
       }
     }
     return ObjectId.Null;

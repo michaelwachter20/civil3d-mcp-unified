@@ -809,7 +809,9 @@ public static class HydrologyCommands
   }
 
   /// <summary>
-  /// Rational runoff (cfs) as the inflow to DetentionCommands' basin sizing against <c>allowableOutflow</c>, plus a
+  /// Rational runoff as the inflow to DetentionCommands' basin sizing against <c>allowableOutflow</c>, both in the
+  /// drawing's flow units (cfs in a feet drawing, m³/s otherwise; the basin's default width and freeboard follow the
+  /// same units when left out), plus a
   /// stage-storage-discharge table when <c>basinSurfaceName</c>, <c>bottomElevation</c> and <c>topElevation</c> are all
   /// given (giving only some of them is an error, so a half-specified table isn't silently skipped). Required: the
   /// runoff inputs (<c>drainageArea</c>, <c>areaUnits</c>, <c>runoffCoefficient</c>, <c>rainfallIntensity</c>,
@@ -827,8 +829,9 @@ public static class HydrologyCommands
     var stormDuration = PluginRuntime.GetOptionalDouble(parameters, "stormDuration") ?? 60d;
     var detentionMethod = PluginRuntime.GetOptionalString(parameters, "detentionMethod") ?? "modified_rational";
     var sideSlope = PluginRuntime.GetOptionalDouble(parameters, "sideSlope") ?? 3d;
-    var bottomWidth = PluginRuntime.GetOptionalDouble(parameters, "bottomWidth") ?? 10d;
-    var freeboardDepth = PluginRuntime.GetOptionalDouble(parameters, "freeboardDepth") ?? 1d;
+    // Left out, the basin step picks defaults in the drawing's units (10 ft / 3 m wide, 1 ft / 0.3 m freeboard).
+    var bottomWidth = PluginRuntime.GetOptionalDouble(parameters, "bottomWidth");
+    var freeboardDepth = PluginRuntime.GetOptionalDouble(parameters, "freeboardDepth");
     var basinSurfaceName = PluginRuntime.GetOptionalString(parameters, "basinSurfaceName");
     var bottomElevation = PluginRuntime.GetOptionalDouble(parameters, "bottomElevation");
     var topElevation = PluginRuntime.GetOptionalDouble(parameters, "topElevation");
@@ -855,11 +858,13 @@ public static class HydrologyCommands
       }),
       "estimateHydrologyRunoff");
 
+    // The basin step reads flows in the drawing's units: cfs in feet, m³/s otherwise (allowableOutflow likewise).
     var runoffRate = RequireDictionary(runoff["runoffRate"], "estimateHydrologyRunoff.runoffRate");
+    var flowKey = await DrawingUsesFeetAsync() ? "cfs" : "cubicMetersPerSecond";
     var detentionSizing = RequireDictionary(
       await DetentionCommands.CalculateDetentionBasinSizeAsync(new JsonObject
       {
-        ["inflow"] = RequireDouble(runoffRate["cfs"], "estimateHydrologyRunoff.runoffRate.cfs"),
+        ["inflow"] = RequireDouble(runoffRate[flowKey], $"estimateHydrologyRunoff.runoffRate.{flowKey}"),
         ["outflow"] = allowableOutflow,
         ["stormDuration"] = stormDuration,
         ["method"] = detentionMethod,
@@ -906,10 +911,13 @@ public static class HydrologyCommands
   }
 
   /// <summary>
-  /// Rational runoff times <c>designFlowMultiplier</c> as the design flow (cfs) for gravity network
-  /// <c>networkName</c>, then PipeHydraulicsCommands' HGL calculation and hydraulic check (cover, velocity, slope
-  /// limits with US-customary defaults: 2 ft cover, 2 to 10 ft/s, 0.5 % slope, n = 0.013). Required: <c>networkName</c>
-  /// and the runoff inputs; <c>tailwaterElevation</c> is optional. Read only; errors are the steps' own.
+  /// Rational runoff times <c>designFlowMultiplier</c> as the design flow for gravity network <c>networkName</c>, in
+  /// the drawing's flow units (cfs in a feet drawing, m³/s otherwise), then PipeHydraulicsCommands' HGL calculation
+  /// and hydraulic check (cover, velocity, slope limits; left out, the cover and velocity limits are that step's own
+  /// defaults in the drawing's units: 2 ft / 0.61 m cover, 2 to 10 ft/s / 0.61 to 3.05 m/s; 0.5 % slope, n = 0.013).
+  /// Required: <c>networkName</c> and the runoff inputs; <c>tailwaterElevation</c> is optional. Returns the design flow
+  /// as <c>designFlow</c> with its <c>flowUnit</c>, and in cfs as <c>designFlowCfs</c>. Read only; errors are the
+  /// steps' own.
   /// </summary>
   public static async Task<object?> RunoffPipeWorkflowAsync(JsonObject? parameters)
   {
@@ -922,9 +930,10 @@ public static class HydrologyCommands
     var designFlowMultiplier = PluginRuntime.GetOptionalDouble(parameters, "designFlowMultiplier") ?? 1d;
     var tailwaterElevation = PluginRuntime.GetOptionalDouble(parameters, "tailwaterElevation");
     var manningsN = PluginRuntime.GetOptionalDouble(parameters, "manningsN") ?? 0.013d;
-    var minCoverDepth = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth") ?? 2d;
-    var minVelocity = PluginRuntime.GetOptionalDouble(parameters, "minVelocity") ?? 2d;
-    var maxVelocity = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity") ?? 10d;
+    // Left out, the hydraulics step converts its feet defaults to the drawing's units.
+    var minCoverDepth = PluginRuntime.GetOptionalDouble(parameters, "minCoverDepth");
+    var minVelocity = PluginRuntime.GetOptionalDouble(parameters, "minVelocity");
+    var maxVelocity = PluginRuntime.GetOptionalDouble(parameters, "maxVelocity");
     var minSlope = PluginRuntime.GetOptionalDouble(parameters, "minSlope") ?? 0.5d;
 
     var runoff = RequireDictionary(
@@ -938,15 +947,20 @@ public static class HydrologyCommands
       }),
       "estimateHydrologyRunoff");
 
+    // The hydraulics steps work in the drawing's units (PipeMath): cfs in feet, m³/s otherwise.
     var runoffRate = RequireDictionary(runoff["runoffRate"], "estimateHydrologyRunoff.runoffRate");
     var designFlowCfs = RequireDouble(runoffRate["cfs"], "estimateHydrologyRunoff.runoffRate.cfs") * designFlowMultiplier;
+    var feet = await DrawingUsesFeetAsync();
+    var designFlow = feet
+      ? designFlowCfs
+      : RequireDouble(runoffRate["cubicMetersPerSecond"], "estimateHydrologyRunoff.runoffRate.cubicMetersPerSecond") * designFlowMultiplier;
 
     var hglAnalysis = RequireDictionary(
       await PipeHydraulicsCommands.CalculatePipeNetworkHglAsync(new JsonObject
       {
         ["networkName"] = networkName,
         ["tailwaterElevation"] = tailwaterElevation,
-        ["designFlow"] = designFlowCfs,
+        ["designFlow"] = designFlow,
         ["manningsN"] = manningsN,
       }),
       "calculatePipeNetworkHgl");
@@ -955,7 +969,7 @@ public static class HydrologyCommands
       await PipeHydraulicsCommands.AnalyzePipeNetworkHydraulicsAsync(new JsonObject
       {
         ["networkName"] = networkName,
-        ["designFlow"] = designFlowCfs,
+        ["designFlow"] = designFlow,
         ["manningsN"] = manningsN,
         ["minCoverDepth"] = minCoverDepth,
         ["minVelocity"] = minVelocity,
@@ -977,6 +991,8 @@ public static class HydrologyCommands
         ["intensityUnits"] = intensityUnits,
       },
       ["runoffEstimate"] = runoff,
+      ["designFlow"] = designFlow,
+      ["flowUnit"] = feet ? "cfs" : "cms",
       ["designFlowCfs"] = designFlowCfs,
       ["hglAnalysis"] = hglAnalysis,
       ["hydraulicAnalysis"] = hydraulicAnalysis,
@@ -1082,6 +1098,14 @@ public static class HydrologyCommands
     }
     
     return Math.Abs(area) / 2d;
+  }
+
+  /// <summary>Whether the open drawing is in feet (CivilObjectUtils.LinearUnits, survey feet included), which decides
+  /// whether a workflow hands its next step cfs or m³/s. One short read on the host queue.</summary>
+  private static async Task<bool> DrawingUsesFeetAsync()
+  {
+    var units = await CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) => CivilObjectUtils.LinearUnits(database));
+    return units as string == "feet";
   }
 
   // The Require* helpers check the shape of a step's answer inside a workflow; a mismatch is a plugin bug and is

@@ -2,8 +2,8 @@
  * The runtime every manifest tool goes through: it turns a DomainToolDefinition (one file per domain in domains/)
  * into MCP tools and gives each call the same path:
  *
- *   resolveAction (exposure) -> inputSchema.parse -> approvalPolicy.enforce -> action.execute
- *     -> responseSchema.parse -> MCP result (text + structuredContent + resource link for big reports)
+ *   resolveAction (exposure) -> inputSchema.parse -> (refusal of an `unsupported` action) -> approvalPolicy.enforce
+ *     -> action.execute -> responseSchema.parse -> MCP result (text + structuredContent + resource link for big reports)
  *
  * plus a request id for the logs, MCP progress notifications, optional idempotency keys, and one error shape
  * (buildToolErrorResult) for everything a handler throws. toolManifest.ts calls captureDomainToolHandlers (for
@@ -14,7 +14,7 @@
  */
 import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { approvalPolicy, getActiveDrawingFingerprint, hasApprovalRisk } from "./approvalPolicy.js";
+import { approvalPolicy, getActiveDrawingFingerprint, hasApprovalRisk, type ApprovalTarget } from "./approvalPolicy.js";
 import { captureToolHandler } from "./toolHandlerRegistry.js";
 import { fitAnswer } from "./largeAnswer.js";
 import { maybeStoreReportResource } from "./reportResourceStore.js";
@@ -71,6 +71,18 @@ export interface DomainActionDefinition<TArgs = JsonObject> {
   requiresActiveDrawing: boolean;
   safeForRetry: boolean;
   pluginMethods?: string[];
+  /**
+   * True when these validated arguments make the call change nothing: no drawing change and no file written (a
+   * `dryRun`, `applyChanges` off, no `outputPath`). Then the call needs no approval (approvalTargetFor). Declare it
+   * only for arguments the plugin really honours that way; every other call keeps the action's normal approval.
+   */
+  readOnlyWhen?: (args: TArgs) => boolean;
+  /**
+   * Set when Civil 3D can't do this action at all (its plugin method always refuses with CIVIL3D.API_ERROR): the
+   * runtime then answers CIVIL3D.API_ERROR with this text after validating the arguments, asks no approval and never
+   * calls the plugin. Remove it (and the action's approval applies again) once the plugin can do it.
+   */
+  unsupported?: string;
 }
 
 /**
@@ -112,8 +124,9 @@ function uniqueCapabilities(values: Iterable<ToolCapability | undefined>): ToolC
 
 /**
  * The MCP error result for anything a handler threw: `isError`, the message prefixed with the tool and action, and
- * `errorCode` / `rpcCode` taken from the error when it carries them (Civil3DRpcError, knowledgeError), otherwise
- * inferred from the message. The HTTP bridge reads errorCode to choose the status.
+ * `errorCode` / `rpcCode` taken from the error when it carries them (Civil3DRpcError, knowledgeError, the approval
+ * errors' CIVIL3D.APPROVAL_REQUIRED / APPROVAL_INVALID), otherwise inferred from the message. The HTTP bridge reads
+ * errorCode to choose the status.
  */
 function buildToolErrorResult(toolName: string, actionName: string | undefined, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -144,6 +157,50 @@ function buildToolErrorResult(toolName: string, actionName: string | undefined, 
   };
 }
 
+/**
+ * What approvalPolicy.ts needs to decide on one call of an action: its declaration, plus `readOnlyCall` when the
+ * action is unsupported (never sent to the plugin) or its readOnlyWhen says these validated arguments change nothing.
+ * Used for the real call (executeExposure) and by civil3d_preview_action / civil3d_request_approval, so all three
+ * decide the same way.
+ */
+export function approvalTargetFor(
+  toolName: string,
+  actionDefinition: DomainActionDefinition,
+  parsedArgs: JsonObject,
+): ApprovalTarget {
+  return {
+    toolName,
+    action: actionDefinition.action,
+    capabilities: actionDefinition.capabilities,
+    safeForRetry: actionDefinition.safeForRetry,
+    requiresActiveDrawing: actionDefinition.requiresActiveDrawing,
+    readOnlyCall: actionDefinition.unsupported !== undefined || actionDefinition.readOnlyWhen?.(parsedArgs) === true,
+  };
+}
+
+/** The CIVIL3D.API_ERROR for an action declared `unsupported`: nothing was sent to Civil 3D, nothing changed. */
+function unsupportedActionError(actionDefinition: DomainActionDefinition): Error {
+  return Object.assign(
+    new Error(`Civil 3D can't do '${actionDefinition.action}' from here, so nothing was changed. ${actionDefinition.unsupported}`),
+    { code: "CIVIL3D.API_ERROR", rpcCode: -32050 },
+  );
+}
+
+/**
+ * Runs a schema step and turns a zod failure into CIVIL3D.INVALID_INPUT with a readable message ("path: problem; ..."),
+ * so the AI gets an input error it can act on instead of CIVIL3D.INTERNAL_ERROR wrapping raw zod JSON.
+ */
+function asInvalidInput<T>(step: () => T): T {
+  try {
+    return step();
+  } catch (error) {
+    if (!(error instanceof z.ZodError)) throw error;
+    const problems = error.issues.map((issue) =>
+      issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message);
+    throw Object.assign(new Error(`Invalid input: ${problems.join("; ")}`), { code: "CIVIL3D.INVALID_INPUT" });
+  }
+}
+
 /** A CIVIL3D.* code guessed from an untyped error's message (timeouts, connection failures, not found, ...). */
 function inferDomainErrorCode(message: string): string {
   if (/timed out|timeout/i.test(message)) return "CIVIL3D.TIMEOUT";
@@ -164,12 +221,14 @@ function inferRpcErrorCode(domainCode: string): number {
   if (domainCode === "CIVIL3D.TIMEOUT") return -32008;
   if (domainCode === "CIVIL3D.CONFLICT") return -32009;
   if (domainCode === "CIVIL3D.CANCELLED") return -32010;
+  if (domainCode === "CIVIL3D.API_ERROR") return -32050;
   return -32000;
 }
 
 /**
- * Runs one call: resolve and validate the action, refuse an idempotencyKey on a non-retryable action, enforce
- * approval with the raw arguments (the token is bound to exactly what the client sent), execute, validate the
+ * Runs one call: resolve and validate the action, refuse an `unsupported` action (CIVIL3D.API_ERROR, no plugin call),
+ * refuse an idempotencyKey on a non-retryable action, enforce approval (decided on the validated arguments, see
+ * approvalTargetFor; the token is bound to exactly the raw arguments the client sent), execute, validate the
  * response, keep a large or report-like answer as an MCP resource, and cut an answer too big to send to its shape
  * (largeAnswer.ts). With an idempotencyKey the result is shared
  * between identical calls on the same drawing (idempotencyStore.ts); approvalToken and the key itself are left out
@@ -181,14 +240,14 @@ async function executeExposure(
   rawArgs: JsonObject,
   progressExtra?: ToolProgressExtra,
 ) {
-  const resolved = exposure.resolveAction(rawArgs);
+  const resolved = asInvalidInput(() => exposure.resolveAction(rawArgs));
   const actionName = resolved.action;
 
   if (!exposure.supportedActions.includes(actionName)) {
-    throw new Error(
+    throw Object.assign(new Error(
       `Unsupported action '${actionName}' for tool '${exposure.toolName}'. ` +
       `Supported actions: ${exposure.supportedActions.join(", ")}.`,
-    );
+    ), { code: "CIVIL3D.INVALID_INPUT" });
   }
 
   const actionDefinition = definition.actions[actionName];
@@ -196,7 +255,10 @@ async function executeExposure(
     throw new Error(`Action '${actionName}' is not defined for domain '${definition.domain}'.`);
   }
 
-  const parsedArgs = actionDefinition.inputSchema.parse(resolved.args);
+  const parsedArgs = asInvalidInput(() => actionDefinition.inputSchema.parse(resolved.args));
+  if (actionDefinition.unsupported !== undefined) {
+    throw unsupportedActionError(actionDefinition);
+  }
   const idempotencyKey = typeof rawArgs.idempotencyKey === "string"
     ? rawArgs.idempotencyKey
     : undefined;
@@ -207,16 +269,8 @@ async function executeExposure(
   }
 
   const executeOnce = async () => {
-    await approvalPolicy.enforce(
-      {
-        toolName: exposure.toolName,
-        action: actionName,
-        capabilities: actionDefinition.capabilities,
-        safeForRetry: actionDefinition.safeForRetry,
-        requiresActiveDrawing: actionDefinition.requiresActiveDrawing,
-      },
-      rawArgs,
-    );
+    // The decision uses the validated arguments (what execute will get); the token hash uses the raw ones.
+    await approvalPolicy.enforce(approvalTargetFor(exposure.toolName, actionDefinition, parsedArgs as JsonObject), rawArgs);
     await emitProgress(
       progressExtra,
       50,

@@ -52,9 +52,20 @@ export function jobNames(directory?: string): string[] {
   return [...names];
 }
 
+/** At most this many problems of one kind are listed (the rest are counted), so a long text gives a readable message. */
+export const MAX_PROBLEMS_PER_KIND = 5;
+
+/** Adds `items` (distinct, in order) to `problems`, at most MAX_PROBLEMS_PER_KIND of them, plus "N more" when cut. */
+function pushBounded(problems: string[], items: string[], describeMore: (count: number) => string) {
+  const distinct = [...new Set(items)];
+  problems.push(...distinct.slice(0, MAX_PROBLEMS_PER_KIND));
+  if (distinct.length > MAX_PROBLEMS_PER_KIND) problems.push(describeMore(distinct.length - MAX_PROBLEMS_PER_KIND));
+}
+
 /**
  * Why this text would put job data into general know-how; an empty list means it is general. Each reason reads after
- * "it contains". `names`: the job names to look for (default: the jobs in the shared projects folder).
+ * "it contains". Every occurrence is reported (distinct, up to MAX_PROBLEMS_PER_KIND per kind), so the AI can fix
+ * them all in one rewrite. `names`: the job names to look for (default: the jobs in the shared projects folder).
  */
 export function jobDataProblems(text: string, names?: string[]): string[] {
   if (!text) return [];
@@ -65,33 +76,37 @@ export function jobDataProblems(text: string, names?: string[]): string[] {
   if (home.length > 3 && low.includes(`${home}\\`)) {
     problems.push("a path inside your user profile");
   } else {
+    const paths: string[] = [];
     for (const match of low.matchAll(DRIVE_PATH)) {
       const rest = low.slice(match.index);
       if (!ALLOWED_PATH_PREFIXES.some((prefix) => rest.startsWith(prefix) && !/[a-z0-9]/.test(rest.charAt(prefix.length)))) {
-        problems.push(`an absolute path (${rest.slice(0, 40).split("\n")[0]}...)`);
-        break;
+        paths.push(`an absolute path (${rest.slice(0, 40).split("\n")[0]}...)`);
       }
     }
+    pushBounded(problems, paths, (count) => `${count} more absolute path(s)`);
   }
   if (UNC_PATH.test(flat) || UNC_PATH.test(flat.replace(/\\\\/g, "\\"))) problems.push("a network path (\\\\server\\share)");
+  const jobs: string[] = [];
   for (const name of [...(names ?? jobNames())].sort((left, right) => right.length - left.length)) {
     if (new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(name)}(?![A-Za-z0-9])`, "i").test(text)) {
-      problems.push(`the name of the job '${name}'`);
-      break;
+      jobs.push(`the name of the job '${name}'`);
     }
   }
+  pushBounded(problems, jobs, (count) => `${count} more job name(s)`);
+  const files: string[] = [];
   for (const match of text.matchAll(JOB_FILE)) {
     if (/^\.[A-Za-z]/.test(text.slice(match.index + match[0].length, match.index + match[0].length + 2))) continue;
-    problems.push(`a drawing or job file name (${match[0].replace(/^[([{,;]+|[)\]},;]+$/g, "")})`);
-    break;
+    files.push(`a drawing or job file name (${match[0].replace(/^[([{,;]+|[)\]},;]+$/g, "")})`);
   }
+  pushBounded(problems, files, (count) => `${count} more drawing or job file name(s)`);
   return problems;
 }
 
 /**
  * Refuses to save know-how that names a job, its folders or files, a project drive or the user's profile. Texts
  * that aren't strings (parameters, topics) are checked as JSON. `what` names the item in the message ("lesson",
- * "skill"). Throws knowledgeError CIVIL3D.INVALID_INPUT naming what was found (at most one of each kind), so the AI can rewrite it generally.
+ * "skill"). Throws knowledgeError CIVIL3D.INVALID_INPUT naming what was found (every occurrence, up to
+ * MAX_PROBLEMS_PER_KIND of each kind), so the AI can rewrite it generally in one go.
  */
 export function checkGeneral(what: string, ...texts: unknown[]) {
   const problems = jobDataProblems(texts

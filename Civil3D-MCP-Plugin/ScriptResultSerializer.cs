@@ -247,7 +247,7 @@ internal static class ScriptResultSerializer
     public override bool CanConvert(Type typeToConvert) => typeof(RXObject).IsAssignableFrom(typeToConvert);
 
     public override JsonConverter CreateConverter(Type typeToConvert, JsonSerializerOptions options) =>
-      (JsonConverter)Activator.CreateInstance(typeof(RxObjectConverter<>).MakeGenericType(typeToConvert))!;
+      Civil3DCompatibility.CreateClosedGeneric<JsonConverter>(typeof(RxObjectConverter<>), typeToConvert);
   }
 
   private sealed class RxObjectConverter<T> : JsonConverter<T> where T : RXObject

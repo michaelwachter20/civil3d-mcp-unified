@@ -5,7 +5,9 @@
 // Rules: points are often survey data; the AI must not change them unless the user asks. createCogoPoints and the
 // typed-in importCogoPoints first ask the user in a Civil 3D window (PointCreationGate) and change nothing on "no";
 // importPointFile is Civil 3D's own importer and asks nothing. The point file path goes through
-// FileBoundary.ResolveImportPath. Point group create/update/delete/export/transform live in PointGroupCommands.
+// FileBoundary.ResolveImportPath, and its code-page copy (when one is needed) through FileBoundary's temporary-file
+// helpers. Point numbers must be whole numbers of 1 or more (JsonRpcProtocol.PositiveIntegers).
+// Point group create/update/delete/export/transform live in PointGroupCommands.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.DatabaseServices;
@@ -37,7 +39,7 @@ public static class PointCommands
       HashSet<uint>? allowedNumbers = null;
       if (!string.IsNullOrWhiteSpace(groupName))
       {
-        allowedNumbers = TryGetPointNumbersForGroup(civilDoc, transaction, groupName!);
+        allowedNumbers = GetPointNumbersForGroup(civilDoc, transaction, groupName!);
       }
 
       var allPoints = EnumeratePoints(civilDoc, transaction)
@@ -272,7 +274,7 @@ public static class PointCommands
         duplicateSetting.Value = drawingSetting;
         if (copy != null)
         {
-          File.Delete(copy.Path);
+          FileBoundary.DeleteTemporaryFile(copy.Path);
         }
       }
 
@@ -300,7 +302,8 @@ public static class PointCommands
   /// Civil 3D's importer reads a point file in the Windows code page only: a UTF-8 file's "±" comes in as "Â±", and a
   /// byte order mark fails the first line. Such a file is written to a temporary copy in the code page for Civil 3D to
   /// import, still its own importer; null for a file that needs no copy. <c>Lost</c> says some characters had no
-  /// equivalent there.
+  /// equivalent there. The copy goes through FileBoundary.WriteTemporaryFile (the plugin's own temp folder) and the
+  /// caller removes it with FileBoundary.DeleteTemporaryFile.
   /// </summary>
   private static PointFileCopy? AnsiCopy(string path)
   {
@@ -323,8 +326,7 @@ public static class PointCommands
     System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
     var ansi = System.Text.Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage);
     var encoded = ansi.GetBytes(text);
-    var copy = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"civil3d-mcp-{Guid.NewGuid():N}{System.IO.Path.GetExtension(path)}");
-    File.WriteAllBytes(copy, encoded);
+    var copy = FileBoundary.WriteTemporaryFile(encoded, System.IO.Path.GetExtension(path));
     return new PointFileCopy(copy, ansi.GetString(encoded) != text);
   }
 
@@ -349,10 +351,10 @@ public static class PointCommands
   }
 
   /// <summary>deleteCogoPoints (changes the drawing, one undo step): erases the points with the given required
-  /// <c>pointNumbers</c> (numbers of 0 or less are skipped); one missing number fails the whole call with
-  /// CIVIL3D.OBJECT_NOT_FOUND, so nothing is erased (the write isn't committed). An empty or missing array is
-  /// CIVIL3D.INVALID_INPUT. No user window: the TS side requires an approval token for this delete. Returns deleted
-  /// and pointNumbers.</summary>
+  /// <c>pointNumbers</c>; one missing number fails the whole call with CIVIL3D.OBJECT_NOT_FOUND, so nothing is erased
+  /// (the write isn't committed). An empty or missing array, or an item that isn't a whole number of 1 or more
+  /// (JsonRpcProtocol.PositiveIntegers), is CIVIL3D.INVALID_INPUT before anything is touched. No user window: the TS
+  /// side requires an approval token for this delete. Returns deleted and pointNumbers.</summary>
   public static Task<object?> DeleteCogoPointsAsync(JsonObject? parameters)
   {
     var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
@@ -361,7 +363,7 @@ public static class PointCommands
       throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "deleteCogoPoints requires 'pointNumbers'.");
     }
 
-    var pointNumbers = numbersNode.Select(node => (uint)(node?.GetValue<int>() ?? 0)).Where(n => n > 0).ToList();
+    var pointNumbers = JsonRpcProtocol.PositiveIntegers(numbersNode, "pointNumbers").Distinct().ToList();
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -434,9 +436,9 @@ public static class PointCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"COGO point '{pointNumber}' was not found.");
   }
 
-  /// <summary>The point numbers in the group named <paramref name="groupName"/> (ignoring case). Despite the name it
-  /// never returns null: an unknown group throws CIVIL3D.OBJECT_NOT_FOUND.</summary>
-  private static HashSet<uint>? TryGetPointNumbersForGroup(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Autodesk.AutoCAD.DatabaseServices.Transaction transaction, string groupName)
+  /// <summary>The point numbers in the group named <paramref name="groupName"/> (ignoring case); never null: an
+  /// unknown group throws CIVIL3D.OBJECT_NOT_FOUND.</summary>
+  private static HashSet<uint> GetPointNumbersForGroup(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Autodesk.AutoCAD.DatabaseServices.Transaction transaction, string groupName)
   {
     foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.PointGroups)
     {

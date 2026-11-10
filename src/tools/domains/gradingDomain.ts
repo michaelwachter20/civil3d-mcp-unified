@@ -1,20 +1,26 @@
 /**
  * The grading domain: `civil3d_grading` (grading groups, gradings, criteria, feature lines), the `civil3d_feature_line`
  * alias (its own `list` / `get` / `export_as_polyline` operations, mapped onto the `feature_line_*` actions) and one
- * alias per action (`civil3d_grading_group_create`, `civil3d_feature_line_create`, ...). The plugin side is
+ * alias per offered action (`civil3d_grading_group_list`, `civil3d_feature_line_create`, ...). The plugin side is
  * GradingCommands.cs; domainRuntime.ts turns the definition into validated, approval-checked MCP tools. Every action
  * forwards to one plugin method; nothing is worked out in Node.
  *
- * Civil 3D's API doesn't reach grading groups or gradings, so `group_list` only counts gradings and the other group and
- * grading actions refuse, naming what to use instead. Criteria and feature lines work. Coordinates are in drawing units.
+ * Civil 3D's API doesn't reach grading groups or gradings, so `group_list` only counts gradings, and the other group
+ * and grading actions (group_get, group_create, group_delete, group_volume, group_surface_create, list, get, create,
+ * delete) are in no exposure and declared `unsupported` (refused with CIVIL3D.API_ERROR, no approval, no plugin call,
+ * if the orchestrator ever reaches one). Criteria and feature lines work. Coordinates are in drawing units.
  *
- * Approval (approvalPolicy.ts): the list/get/volume/criteria actions are reads. group_create, group_delete,
- * group_surface_create, create, delete, feature_line_create and feature_line_export_as_polyline are declared as
- * writes and need an approvalToken (even those the plugin refuses).
+ * Approval (approvalPolicy.ts): group_list, criteria_list and the feature line reads need none. feature_line_create
+ * and feature_line_export_as_polyline write the drawing and need an approvalToken.
  */
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
+
+/** Why every grading group / grading action but group_list is unsupported (GradingCommands.cs's OutOfReach). */
+const GRADING_OUT_OF_REACH =
+  "Civil 3D's API doesn't reach grading groups or gradings, in .NET or COM. Use the Grading Creation Tools. A group's " +
+  "surface is an ordinary surface, so the surface tools can read it and its volumes.";
 
 /** A point in drawing units; a missing elevation becomes 0. */
 const Point3DSchema = z.object({
@@ -55,17 +61,9 @@ const GenericGradingResponseSchema = z.object({}).passthrough();
  * see. The per-action `*ArgsSchema` objects below say what each action needs and validate the call.
  */
 const canonicalGradingInputShape = {
+  // The group and grading actions Civil 3D's API can't reach are left out on purpose (they are `unsupported`).
   action: z.enum([
     "group_list",
-    "group_get",
-    "group_create",
-    "group_delete",
-    "group_volume",
-    "group_surface_create",
-    "list",
-    "get",
-    "create",
-    "delete",
     "criteria_list",
     "feature_line_list",
     "feature_line_get",
@@ -73,14 +71,6 @@ const canonicalGradingInputShape = {
     "feature_line_create",
   ]),
   name: z.string().optional(),
-  description: z.string().optional(),
-  useProjection: z.boolean().optional(),
-  surfaceName: z.string().optional(),
-  groupName: z.string().optional(),
-  handle: z.string().optional(),
-  featureLineName: z.string().optional(),
-  criteriaName: z.string().optional(),
-  side: z.enum(["left", "right", "both"]).optional(),
   targetLayer: z.string().optional(),
   points: z.array(Point3DSchema).optional(),
   layer: z.string().optional(),
@@ -178,8 +168,9 @@ const FeatureLineCreateArgsSchema = z.object({
 /**
  * The grading domain: `civil3d_grading` (grading groups, gradings, grading criteria, feature lines, and a surface
  * or volume from a grading group) and its aliases. Every action is one call to GradingCommands.cs; there, every
- * group and grading method except listGradingGroups throws CIVIL3D.API_ERROR at once, while the criteria and
- * feature line methods do real work. Listed in toolManifest.ts; exposures[0] is the canonical tool.
+ * group and grading method except listGradingGroups throws CIVIL3D.API_ERROR at once, so those actions are declared
+ * `unsupported` and never sent; the criteria and feature line methods do real work. Listed in toolManifest.ts;
+ * exposures[0] is the canonical tool.
  */
 export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "grading",
@@ -204,6 +195,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["getGradingGroup"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("getGradingGroup", { name: args.name }),
       ),
@@ -216,6 +208,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["createGradingGroup"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("createGradingGroup", {
           name: args.name,
@@ -232,12 +225,12 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["deleteGradingGroup"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("deleteGradingGroup", { name: args.name }),
       ),
     },
-    // Meant to give the grading group's cut and fill; the plugin refuses it (CIVIL3D.API_ERROR) like every group and
-    // grading action except group_list.
+    // Meant to give the grading group's cut and fill; unsupported like every group and grading action except group_list.
     group_volume: {
       action: "group_volume",
       inputSchema: GradingGroupVolumeArgsSchema,
@@ -246,6 +239,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["getGradingGroupVolume"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("getGradingGroupVolume", { name: args.name }),
       ),
@@ -258,6 +252,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["createSurfaceFromGradingGroup"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("createSurfaceFromGradingGroup", {
           name: args.name,
@@ -273,6 +268,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["listGradings"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("listGradings", { groupName: args.groupName }),
       ),
@@ -285,6 +281,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["getGrading"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("getGrading", {
           groupName: args.groupName,
@@ -300,6 +297,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["createGrading"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("createGrading", {
           groupName: args.groupName,
@@ -317,6 +315,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["deleteGrading"],
+      unsupported: GRADING_OUT_OF_REACH,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("deleteGrading", {
           groupName: args.groupName,
@@ -361,13 +360,13 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
     // "Export" means into the drawing: the plugin adds a 3D polyline through the feature line's vertices to model
-    // space (on `targetLayer`, else the feature line's layer) and leaves the feature line as it is. The `export`
-    // capability makes it approval-gated.
+    // space (on `targetLayer`, else the feature line's layer) and leaves the feature line as it is. No file is written,
+    // so it is declared a `create` (the `export` capability means a file); non-retryable, so approval-gated.
     feature_line_export_as_polyline: {
       action: "feature_line_export_as_polyline",
       inputSchema: FeatureLineExportArgsSchema,
       responseSchema: GenericGradingResponseSchema,
-      capabilities: ["query", "export"],
+      capabilities: ["query", "create"],
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["exportFeatureLineAsPolyline"],
@@ -400,19 +399,10 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_grading",
       displayName: "Civil 3D Grading",
-      description: "Works with Civil 3D feature lines and grading criteria. Civil 3D's API doesn't reach grading groups or gradings: group_list only counts gradings, and the other group and grading actions refuse.",
+      description: "Works with Civil 3D feature lines and grading criteria. Civil 3D's API doesn't reach grading groups or gradings, so group_list only counts gradings; create and edit them with the Grading Creation Tools.",
       inputShape: canonicalGradingInputShape,
       supportedActions: [
         "group_list",
-        "group_get",
-        "group_create",
-        "group_delete",
-        "group_volume",
-        "group_surface_create",
-        "list",
-        "get",
-        "create",
-        "delete",
         "criteria_list",
         "feature_line_list",
         "feature_line_get",
@@ -462,125 +452,8 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       supportedActions: ["group_list"],
       resolveAction: () => ({ action: "group_list", args: { action: "group_list" } }),
     },
-    {
-      toolName: "civil3d_grading_group_get",
-      displayName: "Civil 3D Grading Group Get",
-      description: "Gets detailed information about a Civil 3D grading group.",
-      inputShape: { name: z.string() },
-      supportedActions: ["group_get"],
-      resolveAction: (rawArgs) => ({ action: "group_get", args: { action: "group_get", name: rawArgs.name } }),
-    },
-    {
-      toolName: "civil3d_grading_group_create",
-      displayName: "Civil 3D Grading Group Create",
-      description: "Creates a new Civil 3D grading group.",
-      inputShape: {
-        name: z.string(),
-        description: z.string().optional(),
-        useProjection: z.boolean().optional(),
-      },
-      supportedActions: ["group_create"],
-      resolveAction: (rawArgs) => ({
-        action: "group_create",
-        args: {
-          action: "group_create",
-          name: rawArgs.name,
-          description: rawArgs.description,
-          useProjection: rawArgs.useProjection,
-        },
-      }),
-    },
-    {
-      toolName: "civil3d_grading_group_delete",
-      displayName: "Civil 3D Grading Group Delete",
-      description: "Deletes a Civil 3D grading group and its gradings.",
-      inputShape: { name: z.string() },
-      supportedActions: ["group_delete"],
-      resolveAction: (rawArgs) => ({ action: "group_delete", args: { action: "group_delete", name: rawArgs.name } }),
-    },
-    {
-      toolName: "civil3d_grading_group_volume",
-      displayName: "Civil 3D Grading Group Volume",
-      description: "Gets the cut/fill volume report for a Civil 3D grading group.",
-      inputShape: { name: z.string() },
-      supportedActions: ["group_volume"],
-      resolveAction: (rawArgs) => ({ action: "group_volume", args: { action: "group_volume", name: rawArgs.name } }),
-    },
-    {
-      toolName: "civil3d_grading_group_surface_create",
-      displayName: "Civil 3D Grading Group Surface Create",
-      description: "Creates a Civil 3D surface from a grading group.",
-      inputShape: { name: z.string(), surfaceName: z.string().optional() },
-      supportedActions: ["group_surface_create"],
-      resolveAction: (rawArgs) => ({
-        action: "group_surface_create",
-        args: {
-          action: "group_surface_create",
-          name: rawArgs.name,
-          surfaceName: rawArgs.surfaceName,
-        },
-      }),
-    },
-    {
-      toolName: "civil3d_grading_list",
-      displayName: "Civil 3D Grading List",
-      description: "Lists all grading objects within a specific Civil 3D grading group.",
-      inputShape: { groupName: z.string() },
-      supportedActions: ["list"],
-      resolveAction: (rawArgs) => ({ action: "list", args: { action: "list", groupName: rawArgs.groupName } }),
-    },
-    {
-      toolName: "civil3d_grading_get",
-      displayName: "Civil 3D Grading Get",
-      description: "Gets detailed properties of a specific grading object.",
-      inputShape: { groupName: z.string(), handle: z.string() },
-      supportedActions: ["get"],
-      resolveAction: (rawArgs) => ({
-        action: "get",
-        args: {
-          action: "get",
-          groupName: rawArgs.groupName,
-          handle: rawArgs.handle,
-        },
-      }),
-    },
-    {
-      toolName: "civil3d_grading_create",
-      displayName: "Civil 3D Grading Create",
-      description: "Creates a new Civil 3D grading from a feature line using the specified criteria.",
-      inputShape: {
-        groupName: z.string(),
-        featureLineName: z.string(),
-        criteriaName: z.string().optional(),
-        side: z.enum(["left", "right", "both"]).optional(),
-      },
-      supportedActions: ["create"],
-      resolveAction: (rawArgs) => ({
-        action: "create",
-        args: {
-          action: "create",
-          groupName: rawArgs.groupName,
-          featureLineName: rawArgs.featureLineName,
-          criteriaName: rawArgs.criteriaName,
-          side: rawArgs.side,
-        },
-      }),
-    },
-    {
-      toolName: "civil3d_grading_delete",
-      displayName: "Civil 3D Grading Delete",
-      description: "Deletes a grading object from a Civil 3D grading group by handle.",
-      inputShape: { groupName: z.string(), handle: z.string() },
-      supportedActions: ["delete"],
-      resolveAction: (rawArgs) => ({
-        action: "delete",
-        args: {
-          action: "delete",
-          groupName: rawArgs.groupName,
-          handle: rawArgs.handle,
-        },
-      }),
-    },
+    // The group and grading actions Civil 3D's API can't reach (group_get ... delete) have no alias: they are kept
+    // only as `unsupported` actions, so nothing offers them.
     {
       toolName: "civil3d_grading_criteria_list",
       displayName: "Civil 3D Grading Criteria List",

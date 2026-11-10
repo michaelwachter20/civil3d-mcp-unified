@@ -10,10 +10,12 @@
  * The sizing math (`partDiameter`, `fullFlowCapacity`, `sizePipe`) is exported so tests can check it offline.
  *
  * Approval (approvalPolicy.ts): reads (list, get*, check_interference, catalog_list, calculate_hgl,
- * hydraulic_analysis, validate_pressure_network) need none. Every create/add/edit/delete action needs an
- * approvalToken, and so do size_network (declared as an edit even when it only recommends), automate_profile_view
- * and export_pressure_network (its `export` capability, although it only returns data). The composite actions make
- * one plugin write per step, so each step is its own undo step.
+ * hydraulic_analysis) need none. Every create/add/edit/delete action needs an approvalToken, and so do size_network
+ * with applyChanges (without it, it only recommends and needs none), automate_profile_view and
+ * export_pressure_network (a read that returns data, but "export" in its name triggers the name rule).
+ * set_pressure_cover, validate_pressure_network and connect_pressure_networks are declared `unsupported` (the plugin
+ * always refuses them), so they are refused before approval without a plugin call. The composite actions make one
+ * plugin write per step, so each step is its own undo step (the tool descriptions say so).
  */
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
@@ -617,9 +619,10 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         networkName: args.networkName,
         designFlow: args.designFlow ?? null,
         manningsN: args.manningsN ?? 0.013,
-        minCoverDepth: args.minCoverDepth ?? 2.0,
-        minVelocity: args.minVelocity ?? 2.0,
-        maxVelocity: args.maxVelocity ?? 10.0,
+        // Left out, the plugin picks defaults in the drawing's units (feet or meters).
+        minCoverDepth: args.minCoverDepth ?? null,
+        minVelocity: args.minVelocity ?? null,
+        maxVelocity: args.maxVelocity ?? null,
         minSlope: args.minSlope ?? 0.5,
       })),
     },
@@ -639,8 +642,9 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     // For each pipe in the network: its design flow (perPipeDesignFlows by name, else defaultDesignFlow; pipes with
     // neither are skipped), the diameter Manning's equation needs at the pipe's slope, and the best catalog part
     // (sizePipe: catalog sizes read in the drawing's units, Manning's in feet or meters to match). With applyChanges a
-    // pipe whose part isn't that one already is swapped to it; otherwise it only recommends. Declared non-retryable
-    // because applying is a drawing change, so it goes through approval either way.
+    // pipe whose part isn't that one already is swapped to it; otherwise it only recommends. Declared a non-retryable
+    // edit because applying is a drawing change; without applyChanges it only reads (readOnlyWhen), so no approval.
+    // Each swap is its own resizePipeInNetwork call, so applying makes one undo step per resized pipe.
     size_network: {
       action: "size_network",
       inputSchema: PipeSizeNetworkArgsSchema,
@@ -649,6 +653,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["getPipeNetwork", "listPipePartsCatalog", "resizePipeInNetwork"],
+      readOnlyWhen: (args) => args.applyChanges !== true,
       execute: async (args) => await withApplicationConnection(async (appClient) => {
         const network = await appClient.sendCommand("getPipeNetwork", { name: args.networkName }) as PipeNetworkDetail;
         const partsListName = args.partsList ?? network.partsList;
@@ -684,7 +689,8 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       }),
     },
     // Uses the network's reference alignment and surface unless given. Creates the existing-ground profile (default
-    // name EG_<alignment>) only when it is missing and createSurfaceProfileIfMissing is set, then a profile view.
+    // name EG_<alignment>) only when it is missing and createSurfaceProfileIfMissing is set, then a profile view: two
+    // plugin writes, so two undo steps (the plugin has no single-transaction method for both).
     automate_profile_view: {
       action: "automate_profile_view",
       inputSchema: PipeAutomateProfileViewArgsSchema,
@@ -722,8 +728,9 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       }),
     },
     // Pressure networks (PressureNetworkCommands.cs): one plugin call per action. Reads: list_pressure_networks,
-    // get_pressure_network, validate_pressure_network, get_pressure_pipe_properties, get_pressure_fitting_properties.
-    // Everything else writes the drawing (or, for export_pressure_network, is export-flagged) and needs approval.
+    // get_pressure_network, export_pressure_network (approval by its name), get_pressure_pipe_properties,
+    // get_pressure_fitting_properties. Unsupported: set_pressure_cover, validate_pressure_network,
+    // connect_pressure_networks. Everything else writes the drawing and needs approval.
     list_pressure_networks: {
       action: "list_pressure_networks",
       inputSchema: PipeListPressureNetworksArgsSchema,
@@ -791,6 +798,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["setPressureNetworkCover"],
+      unsupported: "A pressure network has no network-level minimum or maximum cover setting in Civil 3D's API. Apply reviewed cover criteria pipe by pipe (resize_pressure_pipe, Civil 3D's pressure network tools).",
       execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("setPressureNetworkCover", {
         networkName: args.networkName,
         minCoverDepth: args.minCoverDepth,
@@ -805,13 +813,16 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["validatePressureNetwork"],
+      unsupported: "A pressure network check needs explicit cover criteria and typed connection checks, and a guessed \"valid\" would mislead. Read the network with get_pressure_network or export_pressure_network and check it against the criteria the engineer gives.",
       execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("validatePressureNetwork", { networkName: args.networkName })),
     },
+    // Returns the network as data in the answer and writes no file, so it is declared a read (`export` means a file).
+    // Its name still contains "export", so approvalPolicy's name rule asks for a token all the same.
     export_pressure_network: {
       action: "export_pressure_network",
       inputSchema: PipeExportPressureNetworkArgsSchema,
       responseSchema: GenericPipeResponseSchema,
-      capabilities: ["query", "export"],
+      capabilities: ["query", "inspect"],
       requiresActiveDrawing: true,
       safeForRetry: true,
       pluginMethods: ["exportPressureNetwork"],
@@ -828,6 +839,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["connectPressureNetworks"],
+      unsupported: "Pressure networks can't be merged from here (the API would leave a part listed in both networks). Use Civil 3D's Connect command.",
       execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("connectPressureNetworks", {
         targetNetwork: args.targetNetwork,
         sourceNetwork: args.sourceNetwork,
@@ -927,7 +939,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pipe",
       displayName: "Civil 3D Pipe",
-      description: "Reads, analyzes, designs, and manages Civil 3D gravity and pressure pipe systems through a single domain tool.",
+      description: "Reads, analyzes, designs, and manages Civil 3D gravity and pressure pipe systems through a single domain tool. size_network with applyChanges resizes each pipe as its own undo step, and automate_profile_view creates the EG profile and the profile view as two undo steps.",
       inputShape: canonicalPipeInputShape,
       supportedActions: [
         "list", "get", "get_pipe", "get_structure", "check_interference", "create", "add_pipe", "add_structure",
@@ -1019,7 +1031,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pipe_network_size",
       displayName: "Civil 3D Pipe Network Size",
-      description: "Sizes gravity-network pipes from Manning full-flow capacity, chooses matching catalog parts, and optionally applies the selected sizes back to the drawing.",
+      description: "Sizes gravity-network pipes from Manning full-flow capacity, chooses matching catalog parts, and optionally applies the selected sizes back to the drawing (applyChanges; each resized pipe is its own undo step).",
       inputShape: { networkName: z.string(), partsList: z.string().optional(), defaultDesignFlow: z.number().positive().optional(), perPipeDesignFlows: z.array(PipeFlowSchema).optional(), manningsN: z.number().positive().optional().default(0.013), targetVelocityMin: z.number().positive().optional().default(2), targetVelocityMax: z.number().positive().optional().default(10), applyChanges: z.boolean().optional().default(false) },
       supportedActions: ["size_network"],
       resolveAction: (rawArgs) => ({ action: "size_network", args: { action: "size_network", networkName: rawArgs.networkName, partsList: rawArgs.partsList, defaultDesignFlow: rawArgs.defaultDesignFlow, perPipeDesignFlows: rawArgs.perPipeDesignFlows, manningsN: rawArgs.manningsN, targetVelocityMin: rawArgs.targetVelocityMin, targetVelocityMax: rawArgs.targetVelocityMax, applyChanges: rawArgs.applyChanges } }),
@@ -1027,7 +1039,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pipe_profile_view_automation",
       displayName: "Civil 3D Pipe Profile View Automation",
-      description: "Automates a gravity-pipe profile-view setup by resolving the network alignment/surface, creating an EG profile if needed, and creating the profile view with optional style and band set.",
+      description: "Automates a gravity-pipe profile-view setup by resolving the network alignment/surface, creating an EG profile if needed, and creating the profile view with optional style and band set. The profile and the view are separate undo steps.",
       inputShape: { networkName: z.string(), profileViewName: z.string(), insertX: z.number(), insertY: z.number(), alignmentName: z.string().optional(), surfaceName: z.string().optional(), existingProfileName: z.string().optional(), surfaceProfileName: z.string().optional(), createSurfaceProfileIfMissing: z.boolean().optional().default(true), style: z.string().optional(), bandSet: z.string().optional() },
       supportedActions: ["automate_profile_view"],
       resolveAction: (rawArgs) => ({ action: "automate_profile_view", args: { action: "automate_profile_view", networkName: rawArgs.networkName, profileViewName: rawArgs.profileViewName, insertX: rawArgs.insertX, insertY: rawArgs.insertY, alignmentName: rawArgs.alignmentName, surfaceName: rawArgs.surfaceName, existingProfileName: rawArgs.existingProfileName, surfaceProfileName: rawArgs.surfaceProfileName, createSurfaceProfileIfMissing: rawArgs.createSurfaceProfileIfMissing, style: rawArgs.style, bandSet: rawArgs.bandSet } }),
@@ -1075,7 +1087,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pressure_network_set_cover",
       displayName: "Civil 3D Pressure Network Set Cover",
-      description: "Sets minimum and optional maximum cover requirements for a pressure network.",
+      description: "Not supported: Civil 3D's API has no network-level cover setting for a pressure network. The call changes nothing and says what to use instead.",
       inputShape: { networkName: z.string(), minCoverDepth: z.number(), maxCoverDepth: z.number().optional() },
       supportedActions: ["set_pressure_cover"],
       resolveAction: (rawArgs) => ({ action: "set_pressure_cover", args: { action: "set_pressure_cover", networkName: rawArgs.networkName, minCoverDepth: rawArgs.minCoverDepth, maxCoverDepth: rawArgs.maxCoverDepth } }),
@@ -1083,7 +1095,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pressure_network_validate",
       displayName: "Civil 3D Pressure Network Validate",
-      description: "Validates a pressure network for cover violations, disconnected components, and parts mismatches.",
+      description: "Not supported: a pressure network check needs explicit cover criteria and typed connection checks. The call changes nothing and says what to use instead.",
       inputShape: { networkName: z.string() },
       supportedActions: ["validate_pressure_network"],
       resolveAction: (rawArgs) => ({ action: "validate_pressure_network", args: { action: "validate_pressure_network", networkName: rawArgs.networkName } }),
@@ -1099,7 +1111,7 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
     {
       toolName: "civil3d_pressure_network_connect",
       displayName: "Civil 3D Pressure Network Connect",
-      description: "Connects two pressure networks by merging the source network into the target network.",
+      description: "Not supported: pressure networks can't be merged through Civil 3D's API (use the Connect command). The call changes nothing.",
       inputShape: { targetNetwork: z.string(), sourceNetwork: z.string() },
       supportedActions: ["connect_pressure_networks"],
       resolveAction: (rawArgs) => ({ action: "connect_pressure_networks", args: { action: "connect_pressure_networks", targetNetwork: rawArgs.targetNetwork, sourceNetwork: rawArgs.sourceNetwork } }),

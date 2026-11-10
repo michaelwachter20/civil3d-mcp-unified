@@ -3,7 +3,11 @@
 // deleteCorridorRegion. Called by src/tools/domains/corridorDomain.ts (civil3d_corridor).
 // getCorridorTargetMappings is a CivilExecution.ReadAsync. The three edits are CivilExecution.WriteAsync (one undo
 // step) and rebuild the corridor synchronously inside that write, unlike rebuildCorridor's background job, so a large
-// corridor holds the host queue until the rebuild ends. Baselines and regions are addressed by index. No file access.
+// corridor holds the host queue until the rebuild ends. That is on purpose: the edit and its rebuild stay one undo step
+// and never leave the corridor half done. rebuildCorridor's job holds the host queue just as long (Corridor.Rebuild()
+// has to run on the command thread inside a write); the job only lets the call answer at once with a jobId. Moving the
+// rebuild here into a job would split the edit into two undo steps or change these answers to jobs. Baselines and
+// regions are addressed by index. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.DatabaseServices;
@@ -34,7 +38,8 @@ public static class CorridorEditingCommands
   /// getCorridorTargetMappings: for corridor <c>corridorName</c> (required), baseline <c>baselineIndex</c> (default 0)
   /// and optionally one <c>regionIndex</c>, each region's stations and its targets (parameter and logical name,
   /// subassembly, target type, target object names). Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor,
-  /// CIVIL3D.INVALID_INPUT for a baseline index out of range; a region index out of range just returns no regions.
+  /// CIVIL3D.INVALID_INPUT for a baseline or region index out of range (a wrong region index used to answer an empty
+  /// list, which read as "no targets").
   /// </summary>
   public static Task<object?> GetCorridorTargetMappingsAsync(JsonObject? parameters)
   {
@@ -50,6 +55,13 @@ public static class CorridorEditingCommands
       var results = new List<Dictionary<string, object?>>();
 
       var regions = baseline.BaselineRegions;
+      if (regionIndex is { } wanted && (wanted < 0 || wanted >= regions.Count))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"Region index {wanted} is out of range. Corridor '{corridorName}' baseline {baselineIndex} has "
+          + (regions.Count == 0 ? "no regions." : $"{regions.Count} region(s), 0 to {regions.Count - 1}."));
+      }
+
       for (var ri = 0; ri < regions.Count; ri++)
       {
         if (regionIndex.HasValue && ri != regionIndex.Value) continue;
@@ -160,9 +172,12 @@ public static class CorridorEditingCommands
   /// <summary>
   /// addCorridorRegion: adds region "Region n" with assembly <c>assemblyName</c> from <c>startStation</c> to
   /// <c>endStation</c> (all required, with <c>corridorName</c>) on baseline <c>baselineIndex</c> (default 0), sets
-  /// <c>frequency</c> along tangents (default 10), <c>frequencyAtCurves</c> and <c>frequencyAtKneePoints</c> (applied
-  /// as the profile-curve frequency; both default to frequency), then rebuilds the corridor. Changes the drawing.
-  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor or assembly, CIVIL3D.INVALID_INPUT for a bad baseline index.
+  /// <c>frequency</c> along tangents (default 10), <c>frequencyAtCurves</c> (along horizontal curves) and
+  /// <c>frequencyAlongProfileCurves</c> (along vertical curves; both default to frequency) and, when given,
+  /// <c>frequencyAlongSpirals</c>, then rebuilds the corridor. Changes the drawing. <c>frequencyAtKneePoints</c> is
+  /// refused (CIVIL3D.INVALID_INPUT): Civil 3D has no frequency at knee points, and it used to be applied silently as the
+  /// profile-curve frequency. CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor or assembly, CIVIL3D.INVALID_INPUT for a
+  /// bad baseline index or a frequency that isn't positive.
   /// </summary>
   public static Task<object?> AddCorridorRegionAsync(JsonObject? parameters)
   {
@@ -173,7 +188,27 @@ public static class CorridorEditingCommands
     var endStation = PluginRuntime.GetRequiredDouble(parameters, "endStation");
     var frequency = PluginRuntime.GetOptionalDouble(parameters, "frequency") ?? 10.0;
     var frequencyAtCurves = PluginRuntime.GetOptionalDouble(parameters, "frequencyAtCurves") ?? frequency;
-    var frequencyAtKneePoints = PluginRuntime.GetOptionalDouble(parameters, "frequencyAtKneePoints") ?? frequency;
+    var frequencyAlongProfileCurves = PluginRuntime.GetOptionalDouble(parameters, "frequencyAlongProfileCurves") ?? frequency;
+    var frequencyAlongSpirals = PluginRuntime.GetOptionalDouble(parameters, "frequencyAlongSpirals");
+    if (PluginRuntime.GetOptionalDouble(parameters, "frequencyAtKneePoints") is { } kneePoints)
+    {
+      throw new JsonRpcDispatchException(
+        "CIVIL3D.INVALID_INPUT",
+        $"Civil 3D has no corridor frequency at knee points, so frequencyAtKneePoints ({kneePoints}) can't be applied. " +
+        "Send frequencyAlongProfileCurves for the spacing along vertical curves (or frequencyAtCurves for horizontal curves) instead.");
+    }
+
+    foreach (var (name, value) in new (string, double?)[]
+    {
+      ("frequency", frequency), ("frequencyAtCurves", frequencyAtCurves),
+      ("frequencyAlongProfileCurves", frequencyAlongProfileCurves), ("frequencyAlongSpirals", frequencyAlongSpirals),
+    })
+    {
+      if (value is { } spacing && (!(spacing > 0) || double.IsInfinity(spacing)))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{name} must be a positive distance in drawing units, not {spacing}.");
+      }
+    }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -199,7 +234,11 @@ public static class CorridorEditingCommands
       var added = baseline.BaselineRegions.Add($"Region {newRegionIndex + 1}", assemblyId, startStation, endStation);
       added.AppliedAssemblySetting.FrequencyAlongTangents = frequency;
       added.AppliedAssemblySetting.FrequencyAlongCurves = frequencyAtCurves;
-      added.AppliedAssemblySetting.FrequencyAlongProfileCurves = frequencyAtKneePoints;
+      added.AppliedAssemblySetting.FrequencyAlongProfileCurves = frequencyAlongProfileCurves;
+      if (frequencyAlongSpirals is { } spirals)
+      {
+        added.AppliedAssemblySetting.FrequencyAlongSpirals = spirals;
+      }
 
       // Rebuild corridor
       corridor.Rebuild();

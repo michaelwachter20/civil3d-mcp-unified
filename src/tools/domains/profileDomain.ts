@@ -270,7 +270,7 @@ const canonicalProfileInputShape = {
   pviStation: z.number().optional(),
   length: z.number().positive().optional(),
   curveType: z.enum(["symmetric_parabola", "asymmetric_parabola"]).optional(),
-  entityIndex: z.number().int().min(0).optional(),
+  entityIndex: z.number().int().min(0).optional().describe("set_grade: the entity, numbered by station as get shows"),
   grade: z.number().optional(),
   designSpeed: z.number().positive().optional(),
   insertX: z.number().optional(),
@@ -463,6 +463,14 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
         );
 
         const elevations = samples.samples.map((s) => s.elevation);
+        // Math.min/max of nothing is +-Infinity, which would come back as a "minimum elevation"; refuse instead.
+        if (elevations.length === 0) {
+          throw Object.assign(new Error(
+            `Profile '${args.profileName}' gave no elevations between stations ${startStation} and ${endStation}, ` +
+            "so there is nothing to report. Check the station range lies on the profile (see the profile's start and " +
+            "end stations) and try again.",
+          ), { code: "CIVIL3D.INVALID_INPUT" });
+        }
         const grades = samples.samples
           .map((s) => s.grade)
           .filter((g): g is number => g !== null);
@@ -749,7 +757,7 @@ export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
       inputShape: {
         alignmentName: z.string(),
         profileName: z.string(),
-        entityIndex: z.number().int().min(0),
+        entityIndex: z.number().int().min(0).describe("The tangent, numbered by station as civil3d_profile get shows"),
         grade: z.number(),
       },
       supportedActions: ["set_grade"],

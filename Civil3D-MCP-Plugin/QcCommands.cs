@@ -44,10 +44,11 @@ public static class QcCommands
 
   /// <summary>
   /// Checks alignment <c>name</c> entity by entity: zero-length tangents, curves and spirals, invalid radii and spiral
-  /// parameters, and, with <c>designSpeed</c>, curves below a rough minimum radius of V squared / 15 (a simplified
-  /// stand-in for the AASHTO formula, not a design check). <c>checkTangents</c>, <c>checkCurves</c> and
+  /// parameters, and, with <c>designSpeed</c>, curves below a rough minimum radius (DesignMath.RoughMinimumRadius, a
+  /// simplified stand-in for the AASHTO formula, not a design check). <c>checkTangents</c>, <c>checkCurves</c> and
   /// <c>checkSpirals</c> (all on by default) select the checks.
-  /// <c>name</c> is required; <c>designSpeed</c> is optional (the message calls it km/h whatever the drawing units).
+  /// <c>name</c> is required; <c>designSpeed</c> is optional, in mph in a feet drawing and km/h otherwise (the finding
+  /// names the unit in <c>speedUnit</c>).
   /// Read-only. Returns the alignment's name, length, start and end station, <c>findings</c> and
   /// <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown
   /// alignment, and CIVIL3D.QC_ERROR for any other failure.
@@ -66,6 +67,7 @@ public static class QcCommands
       {
         var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, name);
         var findings = new List<Dictionary<string, object?>>();
+        var linearUnits = CivilObjectUtils.LinearUnits(database);
 
         var entityCollection = CivilObjectUtils.GetPropertyValue<object>(alignment, "Entities");
         if (entityCollection is IEnumerable enumerable)
@@ -123,9 +125,8 @@ public static class QcCommands
               }
               else if (designSpeed.HasValue)
               {
-                // AASHTO minimum radius approximation: R_min ≈ V² / (127 * (e + f))
-                // Using a simplified check: R_min ≈ V² / 15 for a rough check
-                var minRadius = (designSpeed.Value * designSpeed.Value) / 15.0;
+                // Rough AASHTO minimum radius, in the drawing's units: km/h and meters, or mph and feet.
+                var minRadius = DesignMath.RoughMinimumRadius(designSpeed.Value, linearUnits);
                 if (radius < minRadius)
                 {
                   findings.Add(new Dictionary<string, object?>
@@ -139,7 +140,8 @@ public static class QcCommands
                     ["radius"] = radius,
                     ["minimumRadius"] = minRadius,
                     ["designSpeed"] = designSpeed,
-                    ["message"] = $"Curve at index {index} (sta {startStation:F2}–{endStation:F2}) has radius {radius:F2}, below minimum {minRadius:F2} for design speed {designSpeed} km/h.",
+                    ["speedUnit"] = DesignMath.SpeedUnit(linearUnits),
+                    ["message"] = $"Curve at index {index} (sta {startStation:F2}–{endStation:F2}) has radius {radius:F2}, below minimum {minRadius:F2} for design speed {designSpeed} {DesignMath.SpeedUnit(linearUnits)}.",
                   });
                 }
               }
@@ -454,7 +456,8 @@ public static class QcCommands
   /// <c>minCover</c>, <c>minVelocity</c> / <c>maxVelocity</c>. Cover and velocity are the values stored on the pipe;
   /// a pipe without a stored velocity reads as 0 and is not reported as too slow.
   /// <c>name</c> is required; every limit is optional and unchecked when left out. With <c>minCover</c>, a pipe with no
-  /// reference surface gets a "pipe_cover_unknown" info finding instead of a cover check.
+  /// reference surface gets a "pipe_cover_unknown" info finding instead of a cover check (its slope and velocity are
+  /// still checked).
   /// Read-only. Returns <c>networkName</c>, <c>findings</c> and <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT
   /// without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown network, CIVIL3D.QC_ERROR for anything else.
   /// </summary>
@@ -515,6 +518,7 @@ public static class QcCommands
           if (minCover.HasValue)
           {
             // Civil 3D works out cover against the pipe's reference surface, and gives 0 without one: not a real depth.
+            // The velocity checks below don't need a surface, so this skips only the cover check.
             if (pipe is not Pipe coveredPipe || HasNoReferenceSurface(coveredPipe))
             {
               findings.Add(new Dictionary<string, object?>
@@ -524,11 +528,9 @@ public static class QcCommands
                 ["pipeName"] = pipeName,
                 ["message"] = $"Pipe '{pipeName}' has no reference surface, so its cover can't be checked.",
               });
-              continue;
             }
-
-            var coverDepth = Math.Min(coveredPipe.CoverOfStartPoint, coveredPipe.CoverOfEndpoint);
-            if (coverDepth < minCover.Value)
+            else if (Math.Min(coveredPipe.CoverOfStartPoint, coveredPipe.CoverOfEndpoint) is var coverDepth
+                     && coverDepth < minCover.Value)
             {
               findings.Add(new Dictionary<string, object?>
               {
@@ -757,14 +759,14 @@ public static class QcCommands
       {
         var findings = new List<Dictionary<string, object?>>();
 
-        // Check alignments for missing labels
-        if (checkMissing && (string.IsNullOrWhiteSpace(objectType) || objectType!.Equals("alignment", StringComparison.OrdinalIgnoreCase)))
+        // Check alignments for missing label sets (checkMissing) and missing styles (checkStyleViolations), each on its own
+        if ((checkMissing || checkStyleViolations)
+            && (string.IsNullOrWhiteSpace(objectType) || objectType!.Equals("alignment", StringComparison.OrdinalIgnoreCase)))
         {
           foreach (ObjectId alignId in civilDoc.GetAlignmentIds())
           {
             var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignId, OpenMode.ForRead);
-            var labelSetId = CivilObjectUtils.GetPropertyValue<ObjectId?>(alignment, "LabelSetId");
-            if (labelSetId == null || labelSetId == ObjectId.Null)
+            if (checkMissing && CivilObjectUtils.GetPropertyValue<ObjectId?>(alignment, "LabelSetId") is not { IsNull: false })
             {
               findings.Add(new Dictionary<string, object?>
               {
@@ -864,7 +866,7 @@ public static class QcCommands
   /// isn't changed, only the file is written.
   /// <c>outputPath</c> is required; the include flags are optional: <c>includeAlignments</c>, <c>includeCorridors</c>,
   /// <c>includePipeNetworks</c>, <c>includeSurfaces</c>, <c>includeLabels</c> (on by default), <c>includeProfiles</c>
-  /// (read but no profile section is written) and <c>includeDrawingStandards</c> (off by default).
+  /// (zero-length entities of every profile) and <c>includeDrawingStandards</c> (both off by default here).
   /// Returns the canonical <c>outputPath</c>, <c>checksRun</c>, <c>totalViolations</c>, <c>sectionsIncluded</c> and
   /// <c>reportGenerated</c>. FileBoundary's own codes pass through (CIVIL3D.PATH_NOT_ALLOWED, FILE_TYPE_NOT_ALLOWED,
   /// CONFLICT for an existing file without <c>overwrite</c>, FILE_IO_ERROR); other failures are CIVIL3D.QC_ERROR.
@@ -929,6 +931,38 @@ public static class QcCommands
           sb.AppendLine();
         }
 
+        // Profiles: every profile of every alignment, entity by entity (as qcCheckProfile reads them; PVIs are slow).
+        if (includeProfiles)
+        {
+          checksRun++;
+          sectionsIncluded.Add("profiles");
+          sb.AppendLine("--- PROFILE CHECKS ---");
+          foreach (ObjectId alignId in civilDoc.GetAlignmentIds())
+          {
+            var alignment = CivilObjectUtils.GetRequiredObject<Alignment>(transaction, alignId, OpenMode.ForRead);
+            foreach (ObjectId profileId in alignment.GetProfileIds())
+            {
+              var profile = CivilObjectUtils.GetRequiredObject<Profile>(transaction, profileId, OpenMode.ForRead);
+              var profileViolations = 0;
+              var entityCount = 0;
+              foreach (ProfileEntity entity in profile.Entities)
+              {
+                entityCount++;
+                if (entity.Length <= 0)
+                {
+                  sb.AppendLine($"  [WARN] {alignment.Name} / {profile.Name}: zero/negative length entity at sta {entity.StartStation:F2}");
+                  profileViolations++;
+                }
+              }
+
+              if (profileViolations == 0)
+                sb.AppendLine($"  [OK] {alignment.Name} / {profile.Name} ({entityCount} entities)");
+              totalViolations += profileViolations;
+            }
+          }
+          sb.AppendLine();
+        }
+
         // Surfaces
         if (includeSurfaces)
         {
@@ -938,22 +972,28 @@ public static class QcCommands
           foreach (ObjectId surfId in civilDoc.GetSurfaceIds())
           {
             var surface = CivilObjectUtils.GetRequiredObject<CivilSurface>(transaction, surfId, OpenMode.ForRead);
-            var gp = CivilObjectUtils.InvokeMethod(surface, "GetGeneralProperties");
-            var npts = CivilObjectUtils.GetPropertyValue<int?>(gp, "NumberOfPoints") ?? 0;
-            var ntri = CivilObjectUtils.GetPropertyValue<int?>(gp, "NumberOfTriangles") ?? 0;
+            // An empty surface throws when asked its properties (see qcCheckSurface).
+            var npts = SurfaceCommands.IsEmpty(surface)
+              ? 0
+              : CivilObjectUtils.GetPropertyValue<int?>(CivilObjectUtils.InvokeMethod(surface, "GetGeneralProperties"), "NumberOfPoints") ?? 0;
+            // As in qcCheckSurface: the triangle count is in a TIN surface's TIN properties (the general ones always read
+            // 0); a grid or other surface has none, so the no-triangles check doesn't apply to it.
+            long? ntri = npts > 0 && surface is TinSurface tin ? Convert.ToInt64(tin.GetTinProperties().NumberOfTriangles) : null;
             if (npts == 0)
             {
               sb.AppendLine($"  [ERROR] {surface.Name}: no data points");
               totalViolations++;
             }
-            else if (ntri == 0)
+            else if (ntri == 0 && npts > 2)
             {
               sb.AppendLine($"  [ERROR] {surface.Name}: {npts} pts but no triangles — rebuild required");
               totalViolations++;
             }
             else
             {
-              sb.AppendLine($"  [OK] {surface.Name} (pts={npts}, tri={ntri})");
+              sb.AppendLine(ntri.HasValue
+                ? $"  [OK] {surface.Name} (pts={npts}, tri={ntri})"
+                : $"  [OK] {surface.Name} (pts={npts})");
             }
           }
           sb.AppendLine();
@@ -1390,23 +1430,24 @@ public static class QcCommands
 
   /// <summary>
   /// Child object ids of <paramref name="owner"/>, trying each member name both as a method and as a property, for
-  /// members named differently across releases. Null ids are skipped. Ids are not de-duplicated: a name that works as
-  /// both, or two names that reach the same list, would give an id more than once.
+  /// members named differently across releases. Null ids are skipped, and each id is given once even when a name works
+  /// as both or two names reach the same list.
   /// </summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(AcDbObject owner, params string[] memberNames)
   {
+    var seen = new HashSet<ObjectId>();
     foreach (var memberName in memberNames)
     {
       var methodResult = CivilObjectUtils.InvokeMethod(owner, memberName);
       foreach (var objectId in CivilObjectUtils.ToObjectIds(methodResult))
       {
-        if (objectId != ObjectId.Null) yield return objectId;
+        if (objectId != ObjectId.Null && seen.Add(objectId)) yield return objectId;
       }
 
       var propVal = CivilObjectUtils.GetPropertyValue<object>(owner, memberName);
       foreach (var objectId in CivilObjectUtils.ToObjectIds(propVal))
       {
-        if (objectId != ObjectId.Null) yield return objectId;
+        if (objectId != ObjectId.Null && seen.Add(objectId)) yield return objectId;
       }
     }
   }

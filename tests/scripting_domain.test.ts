@@ -18,7 +18,7 @@ import {
   addPreference, allLessons, lessonsRelevantTo, listPreferences, recordLesson, releaseFromAcadver, removeLesson,
   removePreference, setReleaseForTesting, updatePreference,
 } from "../src/tools/knowledgeBase.js";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,8 +40,8 @@ describe("knowledge base: skills, preferences and lessons", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("learns a skill stamped with the release, archives old versions, and retires instead of deleting", () => {
-    const saved = writeSkill({
+  it("learns a skill stamped with the release, archives old versions, and retires instead of deleting", async () => {
+    const saved = await writeSkill({
       name: "renumber_points", category: "points", description: "Renumber COGO points in a selected group",
       content: "## Rules\n- Never change elevations\n\n```csharp\nreturn 1;\n```",
       parameters: [{ name: "group", type: "string", required: true, description: "Point group" }],
@@ -50,22 +50,32 @@ describe("knowledge base: skills, preferences and lessons", () => {
     expect(searchSkills("renumber points", "2027").results[0]).toMatchObject({ name: "renumber_points", source: "personal" });
     expect(readSkill("renumber_points", "2027").content).toMatch(/^> Verified on Civil 3D 2027\./);
 
-    const updated = writeSkill({ name: "renumber_points", category: "points", description: "v2", content: "better" }, "2027");
+    const updated = await writeSkill({ name: "renumber_points", category: "points", description: "v2", content: "better" }, "2027");
     expect(updated.action).toBe("updated");
     expect(existsSync(updated.previousVersionArchived as string)).toBe(true);
 
-    const retired = retireSkill("renumber_points");
+    const retired = await retireSkill("renumber_points");
     expect(retired.archivedTo).toHaveLength(1);
     expect(() => readSkill("renumber_points")).toThrow(/not found/);
     expect(readdirSync(join(root, "civil3d", "skills", "_archive"))).toHaveLength(2);
+    expect(existsSync(join(root, "civil3d", "skills", "skills.lock"))).toBe(false);   // released after each change
   });
 
-  it("refuses to overwrite a skill verified on another release and adds a version section instead", () => {
-    writeSkill({ name: "label_tool", description: "Labels", content: "2027 steps" }, "2027");
-    expect(() => writeSkill({ name: "label_tool", description: "Labels", content: "2028 steps" }, "2028")).toThrow(/append_version_section/);
+  it("keeps the current skill in place when the new version can't be written", async () => {
+    await writeSkill({ name: "keep_me", category: "points", description: "v1", content: "first" }, "2027");
+    const file = join(root, "civil3d", "skills", "points", "keep_me.skill.md");
+    // A folder where the new category's file would go makes the write fail.
+    mkdirSync(join(root, "civil3d", "skills", "blocked", "keep_me.skill.md"), { recursive: true });
+    await expect(writeSkill({ name: "keep_me", category: "blocked", description: "v2", content: "second" }, "2027")).rejects.toThrow();
+    expect(readFileSync(file, "utf8")).toContain("first");
+  });
+
+  it("refuses to overwrite a skill verified on another release and adds a version section instead", async () => {
+    await writeSkill({ name: "label_tool", description: "Labels", content: "2027 steps" }, "2027");
+    await expect(writeSkill({ name: "label_tool", description: "Labels", content: "2028 steps" }, "2028")).rejects.toThrow(/append_version_section/);
     expect(readSkill("label_tool", "2028").version_note).toMatch(/Verified on Civil 3D 2027; you're running 2028/);
 
-    const appended = appendVersionSection("label_tool", "Different on 2028", "2028");
+    const appended = await appendVersionSection("label_tool", "Different on 2028", "2028");
     expect(appended.civil3dVersions).toEqual(["2027", "2028"]);
     const skill = readSkill("label_tool", "2028");
     expect(skill.version_note).toBeUndefined();
@@ -73,19 +83,19 @@ describe("knowledge base: skills, preferences and lessons", () => {
     expect(skill.content).toContain("## Civil 3D 2028\n\nDifferent on 2028");
   });
 
-  it("lets the user's version replace a built-in skill; retiring it restores the built-in", () => {
+  it("lets the user's version replace a built-in skill; retiring it restores the built-in", async () => {
     const builtIn = readSkill("list_surfaces");
     expect(builtIn.source).toBe("built-in");
-    expect(writeSkill({ name: "list_surfaces", category: "surfaces", description: "Improved", content: "better" }, "2027").overridesBuiltIn).toBe(true);
+    expect((await writeSkill({ name: "list_surfaces", category: "surfaces", description: "Improved", content: "better" }, "2027")).overridesBuiltIn).toBe(true);
     expect(readSkill("list_surfaces")).toMatchObject({ source: "personal", overridesBuiltIn: true });
-    expect(retireSkill("list_surfaces").builtInVersionActiveAgain).toBe(true);
+    expect((await retireSkill("list_surfaces")).builtInVersionActiveAgain).toBe(true);
     expect(readSkill("list_surfaces").content).toBe(builtIn.content);
-    expect(() => retireSkill("list_surfaces")).toThrow(/built-in skill and can't be retired/);
+    await expect(retireSkill("list_surfaces")).rejects.toThrow(/built-in skill and can't be retired/);
   });
 
-  it("rejects unsafe skill names", () => {
-    expect(() => writeSkill({ name: "../evil", description: "x", content: "x" }, "2027")).toThrow(/Invalid skill name/);
-    expect(() => writeSkill({ name: "ok", category: "a/b", description: "x", content: "x" }, "2027")).toThrow(/Invalid category/);
+  it("rejects unsafe skill names", async () => {
+    await expect(writeSkill({ name: "../evil", description: "x", content: "x" }, "2027")).rejects.toThrow(/Invalid skill name/);
+    await expect(writeSkill({ name: "ok", category: "a/b", description: "x", content: "x" }, "2027")).rejects.toThrow(/Invalid category/);
   });
 
   it("keeps standing preferences and puts them into every chat's instructions", async () => {
@@ -96,7 +106,7 @@ describe("knowledge base: skills, preferences and lessons", () => {
     await updatePreference(first.preference.id, "Hide group is 'Hidden Points'");
     expect(listPreferences().map((preference) => preference.rule)).toEqual(["Hide group is 'Hidden Points'", "We plot at 1\" = 30'"]);
 
-    writeSkill({ name: "my_workflow", description: "Office label cleanup", content: "x" }, "2027");
+    await writeSkill({ name: "my_workflow", description: "Office label cleanup", content: "x" }, "2027");
     const instructions = buildServerInstructions();
     expect(instructions).toContain("Hide group is 'Hidden Points'");
     expect(instructions).toContain("my_workflow: Office label cleanup");

@@ -16,7 +16,7 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * Every action forwards to one plugin method. Create and reference finish in the plugin, through Civil 3D's
  * DataShortcutManager, with no window: `projectFolder` is a project in the working folder, or a full path, and create
  * makes it if it's new. Create_reference references an object straight from a saved drawing, with no project. Sync
- * queues SynchronizeReferences to run after the answer. Promote has no call in Civil 3D, so it answers
+ * runs SynchronizeReferences inside the request and answers status "synchronized" when it has finished. Promote has no call in Civil 3D, so it answers
  * "manual_step_required" with the Toolspace steps; the AI must pass that on rather than report it as done.
  */
 
@@ -111,8 +111,8 @@ const DataShortcutReferenceArgsSchema = z.object({
 });
 
 /**
- * `data_shortcut_sync`: lists the references that look out of date and, unless `dryRun`, queues Civil 3D's
- * SynchronizeReferences, which runs after the answer and covers every reference in the drawing: `projectFolder` and
+ * `data_shortcut_sync`: lists the references that look out of date and, unless `dryRun`, runs Civil 3D's
+ * SynchronizeReferences inside the request (status "synchronized"), which covers every reference in the drawing: `projectFolder` and
  * `shortcutNames` only filter what is reported.
  */
 const DataShortcutSyncArgsSchema = z.object({
@@ -138,9 +138,9 @@ export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "project",
   // Action -> plugin method: data_shortcut_list (listDataShortcuts, read-only), data_shortcut_create
   // (createDataShortcut), data_shortcut_promote (promoteDataShortcut, answers manual_step_required),
-  // data_shortcut_reference (referenceDataShortcut), data_shortcut_sync (syncDataShortcuts; dryRun only reports, but
-  // approval is still required because of the action's name), data_shortcut_create_reference
-  // (createDataShortcutReference). All but the list need approval.
+  // data_shortcut_reference (referenceDataShortcut), data_shortcut_sync (syncDataShortcuts; a dryRun only reports, so
+  // it needs no approval: readOnlyWhen), data_shortcut_create_reference (createDataShortcutReference). All but the
+  // list and a dry-run sync need approval.
   actions: {
     data_shortcut_list: {
       action: "data_shortcut_list",
@@ -212,6 +212,7 @@ export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["syncDataShortcuts"],
+      readOnlyWhen: (args) => args.dryRun === true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("syncDataShortcuts", {
           projectFolder: args.projectFolder ?? null,
@@ -254,7 +255,7 @@ export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
       resolveAction: (rawArgs) => ({ action: String(rawArgs.action ?? ""), args: rawArgs }),
     },
     // Older combined alias: `operations` list / sync / create_reference map to the data_shortcut_* actions. Its sync
-    // takes no filters or dryRun, so it always queues SynchronizeReferences.
+    // takes no filters or dryRun, so it always runs SynchronizeReferences.
     {
       toolName: "civil3d_data_shortcut",
       displayName: "Civil 3D Data Shortcut",

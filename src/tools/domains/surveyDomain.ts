@@ -14,8 +14,9 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * approval-checked MCP tools.
  *
  * Every action forwards to one plugin method. Two aren't exposed: network_adjust and landxml_import exist for
- * workflowDomain.ts's survey_import_adjust_figures, but the interface has no call for either, so the plugin checks the
- * arguments and always answers CIVIL3D.API_ERROR, changing nothing, and the user does those steps in the Survey tab.
+ * workflowDomain.ts's survey_import_adjust_figures, but the interface has no call for either (the plugin always answers
+ * CIVIL3D.API_ERROR), so both are declared `unsupported`: the runtime refuses them without a plugin call, and the user
+ * does those steps in the Survey tab.
  */
 
 const GenericSurveyResponseSchema = z.object({}).passthrough();
@@ -386,6 +387,7 @@ export const SURVEY_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["adjustSurveyNetwork"],
+      unsupported: "Civil 3D's survey interface holds the adjustment settings but has no call that runs an adjustment. Use Network Adjustment in the Survey tab.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("adjustSurveyNetwork", {
           databaseName: args.databaseName,
@@ -423,6 +425,7 @@ export const SURVEY_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["importSurveyLandXml"],
+      unsupported: "Civil 3D's survey interface has no LandXML import. Use Import Survey Data in the Survey tab.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("importSurveyLandXml", {
           filePath: args.filePath,

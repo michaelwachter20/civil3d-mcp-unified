@@ -1,178 +1,35 @@
 // Guards the intended input and response shapes (zod) of the sheet set, sheet and plan/profile sheet tool actions.
-// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
-// Pure schema tests: no Civil 3D, no plugin.
+// The schemas are the REAL ones from src/tools/domains/planProductionDomain.ts: input through each alias tool as a
+// call is validated, responses as domainRuntime.ts checks them (tests/helpers/realSchemas.ts). plan_profile_sheet_create
+// is in no tool, so its action schema is used directly. Pure schema tests: no Civil 3D, no plugin.
 
-import { describe, it, expect, vi } from "vitest";
-import { z } from "zod";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, it, expect } from "vitest";
+import { PLAN_PRODUCTION_DOMAIN_DEFINITION as PLAN } from "../src/tools/domains/planProductionDomain.js";
+import { actionInput, actionResponse, toolInput } from "./helpers/realSchemas.js";
 
-// ---------------------------------------------------------------------------
-// Schemas under test (mirrored from civil3d_plan_production.ts)
-// ---------------------------------------------------------------------------
+const SheetSetCreateInputSchema = toolInput("civil3d_sheet_set_create");
+const SheetSetGetInfoInputSchema = toolInput("civil3d_sheet_set_get_info");
+const SheetAddInputSchema = toolInput("civil3d_sheet_add");
+const SheetGetPropertiesInputSchema = toolInput("civil3d_sheet_get_properties");
+const SheetSetTitleBlockInputSchema = toolInput("civil3d_sheet_set_title_block");
+const PlanProfileSheetCreateInputSchema = actionInput(PLAN, "plan_profile_sheet_create");
+const PlanProfileSheetUpdateAlignmentInputSchema = toolInput("civil3d_plan_profile_sheet_update_alignment");
+const SheetViewCreateInputSchema = toolInput("civil3d_sheet_view_create");
+const SheetViewSetScaleInputSchema = toolInput("civil3d_sheet_view_set_scale");
+const PublishPdfInputSchema = toolInput("civil3d_sheet_publish_pdf");
+const ExportSheetSetInputSchema = toolInput("civil3d_sheet_set_export");
 
-const SheetSummarySchema = z.object({
-  name: z.string(),
-  number: z.string(),
-  handle: z.string(),
-  layoutName: z.string().nullable(),
-});
-
-const SheetSetSummarySchema = z.object({
-  name: z.string(),
-  handle: z.string(),
-  description: z.string().nullable(),
-  sheetCount: z.number(),
-});
-
-const SheetDetailSchema = z.object({
-  name: z.string(),
-  number: z.string(),
-  handle: z.string(),
-  layoutName: z.string().nullable(),
-  viewportScale: z.number().nullable(),
-  alignmentName: z.string().nullable(),
-  profileName: z.string().nullable(),
-  titleBlock: z.string().nullable(),
-});
-
-// Tool input schemas
-const SheetSetCreateInputSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-});
-
-const SheetSetGetInfoInputSchema = z.object({
-  name: z.string(),
-});
-
-const SheetAddInputSchema = z.object({
-  sheetSetName: z.string(),
-  sheetName: z.string(),
-  sheetNumber: z.string().optional(),
-  layoutName: z.string().optional(),
-});
-
-const SheetGetPropertiesInputSchema = z.object({
-  sheetSetName: z.string(),
-  sheetName: z.string(),
-});
-
-const SheetSetTitleBlockInputSchema = z.object({
-  sheetSetName: z.string(),
-  sheetName: z.string(),
-  titleBlockPath: z.string(),
-});
-
-const PlanProfileSheetCreateInputSchema = z.object({
-  sheetSetName: z.string(),
-  alignmentName: z.string(),
-  profileName: z.string().optional(),
-  sheetTemplatePath: z.string().optional(),
-  startStation: z.number().optional(),
-  endStation: z.number().optional(),
-  viewScale: z.number().optional(),
-});
-
-const PlanProfileSheetUpdateAlignmentInputSchema = z.object({
-  sheetSetName: z.string(),
-  sheetName: z.string(),
-  alignmentName: z.string(),
-  profileName: z.string().optional(),
-});
-
-const SheetViewCreateInputSchema = z.object({
-  layoutName: z.string(),
-  viewName: z.string().optional(),
-  centerX: z.number().optional(),
-  centerY: z.number().optional(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-  scale: z.number().optional(),
-});
-
-const SheetViewSetScaleInputSchema = z.object({
-  layoutName: z.string(),
-  viewportHandle: z.string().optional(),
-  scale: z.number().positive(),
-});
-
-const PublishPdfInputSchema = z.object({
-  layoutNames: z.array(z.string()).min(1),
-  outputPath: z.string(),
-  plotStyleTable: z.string().optional(),
-  paperSize: z.string().optional(),
-});
-
-const ExportSheetSetInputSchema = z.object({
-  sheetSetName: z.string(),
-  outputPath: z.string(),
-  plotStyleTable: z.string().optional(),
-});
-
-// Response schemas
-const SheetSetListResponseSchema = z.object({
-  sheetSets: z.array(SheetSetSummarySchema),
-});
-
-const SheetSetInfoResponseSchema = z.object({
-  name: z.string(),
-  handle: z.string(),
-  description: z.string().nullable(),
-  sheets: z.array(SheetSummarySchema),
-});
-
-const SheetSetCreateResponseSchema = z.object({
-  name: z.string(),
-  handle: z.string(),
-  created: z.boolean(),
-});
-
-const SheetAddResponseSchema = z.object({
-  name: z.string(),
-  number: z.string(),
-  handle: z.string(),
-  added: z.boolean(),
-});
-
-const SheetSetTitleBlockResponseSchema = z.object({
-  sheetName: z.string(),
-  titleBlock: z.string(),
-  updated: z.boolean(),
-});
-
-const PlanProfileSheetCreateResponseSchema = z.object({
-  sheetName: z.string(),
-  handle: z.string(),
-  alignmentName: z.string(),
-  profileName: z.string().nullable(),
-  created: z.boolean(),
-});
-
-const SheetViewCreateResponseSchema = z.object({
-  handle: z.string(),
-  layoutName: z.string(),
-  scale: z.number().nullable(),
-  created: z.boolean(),
-});
-
-const SheetViewSetScaleResponseSchema = z.object({
-  handle: z.string(),
-  scale: z.number(),
-  updated: z.boolean(),
-});
-
-const PublishPdfResponseSchema = z.object({
-  outputPath: z.string(),
-  sheetsPublished: z.number(),
-  published: z.boolean(),
-});
-
-const ExportSheetSetResponseSchema = z.object({
-  sheetSetName: z.string(),
-  outputPath: z.string(),
-  sheetsExported: z.number(),
-  exported: z.boolean(),
-});
+const SheetSetListResponseSchema = actionResponse(PLAN, "sheet_set_list");
+const SheetSetInfoResponseSchema = actionResponse(PLAN, "sheet_set_get_info");
+const SheetSetCreateResponseSchema = actionResponse(PLAN, "sheet_set_create");
+const SheetAddResponseSchema = actionResponse(PLAN, "sheet_add");
+const SheetDetailSchema = actionResponse(PLAN, "sheet_get_properties");
+const SheetSetTitleBlockResponseSchema = actionResponse(PLAN, "sheet_set_title_block");
+const PlanProfileSheetCreateResponseSchema = actionResponse(PLAN, "plan_profile_sheet_create");
+const SheetViewCreateResponseSchema = actionResponse(PLAN, "sheet_view_create");
+const SheetViewSetScaleResponseSchema = actionResponse(PLAN, "sheet_view_set_scale");
+const PublishPdfResponseSchema = actionResponse(PLAN, "sheet_publish_pdf");
+const ExportSheetSetResponseSchema = actionResponse(PLAN, "sheet_set_export");
 
 // ---------------------------------------------------------------------------
 // Schema validation tests
@@ -183,23 +40,32 @@ describe("civil3d_plan_production — schema validation", () => {
   describe("civil3d_sheet_set_list", () => {
     it("validates a list response with one sheet set", () => {
       const data = {
+        searched: ["C:/Plans"],
         sheetSets: [
-          { name: "Road Plans", handle: "A1B2", description: "Main road plan set", sheetCount: 5 },
+          { path: "C:/Plans/Road Plans.dst", name: "Road Plans", description: "Main road plan set", sheetCount: 5 },
         ],
       };
       expect(() => SheetSetListResponseSchema.parse(data)).not.toThrow();
     });
 
     it("validates an empty sheet set list", () => {
-      const data = { sheetSets: [] };
+      const data = { searched: [], sheetSets: [] };
       expect(() => SheetSetListResponseSchema.parse(data)).not.toThrow();
     });
 
-    it("validates nullable description", () => {
+    it("validates nullable description and a set that couldn't be read", () => {
       const data = {
-        sheetSets: [{ name: "Plans", handle: "1234", description: null, sheetCount: 0 }],
+        searched: ["C:/Plans"],
+        sheetSets: [
+          { path: "C:/Plans/Plans.dst", name: "Plans", description: null, sheetCount: 0 },
+          { path: "C:/Plans/Broken.dst", error: "locked" },
+        ],
       };
       expect(() => SheetSetListResponseSchema.parse(data)).not.toThrow();
+    });
+
+    it("rejects a sheet set without its path", () => {
+      expect(() => SheetSetListResponseSchema.parse({ searched: [], sheetSets: [{ name: "Plans" }] })).toThrow();
     });
   });
 
@@ -226,13 +92,19 @@ describe("civil3d_plan_production — schema validation", () => {
   // ------ Sheet set create ------
   describe("civil3d_sheet_set_create", () => {
     it("validates minimal create input", () => {
-      expect(() => SheetSetCreateInputSchema.parse({ name: "New Set" })).not.toThrow();
+      expect(() => SheetSetCreateInputSchema.parse({ name: "New Set", outputPath: "C:/Plans/New Set.dst" })).not.toThrow();
     });
 
-    it("validates create input with description", () => {
+    it("validates create input with description, layouts and overwrite", () => {
       expect(() =>
-        SheetSetCreateInputSchema.parse({ name: "New Set", description: "A plan set" })
+        SheetSetCreateInputSchema.parse({
+          name: "New Set", outputPath: "C:/Plans/New Set.dst", description: "A plan set", layoutNames: ["C-101"], overwrite: true,
+        })
       ).not.toThrow();
+    });
+
+    it("requires the .dst outputPath", () => {
+      expect(() => SheetSetCreateInputSchema.parse({ name: "New Set" })).toThrow();
     });
 
     it("validates create response", () => {
@@ -275,15 +147,13 @@ describe("civil3d_plan_production — schema validation", () => {
     });
 
     it("validates full detail response", () => {
-      const data: z.infer<typeof SheetDetailSchema> = {
+      const data = {
         name: "Sheet 1",
         number: "C-01",
-        handle: "E5",
-        layoutName: "Layout1",
-        viewportScale: 50,
-        alignmentName: "Main Road",
-        profileName: "Ground Profile",
-        titleBlock: "C:/templates/title.dwg",
+        title: "Plan and Profile",
+        layout: "Layout1",
+        drawing: "C:/Plans/C-101.dwg",
+        doNotPlot: false,
       };
       expect(() => SheetDetailSchema.parse(data)).not.toThrow();
     });
@@ -292,14 +162,16 @@ describe("civil3d_plan_production — schema validation", () => {
       const data = {
         name: "Sheet 1",
         number: "",
-        handle: "F6",
-        layoutName: null,
-        viewportScale: null,
-        alignmentName: null,
-        profileName: null,
-        titleBlock: null,
+        title: null,
+        layout: null,
+        drawing: null,
+        doNotPlot: true,
       };
       expect(() => SheetDetailSchema.parse(data)).not.toThrow();
+    });
+
+    it("rejects a response without doNotPlot", () => {
+      expect(() => SheetDetailSchema.parse({ name: "Sheet 1", number: "C-01", title: null, layout: null, drawing: null })).toThrow();
     });
   });
 

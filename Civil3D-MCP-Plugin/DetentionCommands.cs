@@ -1,7 +1,8 @@
 // Detention basin sizing (pure math) and a stage-storage table measured from a TIN surface.
 // JSON-RPC methods (CommandDispatcher): calculateDetentionBasinSize, calculateDetentionStageStorage. Called by
 // src/tools/domains/detentionDomain.ts (civil3d_detention), and by HydrologyCommands' runoffDetentionWorkflow.
-// calculateDetentionBasinSize never touches the drawing. calculateDetentionStageStorage runs in
+// calculateDetentionBasinSize only reads the drawing's units (CivilExecution.ReadAsync), so its answer is in feet and
+// cfs or meters and m³/s as the drawing is; the arithmetic is in DesignMath. calculateDetentionStageStorage runs in
 // CivilExecution.MeasureAsync: it extracts contours into the drawing to measure them, inside a transaction that is never
 // committed, so nothing is left behind (one blank undo step from the lock). No file access, no reflection.
 using System.Collections;
@@ -21,12 +22,15 @@ public static class DetentionCommands
   // ─── calculateDetentionBasinSize ─────────────────────────────────────────────
 
   /// <summary>
-  /// calculateDetentionBasinSize: required storage for peak <c>inflow</c> and allowed <c>outflow</c> (cfs, required)
-  /// over <c>stormDuration</c> minutes (default 60) by <c>method</c> modified_rational (default) or
-  /// triangular_hydrograph (half of it), a trapezoidal basin with <c>bottomWidth</c> (default 10), length twice that,
-  /// <c>sideSlope</c> z:1 (default 3) and <c>freeboardDepth</c> (default 1), and an orifice for the outflow at
-  /// full-depth head. Units are US customary (ft, cfs) whatever the drawing. Outflow >= inflow answers an
-  /// <c>error</c> field instead of throwing. Doesn't touch the drawing.
+  /// calculateDetentionBasinSize: required storage for peak <c>inflow</c> and allowed <c>outflow</c> (required) over
+  /// <c>stormDuration</c> minutes (default 60) by <c>method</c> modified_rational (default) or triangular_hydrograph
+  /// (half of it), a trapezoidal basin with <c>bottomWidth</c>, length twice that, <c>sideSlope</c> z:1 (default 3)
+  /// and <c>freeboardDepth</c>, and an orifice for the outflow at full-depth head.
+  /// Units follow the drawing (CivilObjectUtils.LinearUnits): in a feet drawing flows are cfs, lengths feet and the
+  /// orifice is given in inches (defaults: bottom width 10 ft, freeboard 1 ft); in any other drawing flows are m³/s,
+  /// lengths meters and the orifice in millimeters (defaults 3 m and 0.3 m). The storage is given in cubic feet,
+  /// acre-feet and cubic meters either way, and <c>units</c> says which system the inputs were read in.
+  /// Outflow >= inflow answers an <c>error</c> field instead of throwing. Reads only the drawing's units.
   /// </summary>
   public static Task<object?> CalculateDetentionBasinSizeAsync(JsonObject? parameters)
   {
@@ -35,8 +39,8 @@ public static class DetentionCommands
     var stormDuration = PluginRuntime.GetOptionalDouble(parameters, "stormDuration") ?? 60.0;
     var method = PluginRuntime.GetOptionalString(parameters, "method") ?? "modified_rational";
     var sideSlope = PluginRuntime.GetOptionalDouble(parameters, "sideSlope") ?? 3.0;
-    var bottomWidth = PluginRuntime.GetOptionalDouble(parameters, "bottomWidth") ?? 10.0;
-    var freeboardDepth = PluginRuntime.GetOptionalDouble(parameters, "freeboardDepth") ?? 1.0;
+    var bottomWidthGiven = PluginRuntime.GetOptionalDouble(parameters, "bottomWidth");
+    var freeboardGiven = PluginRuntime.GetOptionalDouble(parameters, "freeboardDepth");
 
     if (outflow >= inflow)
     {
@@ -49,46 +53,65 @@ public static class DetentionCommands
       });
     }
 
-    // Modified Rational Method: Vs = (Qi - Qo) * tc * 60  [cubic feet]
-    double storageVolumeCf;
-    string methodLabel;
+    return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
+      SizeBasin(CivilObjectUtils.LinearUnits(database), inflow, outflow, stormDuration, method, sideSlope, bottomWidthGiven, freeboardGiven));
+  }
 
-    switch (method.ToLowerInvariant())
-    {
-      case "triangular_hydrograph":
-        // Approximate: Vs ≈ 0.5 * (Qi - Qo) * tc * 60
-        storageVolumeCf = 0.5 * (inflow - outflow) * stormDuration * 60.0;
-        methodLabel = "Triangular Hydrograph Approximation";
-        break;
-      default: // modified_rational
-        storageVolumeCf = (inflow - outflow) * stormDuration * 60.0;
-        methodLabel = "Modified Rational Method";
-        break;
-    }
+  /// <summary>The basin size answer of calculateDetentionBasinSize, in <paramref name="linearUnits"/> (feet: ft, cfs,
+  /// inches; anything else: m, m³/s, mm). Pure arithmetic (DesignMath) once the units are known.</summary>
+  private static Dictionary<string, object?> SizeBasin(string linearUnits, double inflow, double outflow, double stormDuration,
+    string method, double sideSlope, double? bottomWidthGiven, double? freeboardGiven)
+  {
+    var feet = linearUnits == "feet";
+    var bottomWidth = bottomWidthGiven ?? (feet ? 10.0 : 3.0);
+    var freeboardDepth = freeboardGiven ?? (feet ? 1.0 : 0.3);
 
+    // Modified Rational Method: Vs = (Qi - Qo) * t * 60, in the flow's own cubic units (ft³ or m³).
+    var triangular = string.Equals(method, "triangular_hydrograph", StringComparison.OrdinalIgnoreCase);
+    var methodLabel = triangular ? "Triangular Hydrograph Approximation" : "Modified Rational Method";
+    var storageVolume = DesignMath.DetentionStorage(inflow, outflow, stormDuration, triangular);
+    var storageVolumeCf = feet ? storageVolume : DesignMath.CubicMetersToCubicFeet(storageVolume);
+    var storageVolumeCuM = feet ? DesignMath.CubicFeetToCubicMeters(storageVolume) : storageVolume;
     var storageVolumeAcFt = storageVolumeCf / 43560.0;
-    var storageVolumeCuM = storageVolumeCf / 35.3147;
 
-    // Basin geometry — trapezoidal cross-section, assuming L = 2 * W for plan view
-    // V = d * (L*W + (L + 2*H*z) * (W + 2*H*z) + 4 * (L + H*z) * (W + H*z)) / 6  (frustum formula)
-    // Simplified: iterate depth to find where volume matches
-    double basinDepth = EstimateBasinDepth(storageVolumeCf, bottomWidth, sideSlope);
+    // Basin geometry — trapezoidal cross-section, assuming L = 2 * W for plan view; the depth is iterated until the
+    // prismoidal volume matches.
+    double basinDepth = EstimateBasinDepth(storageVolume, bottomWidth, sideSlope);
     double basinLength = 2.0 * bottomWidth;
     double topWidth = bottomWidth + 2.0 * sideSlope * basinDepth;
     double topLength = basinLength + 2.0 * sideSlope * basinDepth;
     double totalDepth = basinDepth + freeboardDepth;
 
-    // Orifice sizing: Q = Cd * A * sqrt(2*g*h)  →  A = Q / (Cd * sqrt(2*g*h))
-    double cd = 0.6;
-    double g = 32.2; // ft/s²
-    double headH = basinDepth; // design head = full basin depth
-    double orificeArea = outflow / (cd * Math.Sqrt(2.0 * g * headH));
-    double orificeDiameterFt = Math.Sqrt(4.0 * orificeArea / Math.PI);
-    double orificeDiameterIn = orificeDiameterFt * 12.0;
+    // Orifice sizing: Q = Cd * A * sqrt(2*g*h), g in the drawing's units, design head = full basin depth.
+    const double cd = 0.6;
+    double headH = basinDepth;
+    var (orificeArea, orificeDiameter) = DesignMath.OrificeSize(outflow, headH, cd, PipeMath.Gravity(linearUnits));
 
-    return Task.FromResult<object?>(new Dictionary<string, object?>
+    var orifice = new Dictionary<string, object?>
+    {
+      ["designFlow"] = outflow,
+      ["dischargeCoefficient"] = cd,
+      ["designHead"] = Math.Round(headH, 2),
+    };
+    if (feet)
+    {
+      var orificeDiameterIn = orificeDiameter * 12.0;
+      orifice["requiredAreaSqFt"] = Math.Round(orificeArea, 4);
+      orifice["requiredDiameterInches"] = Math.Round(orificeDiameterIn, 2);
+      orifice["recommendedDiameterInches"] = Math.Round(Math.Ceiling(orificeDiameterIn * 2) / 2.0, 1);
+    }
+    else
+    {
+      var orificeDiameterMm = orificeDiameter * 1000.0;
+      orifice["requiredAreaSqM"] = Math.Round(orificeArea, 5);
+      orifice["requiredDiameterMm"] = Math.Round(orificeDiameterMm, 1);
+      orifice["recommendedDiameterMm"] = Math.Ceiling(orificeDiameterMm / 10.0) * 10.0;
+    }
+
+    return new Dictionary<string, object?>
     {
       ["method"] = methodLabel,
+      ["units"] = feet ? "feet, cfs" : "meters, m³/s",
       ["inflow"] = inflow,
       ["outflow"] = outflow,
       ["stormDurationMinutes"] = stormDuration,
@@ -106,15 +129,7 @@ public static class DetentionCommands
         ["topWidth"] = Math.Round(topWidth, 1),
         ["topLength"] = Math.Round(topLength, 1),
       },
-      ["outletOrifice"] = new Dictionary<string, object?>
-      {
-        ["designFlow"] = outflow,
-        ["dischargeCoefficient"] = cd,
-        ["designHead"] = Math.Round(headH, 2),
-        ["requiredAreaSqFt"] = Math.Round(orificeArea, 4),
-        ["requiredDiameterInches"] = Math.Round(orificeDiameterIn, 2),
-        ["recommendedDiameterInches"] = Math.Round(Math.Ceiling(orificeDiameterIn * 2) / 2.0, 1),
-      },
+      ["outletOrifice"] = orifice,
       ["notes"] = new[]
       {
         "Storage volume uses simplified Modified Rational Method — confirm with routing software for permit submittals.",
@@ -122,7 +137,7 @@ public static class DetentionCommands
         "Orifice size based on full-depth head — verify with stage-discharge routing.",
         "Add freeboard to design depth before specifying construction drawings.",
       },
-    });
+    };
   }
 
   // ─── calculateDetentionStageStorage ──────────────────────────────────────────
@@ -166,7 +181,8 @@ public static class DetentionCommands
         throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Surface '{surfaceName}' isn't a TIN surface.");
       }
 
-      var metric = database.Insunits == UnitsValue.Meters;
+      // The discharge formulas below are in feet and cfs, so any drawing not in feet gets no discharge column.
+      var metric = CivilObjectUtils.LinearUnits(database) != "feet";
       var steps = (int)Math.Ceiling((topElevation - bottomElevation) / elevIncrement - 1e-9);
       var rows = new List<Dictionary<string, object?>>();
       var notes = new List<string>
@@ -259,8 +275,8 @@ public static class DetentionCommands
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
   /// <summary>
-  /// The depth at which a trapezoidal basin (bottom W x 2W, side slope z:1) holds <paramref name="targetVolumeCf"/>,
-  /// by proportional iteration clamped to 0.5-50; never less than 1.
+  /// The depth at which a trapezoidal basin (bottom W x 2W, side slope z:1) holds <paramref name="targetVolumeCf"/>
+  /// (cubic drawing units: ft³ or m³), by proportional iteration clamped to 0.5-50; never less than 1.
   /// </summary>
   private static double EstimateBasinDepth(double targetVolumeCf, double bottomWidth, double sideSlope)
   {

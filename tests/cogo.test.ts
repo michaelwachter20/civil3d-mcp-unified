@@ -1,102 +1,23 @@
 // Guards the intended input shapes (zod) for point groups, point export/transform, COGO inverse/direction/traverse/
 // curve solving and survey database/figure actions.
-// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
-// Pure schema tests: no Civil 3D, no plugin, no files.
+// The schemas are the REAL ones from src/tools/domains/ (pointDomain, geometryDomain, surveyDomain), reached through
+// each alias tool the way a call is validated (tests/helpers/realSchemas.ts); survey database_create has no alias, so
+// it goes through civil3d_survey. Pure schema tests: no Civil 3D, no plugin, no files.
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
+import { toolActionInput, toolInput } from "./helpers/realSchemas.js";
 
-// ─── Input schemas (mirrored from civil3d_cogo.ts and civil3d_point_group.ts) ─
-
-// Point group schemas
-const PointGroupCreateSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  includeNumbers: z.string().optional(),
-  excludeNumbers: z.string().optional(),
-  includeDescriptions: z.string().optional(),
-});
-
-const PointGroupUpdateSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  includeNumbers: z.string().optional(),
-  excludeNumbers: z.string().optional(),
-  includeDescriptions: z.string().optional(),
-});
-
-const PointGroupDeleteSchema = z.object({ name: z.string() });
-
-const PointExportSchema = z.object({
-  format: z.enum(["pnezd", "penz", "xyzd", "xyz", "csv"]).optional(),
-  groupName: z.string().optional(),
-  pointNumbers: z.array(z.number().int().positive()).optional(),
-  delimiter: z.string().optional(),
-});
-
-const PointTransformSchema = z.object({
-  pointNumbers: z.array(z.number().int().positive()).optional(),
-  groupName: z.string().optional(),
-  translateX: z.number().optional(),
-  translateY: z.number().optional(),
-  translateZ: z.number().optional(),
-  rotateRadians: z.number().optional(),
-  scaleFactor: z.number().optional(),
-});
-
-// COGO schemas
-const CogoInverseSchema = z.object({
-  x1: z.number(),
-  y1: z.number(),
-  x2: z.number(),
-  y2: z.number(),
-});
-
-const CogoDirectionDistanceSchema = z.object({
-  fromX: z.number(),
-  fromY: z.number(),
-  fromZ: z.number().optional(),
-  bearingDegrees: z.number(),
-  distance: z.number().positive(),
-  slope: z.number().optional(),
-});
-
-const CourseSchema = z.object({
-  bearingDegrees: z.number(),
-  distance: z.number().positive(),
-  slope: z.number().optional(),
-  description: z.string().optional(),
-});
-
-const CogoTraverseSchema = z.object({
-  startX: z.number(),
-  startY: z.number(),
-  startZ: z.number().optional(),
-  courses: z.array(CourseSchema).min(1),
-  isClosed: z.boolean().optional(),
-});
-
-const CogoCurveSolveSchema = z.object({
-  radius: z.number().positive().optional(),
-  deltaDegrees: z.number().positive().optional(),
-  length: z.number().positive().optional(),
-  tangent: z.number().positive().optional(),
-  chord: z.number().positive().optional(),
-});
-
-const SurveyDatabaseCreateSchema = z.object({
-  name: z.string(),
-  path: z.string().optional(),
-});
-
-const SurveyFigureListSchema = z.object({
-  databaseName: z.string().optional(),
-});
-
-const SurveyFigureGetSchema = z.object({
-  name: z.string(),
-  databaseName: z.string().optional(),
-});
+const PointGroupCreateSchema = toolInput("civil3d_point_group_create");
+const PointGroupUpdateSchema = toolInput("civil3d_point_group_update");
+const PointExportSchema = toolInput("civil3d_point_export");
+const PointTransformSchema = toolInput("civil3d_point_transform");
+const CogoInverseSchema = toolInput("civil3d_cogo_inverse");
+const CogoDirectionDistanceSchema = toolInput("civil3d_cogo_direction_distance");
+const CogoTraverseSchema = toolInput("civil3d_cogo_traverse");
+const CogoCurveSolveSchema = toolInput("civil3d_cogo_curve_solve");
+const SurveyDatabaseCreateSchema = toolActionInput("civil3d_survey", "database_create");
+const SurveyFigureListSchema = toolInput("civil3d_survey_figure_list");
+const SurveyFigureGetSchema = toolInput("civil3d_survey_figure_get");
 
 // ─── Point group tests ────────────────────────────────────────────────────────
 
@@ -174,7 +95,20 @@ describe("civil3d_point_transform input schema", () => {
       translateZ: 0,
       rotateRadians: 0.0174533,
       scaleFactor: 1.0,
+      baseX: 1000,
+      baseY: 2000,
     }).success).toBe(true);
+  });
+
+  it("needs a base point to scale or rotate about", () => {
+    expect(PointTransformSchema.safeParse({ pointNumbers: [1], rotateRadians: 0.1 }).success).toBe(false);
+    expect(PointTransformSchema.safeParse({ pointNumbers: [1], scaleFactor: 2 }).success).toBe(false);
+    expect(PointTransformSchema.safeParse({ pointNumbers: [1], scaleFactor: 1, rotateRadians: 0 }).success).toBe(true);
+  });
+
+  it("refuses point numbers that aren't positive integers", () => {
+    expect(PointTransformSchema.safeParse({ pointNumbers: [0] }).success).toBe(false);
+    expect(PointTransformSchema.safeParse({ pointNumbers: [1.5] }).success).toBe(false);
   });
 });
 
@@ -266,19 +200,20 @@ describe("civil3d_cogo_curve_solve input schema", () => {
     expect(CogoCurveSolveSchema.safeParse({ radius: 500, length: 100 }).success).toBe(true);
   });
 
-  it("accepts all elements (over-constrained but valid input)", () => {
+  it("accepts tangent + chord (any pair)", () => {
+    expect(CogoCurveSolveSchema.safeParse({ tangent: 53.59, chord: 103.53 }).success).toBe(true);
+  });
+
+  it("rejects more or fewer than two elements", () => {
     expect(CogoCurveSolveSchema.safeParse({
       radius: 200,
       deltaDegrees: 30,
       length: 104.72,
       tangent: 53.59,
       chord: 103.53,
-    }).success).toBe(true);
-  });
-
-  it("accepts empty args (handled at runtime level)", () => {
-    // Schema allows empty input; the C# handler validates that 2 elements are provided
-    expect(CogoCurveSolveSchema.safeParse({}).success).toBe(true);
+    }).success).toBe(false);
+    expect(CogoCurveSolveSchema.safeParse({ radius: 200 }).success).toBe(false);
+    expect(CogoCurveSolveSchema.safeParse({}).success).toBe(false);
   });
 });
 

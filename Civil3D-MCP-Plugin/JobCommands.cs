@@ -148,34 +148,40 @@ public static class JobCommands
       .ToArray();
   }
 
-  /// <summary>The job answer every job method returns: the job's fields, its result once finished, and the registry's counts.</summary>
+  /// <summary>The job answer every job method returns: the job's fields, its result once finished, and the registry's
+  /// counts. The fields are read under the record's SyncRoot (as JobRegistry writes them), so a job finishing on its
+  /// worker meanwhile can't give a torn answer (state "completed" without its result, or a Warnings list changing while
+  /// it is copied). The registry's counts are read first, outside that lock.</summary>
   private static Dictionary<string, object?> ToResponse(JobRecord job)
   {
     var stats = JobRegistry.GetStats();
-    return new Dictionary<string, object?>
+    lock (job.SyncRoot)
     {
-      ["jobId"] = job.JobId,
-      ["state"] = job.State,
-      ["operation"] = job.Operation,
-      ["progressPercent"] = job.ProgressPercent,
-      ["currentPhase"] = job.CurrentPhase,
-      ["estimatedRemainingSeconds"] = job.EstimatedRemainingSeconds,
-      ["result"] = job.Result,
-      ["createdAt"] = job.CreatedAt,
-      ["completedAt"] = job.CompletedAt,
-      ["durationMs"] = job.DurationMs,
-      ["requestId"] = job.RequestId,
-      ["drawingIdentity"] = job.DrawingIdentity,
-      ["failureCategory"] = job.FailureCategory,
-      ["cancellationRequested"] = job.CancellationRequested,
-      ["warnings"] = job.Warnings.ToArray(),
-      ["registry"] = new Dictionary<string, object?>
+      return new Dictionary<string, object?>
       {
-        ["total"] = stats.Total,
-        ["running"] = stats.Running,
-        ["capacity"] = stats.Capacity,
-        ["terminalRetentionMinutes"] = stats.TerminalRetentionMinutes,
-      },
-    };
+        ["jobId"] = job.JobId,
+        ["state"] = job.State,
+        ["operation"] = job.Operation,
+        ["progressPercent"] = job.ProgressPercent,
+        ["currentPhase"] = job.CurrentPhase,
+        ["estimatedRemainingSeconds"] = job.EstimatedRemainingSeconds,
+        ["result"] = job.Result,
+        ["createdAt"] = job.CreatedAt,
+        ["completedAt"] = job.CompletedAt,
+        ["durationMs"] = job.DurationMs,
+        ["requestId"] = job.RequestId,
+        ["drawingIdentity"] = job.DrawingIdentity,
+        ["failureCategory"] = job.FailureCategory,
+        ["cancellationRequested"] = job.CancellationRequested,
+        ["warnings"] = job.Warnings.ToArray(),
+        ["registry"] = new Dictionary<string, object?>
+        {
+          ["total"] = stats.Total,
+          ["running"] = stats.Running,
+          ["capacity"] = stats.Capacity,
+          ["terminalRetentionMinutes"] = stats.TerminalRetentionMinutes,
+        },
+      };
+    }
   }
 }

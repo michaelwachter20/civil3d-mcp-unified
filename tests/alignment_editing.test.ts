@@ -1,104 +1,28 @@
 // Guards the intended input shapes (zod) of the alignment-editing and profile-editing tool actions: required fields,
 // positive radius/length, integer entity index, enum values and defaults.
-// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
-// Pure schema tests: no Civil 3D, no plugin, no files.
+// The schemas are the REAL ones from src/tools/domains/alignmentDomain.ts and profileDomain.ts, reached through each
+// alias tool the way a call is validated (tests/helpers/realSchemas.ts). add_curve has no alias, so it goes through
+// civil3d_alignment (which takes `name`). Pure schema tests: no Civil 3D, no plugin, no files.
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
+import { toolActionInput, toolInput } from "./helpers/realSchemas.js";
 
-// ─── Input schemas (mirrored from civil3d_alignment_editing.ts) ──────────────
+const AlignmentAddTangentSchema = toolInput("civil3d_alignment_add_tangent");
+const addCurve = toolActionInput("civil3d_alignment", "add_curve");
+const AlignmentAddCurveSchema = {
+  safeParse: ({ alignmentName, ...rest }: Record<string, unknown>) => addCurve.safeParse({ name: alignmentName, ...rest }),
+};
+const AlignmentAddSpiralSchema = toolInput("civil3d_alignment_add_spiral");
+const AlignmentDeleteEntitySchema = toolInput("civil3d_alignment_delete_entity");
+const AlignmentSetStationEquationSchema = toolInput("civil3d_alignment_set_station_equation");
+const AlignmentGetStationOffsetSchema = toolInput("civil3d_alignment_get_station_offset");
+const AlignmentOffsetCreateSchema = toolInput("civil3d_alignment_offset_create");
+const AlignmentWidenTransitionSchema = toolInput("civil3d_alignment_widen_transition");
 
-const AlignmentAddTangentSchema = z.object({
-  alignmentName: z.string(),
-  startX: z.number(),
-  startY: z.number(),
-  endX: z.number(),
-  endY: z.number(),
-});
-
-const AlignmentAddCurveSchema = z.object({
-  alignmentName: z.string(),
-  passThroughX: z.number(),
-  passThroughY: z.number(),
-  radius: z.number().positive(),
-});
-
-const AlignmentAddSpiralSchema = z.object({
-  alignmentName: z.string(),
-  spiralType: z.enum(["clothoid", "cubic", "biquadratic"]).optional().default("clothoid"),
-  fromEntityIndex: z.number().int().min(0),
-  toEntityIndex: z.number().int().min(0),
-  radius: z.number().positive(),
-  length: z.number().positive(),
-  lengthOut: z.number().positive().optional(),
-});
-
-const AlignmentDeleteEntitySchema = z.object({
-  alignmentName: z.string(),
-  entityIndex: z.number().int().min(0),
-});
-
-const AlignmentSetStationEquationSchema = z.object({
-  alignmentName: z.string(),
-  rawStation: z.number(),
-  nominalStation: z.number(),
-});
-
-const AlignmentGetStationOffsetSchema = z.object({
-  alignmentName: z.string(),
-  x: z.number(),
-  y: z.number(),
-});
-
-const AlignmentOffsetCreateSchema = z.object({
-  alignmentName: z.string(),
-  offsetName: z.string(),
-  offset: z.number(),
-  style: z.string().optional(),
-  layer: z.string().optional(),
-  labelSet: z.string().optional(),
-});
-
-const AlignmentWidenTransitionSchema = z.object({
-  alignmentName: z.string(),
-  side: z.enum(["left", "right"]),
-  startStation: z.number(),
-  endStation: z.number(),
-  startOffset: z.number(),
-  endOffset: z.number(),
-  offsetName: z.string().optional(),
-});
-
-// ─── Input schemas (mirrored from civil3d_profile_editing.ts) ────────────────
-
-const ProfileAddPviSchema = z.object({
-  alignmentName: z.string(),
-  profileName: z.string(),
-  station: z.number(),
-  elevation: z.number(),
-});
-
-const ProfileDeletePviSchema = z.object({
-  alignmentName: z.string(),
-  profileName: z.string(),
-  station: z.number(),
-});
-
-const ProfileAddCurveSchema = z.object({
-  alignmentName: z.string(),
-  profileName: z.string(),
-  pviStation: z.number(),
-  length: z.number().positive(),
-  curveType: z.enum(["symmetric_parabola", "asymmetric_parabola"])
-    .optional()
-    .default("symmetric_parabola"),
-});
-
-const ProfileGetElevationSchema = z.object({
-  alignmentName: z.string(),
-  profileName: z.string(),
-  station: z.number(),
-});
+const ProfileAddPviSchema = toolInput("civil3d_profile_add_pvi");
+const ProfileDeletePviSchema = toolInput("civil3d_profile_delete_pvi");
+const ProfileAddCurveSchema = toolInput("civil3d_profile_add_curve");
+const ProfileGetElevationSchema = toolInput("civil3d_profile_get_elevation");
 
 // ─── civil3d_alignment_add_tangent ───────────────────────────────────────────
 
@@ -141,38 +65,30 @@ describe("civil3d_alignment_add_tangent input schema", () => {
 
 // ─── civil3d_alignment_add_curve ─────────────────────────────────────────────
 
-describe("civil3d_alignment_add_curve input schema", () => {
-  it("accepts valid args", () => {
-    expect(
-      AlignmentAddCurveSchema.safeParse({
-        alignmentName: "Road",
-        passThroughX: 1250,
-        passThroughY: 2050,
-        radius: 300,
-      }).success,
-    ).toBe(true);
+describe("civil3d_alignment add_curve input schema", () => {
+  const between = { alignmentName: "Road", fromEntityIndex: 0, toEntityIndex: 1 };
+
+  it("accepts a radius, or a pass-through point", () => {
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, radius: 300 }).success).toBe(true);
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, passThroughX: 1250, passThroughY: 2050 }).success).toBe(true);
+  });
+
+  it("rejects both, neither, or half a point", () => {
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, passThroughX: 1250, passThroughY: 2050, radius: 300 }).success).toBe(false);
+    expect(AlignmentAddCurveSchema.safeParse(between).success).toBe(false);
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, passThroughX: 1250 }).success).toBe(false);
+  });
+
+  it("needs the entities it goes between", () => {
+    expect(AlignmentAddCurveSchema.safeParse({ alignmentName: "Road", radius: 300 }).success).toBe(false);
   });
 
   it("rejects zero radius", () => {
-    expect(
-      AlignmentAddCurveSchema.safeParse({
-        alignmentName: "Road",
-        passThroughX: 1250,
-        passThroughY: 2050,
-        radius: 0,
-      }).success,
-    ).toBe(false);
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, radius: 0 }).success).toBe(false);
   });
 
   it("rejects negative radius", () => {
-    expect(
-      AlignmentAddCurveSchema.safeParse({
-        alignmentName: "Road",
-        passThroughX: 1250,
-        passThroughY: 2050,
-        radius: -100,
-      }).success,
-    ).toBe(false);
+    expect(AlignmentAddCurveSchema.safeParse({ ...between, radius: -100 }).success).toBe(false);
   });
 });
 

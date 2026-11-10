@@ -4,11 +4,12 @@
  * ParcelEditingCommands.cs, which reaches sites and parcels partly by reflection because those members vary between
  * Civil 3D releases; domainRuntime.ts turns these definitions into validated, approval-checked MCP tools.
  *
- * Every action forwards to one plugin method. Areas are worked out by the plugin as if the drawing were in feet
- * (the report's `units` conversion), so answers for a drawing in meters need care. lot_line_adjust always refuses.
+ * Every action forwards to one plugin method. The report's `units` converts areas from the drawing's square unit
+ * (square feet or square meters); left out, the plugin picks a unit to match the drawing. lot_line_adjust always refuses.
  *
- * Approval (approvalPolicy.ts): list_sites, list, get and report are reads. create, edit, lot_line_adjust (drawing
- * writes) and export_report (writes a CSV) need an approvalToken. The `civil3d_parcel_report` alias switches to
+ * Approval (approvalPolicy.ts): list_sites, list, get and report are reads. create, edit (drawing writes) and
+ * export_report (writes a CSV) need an approvalToken; lot_line_adjust is declared `unsupported` (refused before
+ * approval, never sent to the plugin). The `civil3d_parcel_report` alias switches to
  * export_report whenever `outputPath` is given, so its approval follows.
  */
 import { z } from "zod";
@@ -145,7 +146,8 @@ const ParcelLotLineAdjustArgsSchema = z.object({
 /**
  * `report`: area, perimeter and (with `includeCoordinates`) vertices of the named parcels, or of every parcel in
  * the site. With `outputPath` the rows are also written to a .csv inside the export roots (FileBoundary.cs; an
- * existing file only with `overwrite`). `units` converts the area from square feet: sqft, acres, sqm or ha.
+ * existing file only with `overwrite`). `units` converts the area from the drawing's square unit: sqft, acres, sqm or
+ * ha (left out, the plugin picks one to match the drawing).
  */
 const ParcelExportReportArgsSchema = z.object({
   action: z.literal("export_report"),
@@ -252,8 +254,8 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // The plugin always refuses (CIVIL3D.API_ERROR, nothing changed): Civil 3D has no API for sliding a lot line, and
-    // the answer points the user to Parcel Layout Tools (Slide Line). Still approval-gated, as a declared edit.
+    // Unsupported (the plugin always refuses): Civil 3D has no API for sliding a lot line, so the runtime answers
+    // CIVIL3D.API_ERROR itself, pointing the user to Parcel Layout Tools (Slide Line); no approval, no plugin call.
     lot_line_adjust: {
       action: "lot_line_adjust",
       inputSchema: ParcelLotLineAdjustArgsSchema,
@@ -262,6 +264,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["adjustParcelLotLine"],
+      unsupported: "Civil 3D has no API for sliding a lot line to an area. Use Parcel Layout Tools (Slide Line) in Civil 3D.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("adjustParcelLotLine", {
           siteName: args.siteName,
@@ -272,8 +275,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Read only; writing the CSV is export_report (approval first). NOTE: its area conversion (ConvertArea) assumes the
-    // drawing is in feet.
+    // Read only; writing the CSV is export_report (approval first). Areas are converted from the drawing's square unit.
     report: {
       action: "report",
       inputSchema: ParcelReportArgsSchema,
@@ -294,7 +296,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
             outputPath: null,
             overwrite: false,
             includeCoordinates: args.includeCoordinates ?? false,
-            units: args.units ?? "sqft",
+            units: args.units ?? null,
           }),
         );
       },
@@ -315,7 +317,7 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
           outputPath: args.outputPath,
           overwrite: args.overwrite ?? false,
           includeCoordinates: args.includeCoordinates ?? false,
-          units: args.units ?? "sqft",
+          units: args.units ?? null,
         }),
       ),
     },

@@ -234,13 +234,13 @@ public static class PressureNetworkCommands
   /// <summary>
   /// Returns network <c>networkName</c> (required) as JSON data: handle, parts list, pipes, fittings, appurtenances
   /// and an <c>exportedAt</c> UTC time. <c>includeCoordinates</c> (optional, default true) false drops the points and
-  /// positions. No file is written; read-only. Throws CIVIL3D.INVALID_INPUT without <c>networkName</c> and
-  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown network.
+  /// positions. No file is written; read-only. Throws CIVIL3D.INVALID_INPUT without <c>networkName</c> or for an
+  /// <c>includeCoordinates</c> that isn't true or false, and CIVIL3D.OBJECT_NOT_FOUND for an unknown network.
   /// </summary>
   public static Task<object?> ExportPressureNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
-    var includeCoordinates = parameters?["includeCoordinates"]?.GetValue<bool>() ?? true;
+    var includeCoordinates = PluginRuntime.GetOptionalBool(parameters, "includeCoordinates") ?? true;
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
@@ -355,38 +355,135 @@ public static class PressureNetworkCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Swaps pipe <c>pipeName</c> in network <c>networkName</c> to the pipe part described as <c>newPartName</c> (all
-  /// required) from the network's parts list, with PressurePipe.SwapPartSize. Changes the drawing (one undo step).
-  /// Returns the names, <c>previousDiameter</c>, <c>newDiameter</c> and <c>resized</c>. Throws CIVIL3D.INVALID_INPUT
-  /// for a missing name and CIVIL3D.OBJECT_NOT_FOUND for an unknown network, pipe or part, or a network without a parts
-  /// list.
+  /// Swaps pipe <c>pipeName</c> in network <c>networkName</c> to another pipe part of the network's parts list, with
+  /// PressurePipe.SwapPartSize. Without <c>newDiameter</c> the part is the one described as <c>newPartName</c>. With
+  /// <c>newDiameter</c> (an inner diameter in drawing units, as the pipe reports it) the part is the pipe part of that
+  /// inner diameter: <c>newPartName</c>'s own part when it has that size, else the one of that size in
+  /// <c>newPartName</c>'s family, else the only part of that size in the list (see SelectPipePartBySize). The pipe's
+  /// diameter is checked after the swap, and a mismatch undoes it. Changes the drawing (one undo step). Returns the
+  /// names, <c>partUsed</c>, <c>previousDiameter</c>, <c>newDiameter</c> and <c>resized</c>. Throws
+  /// CIVIL3D.INVALID_INPUT for a missing name, a non-positive <c>newDiameter</c>, several parts of that size to choose
+  /// from or a swap that didn't give that size, and CIVIL3D.OBJECT_NOT_FOUND for an unknown network, pipe or part, no
+  /// part of that size, or a network without a parts list; every error lists the parts to choose from.
   /// </summary>
   public static Task<object?> ResizePressurePipeAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
     var pipeName = PluginRuntime.GetRequiredString(parameters, "pipeName");
     var newPartName = PluginRuntime.GetRequiredString(parameters, "newPartName");
+    var newDiameter = PluginRuntime.GetOptionalDouble(parameters, "newDiameter");
+    if (newDiameter is <= 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"newDiameter must be a positive inner diameter in drawing units, got {newDiameter}.");
+    }
 
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var network = FindPressureNetworkByName(civilDoc, transaction, networkName, OpenMode.ForRead);
       var pipe = (PressurePipe)FindPressureComponentByName(network, transaction, pipeName, "GetPipeIds", "PipeIds", "Pipes");
-      var part = FindPressurePart(transaction, ((PressurePipeNetwork)network).PartsListId, newPartName, PressurePartType.PressurePipe);
+      var partsListId = ((PressurePipeNetwork)network).PartsListId;
+      var part = newDiameter.HasValue
+        ? SelectPipePartBySize(transaction, partsListId, pipe, newPartName, newDiameter.Value)
+        : FindPressurePart(transaction, partsListId, newPartName, PressurePartType.PressurePipe);
       var previousDiameter = pipe.InnerDiameter;
 
       pipe.UpgradeOpen();
       pipe.SwapPartSize(part);
+
+      // The catalog's sizes were scaled to drawing units from the pipe's own part; the swapped pipe has the last word.
+      if (newDiameter.HasValue && !SameDiameter(pipe.InnerDiameter, newDiameter.Value))
+      {
+        throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+          $"Part '{part.Description}' gave inner diameter {pipe.InnerDiameter:0.####}, not {newDiameter.Value}; the swap was undone. " +
+          $"Pipe parts in the list: {DescribePipeParts(transaction, partsListId)}.");
+      }
 
       return new Dictionary<string, object?>
       {
         ["networkName"] = networkName,
         ["pipeName"] = pipeName,
         ["newPartName"] = newPartName,
+        ["partUsed"] = part.Description,
         ["previousDiameter"] = previousDiameter,
         ["newDiameter"] = pipe.InnerDiameter,
         ["resized"] = true,
       };
     });
+  }
+
+  /// <summary>Whether two inner diameters in drawing units are the same size (within 0.1 %, since catalog sizes are
+  /// converted).</summary>
+  private static bool SameDiameter(double a, double b) => Math.Abs(a - b) <= Math.Max(1e-6, 1e-3 * Math.Abs(b));
+
+  /// <summary>A part size's catalog inside diameter, or null when the catalog doesn't give one.</summary>
+  private static double? CatalogInsideDiameter(PressurePartSize part)
+  {
+    try
+    {
+      var value = part.GetProperty(PressurePartContextType.PipeDiamterInside);
+      return value == null ? null : Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+    catch (Exception)
+    {
+      return null;
+    }
+  }
+
+  /// <summary>A part size's family name from the catalog, or null.</summary>
+  private static string? CatalogFamily(PressurePartSize part)
+  {
+    try { return part.GetProperty(PressurePartContextType.PartFamilyName)?.ToString(); }
+    catch (Exception) { return null; }
+  }
+
+  /// <summary>
+  /// The pipe part of inner diameter <paramref name="diameter"/> (drawing units) in the parts list. Catalog diameters
+  /// are in the catalog's units, so they are scaled by the ratio between the pipe's current inner diameter and its own
+  /// part's catalog value (1 when that can't be read). Preference: the part described as <paramref name="partName"/>
+  /// when it has that size; else the one of that size in that part's family; else the only part of that size in the
+  /// list. Several to choose from is CIVIL3D.INVALID_INPUT and none is CIVIL3D.OBJECT_NOT_FOUND, both listing the
+  /// parts.
+  /// </summary>
+  private static PressurePartSize SelectPipePartBySize(Transaction transaction, ObjectId partsListId, PressurePipe pipe, string partName, double diameter)
+  {
+    if (partsListId.IsNull)
+      throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", "The pressure network does not have a pressure parts list assigned.");
+    var partsList = CivilObjectUtils.GetRequiredObject<PressurePartList>(transaction, partsListId, OpenMode.ForRead);
+    var parts = partsList.GetParts(PressurePartType.PressurePipe).Where(part => part.IsValid).ToList();
+
+    PressurePartSize? current = null;
+    try { current = pipe.GetPartSize(); } catch (Exception) { }
+    var currentCatalog = current == null ? null : CatalogInsideDiameter(current);
+    var scale = currentCatalog is > 0 && pipe.InnerDiameter > 0 ? pipe.InnerDiameter / currentCatalog.Value : 1.0;
+
+    var sized = parts.Where(part => CatalogInsideDiameter(part) is { } inside && SameDiameter(inside * scale, diameter)).ToList();
+    var named = parts.FirstOrDefault(part => string.Equals(part.Description, partName, StringComparison.OrdinalIgnoreCase));
+    if (named != null && sized.Contains(named)) return named;
+
+    var choices = sized;
+    if (named != null && CatalogFamily(named) is { } family)
+    {
+      var sameFamily = sized.Where(part => string.Equals(CatalogFamily(part), family, StringComparison.OrdinalIgnoreCase)).ToList();
+      if (sameFamily.Count > 0) choices = sameFamily;
+    }
+
+    if (choices.Count == 1) return choices[0];
+
+    if (choices.Count == 0)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND",
+        $"No pipe part in parts list '{partsList.Name}' has inner diameter {diameter}. It has: {DescribePipeParts(transaction, partsListId)}.");
+    }
+
+    throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+      $"Several pipe parts have inner diameter {diameter}: {string.Join(", ", choices.Select(part => part.Description).Take(12))}. Send one of them as newPartName.");
+  }
+
+  /// <summary>Up to 12 valid pipe part descriptions of the parts list, for an error message.</summary>
+  private static string DescribePipeParts(Transaction transaction, ObjectId partsListId)
+  {
+    var partsList = CivilObjectUtils.GetRequiredObject<PressurePartList>(transaction, partsListId, OpenMode.ForRead);
+    return string.Join(", ", partsList.GetParts(PressurePartType.PressurePipe).Where(part => part.IsValid).Select(part => part.Description).Take(12));
   }
 
   // -------------------------------------------------------------------------
@@ -453,7 +550,8 @@ public static class PressureNetworkCommands
   /// <summary>
   /// Adds an appurtenance (valve, pump or hydrant part described as <c>partName</c>) to network <c>networkName</c> at
   /// <c>position</c> (required <c>{x, y, z}</c>). With <c>onPipeName</c> (optional) the position moves to that pipe's
-  /// midpoint when the pipe and its end points can be found; otherwise <c>position</c> is used silently.
+  /// midpoint; a pipe that isn't in the network is CIVIL3D.INVALID_INPUT and one whose end points can't be read is
+  /// CIVIL3D.API_ERROR, never a silent fallback to <c>position</c>.
   /// <c>rotation</c> must be absent or 0 (CIVIL3D.API_ERROR otherwise, before the drawing is touched). Changes the
   /// drawing (one undo step). Returns <c>networkName</c>, the new <c>appurtenance</c>'s data and <c>added</c>. Throws
   /// CIVIL3D.INVALID_INPUT for a missing name, position or coordinate, and CIVIL3D.OBJECT_NOT_FOUND for an unknown
@@ -474,27 +572,34 @@ public static class PressureNetworkCommands
     {
       var network = FindPressureNetworkByName(civilDoc, transaction, networkName, OpenMode.ForWrite);
 
-      // If onPipeName specified, find the pipe and snap position to its midpoint
+      // With onPipeName the appurtenance goes at that pipe's midpoint. A pipe that isn't there is the caller's mistake,
+      // so it's refused rather than quietly placing the part at position instead.
       if (!string.IsNullOrWhiteSpace(onPipeName))
       {
+        AcDbObject pipe;
         try
         {
-          var pipe = FindPressureComponentByName(network, transaction, onPipeName!, "GetPipeIds", "PipeIds", "Pipes");
-          var sp = GetPointProperty(pipe, "StartPoint", "PointAtStart");
-          var ep = GetPointProperty(pipe, "EndPoint", "PointAtEnd");
-          if (sp.HasValue && ep.HasValue)
-          {
-            position = new Point3d(
-              (sp.Value.X + ep.Value.X) / 2,
-              (sp.Value.Y + ep.Value.Y) / 2,
-              (sp.Value.Z + ep.Value.Z) / 2
-            );
-          }
+          pipe = FindPressureComponentByName(network, transaction, onPipeName!, "GetPipeIds", "PipeIds", "Pipes");
         }
-        catch
+        catch (JsonRpcDispatchException exception) when (exception.Code == "CIVIL3D.OBJECT_NOT_FOUND")
         {
-          // Non-fatal - use provided position
+          throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
+            $"onPipeName '{onPipeName}' is not a pipe of pressure network '{networkName}'. Send an existing pipe name, or leave onPipeName out to place the appurtenance at position. Nothing was added.");
         }
+
+        var sp = GetPointProperty(pipe, "StartPoint", "PointAtStart");
+        var ep = GetPointProperty(pipe, "EndPoint", "PointAtEnd");
+        if (!sp.HasValue || !ep.HasValue)
+        {
+          throw new JsonRpcDispatchException("CIVIL3D.API_ERROR",
+            $"The end points of pipe '{onPipeName}' can't be read, so its midpoint isn't known. Leave onPipeName out to place the appurtenance at position. Nothing was added.");
+        }
+
+        position = new Point3d(
+          (sp.Value.X + ep.Value.X) / 2,
+          (sp.Value.Y + ep.Value.Y) / 2,
+          (sp.Value.Z + ep.Value.Z) / 2
+        );
       }
 
       var createdId = AddPressureComponentToNetwork(network, transaction, partName, position, rotation, isFitting: false);
@@ -826,18 +931,6 @@ public static class PressureNetworkCommands
     }
   }
 
-  /// <summary>The non-null items of a collection. Not called anywhere at present.</summary>
-  private static IEnumerable<object> EnumerateObjects(object? collection)
-  {
-    if (collection is IEnumerable enumerable)
-    {
-      foreach (var item in enumerable)
-      {
-        if (item != null) yield return item;
-      }
-    }
-  }
-
   /// <summary>A property, or else a field, of that name, through Civil3DCompatibility (the plugin's one place for
   /// reflection). Null when neither exists.</summary>
   private static object? GetNamedMember(object? value, string memberName)
@@ -902,52 +995,20 @@ public static class PressureNetworkCommands
     return null;
   }
 
-  /// <summary>Sets the first of several ObjectId properties that accepts the id (skipped for a null id). Not called
-  /// anywhere at present.</summary>
-  private static void TrySetObjectIdProperty(object target, ObjectId objectId, params string[] propertyNames)
-  {
-    if (objectId == ObjectId.Null) return;
-    foreach (var name in propertyNames)
-    {
-      if (Civil3DCompatibility.TrySetProperty(target, name, objectId)) return;
-    }
-  }
-
-  /// <summary>Sets the first of several numeric properties that accepts the value. Not called anywhere at present.</summary>
-  private static void TrySetDoubleProperty(object target, double value, params string[] propertyNames)
-  {
-    foreach (var name in propertyNames)
-    {
-      if (Civil3DCompatibility.TrySetProperty(target, name, value)) return;
-    }
-  }
-
-  /// <summary>An object id from a late-bound call's result, or else from one of its arguments. Not called anywhere at
-  /// present.</summary>
-  private static ObjectId ExtractObjectId(object? result, object?[] args)
-  {
-    if (result is ObjectId id && id != ObjectId.Null) return id;
-    var rid = GetAnyObjectId(result, "ObjectId", "Id");
-    if (rid != ObjectId.Null) return rid;
-    foreach (var arg in args)
-    {
-      var aid = GetAnyObjectId(arg, "ObjectId", "Id");
-      if (aid != ObjectId.Null) return aid;
-    }
-
-    return ObjectId.Null;
-  }
-
   /// <summary>Reads parameter <paramref name="paramName"/> as an <c>{x, y, z}</c> object. Null when it is missing or
-  /// not an object (the callers then throw); throws CIVIL3D.INVALID_INPUT when x, y or z is missing, so no coordinate
-  /// or elevation is ever assumed to be 0.</summary>
+  /// not an object (the callers then throw); throws CIVIL3D.INVALID_INPUT when x, y or z is missing or not a number,
+  /// so no coordinate or elevation is ever assumed to be 0.</summary>
   private static Point3d? ReadPoint(JsonObject? parameters, string paramName)
   {
     if (PluginRuntime.GetParameter(parameters, paramName) is not JsonObject node) return null;
+    double Coordinate(string axis, string missing) =>
+      node[axis] is JsonValue value && value.TryGetValue<double>(out var number)
+        ? number
+        : throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", missing);
     return new Point3d(
-      node["x"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{paramName}.x is required."),
-      node["y"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{paramName}.y is required."),
-      node["z"]?.GetValue<double>() ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"{paramName}.z is required; elevation 0 will not be assumed.")
+      Coordinate("x", $"{paramName}.x is required as a number."),
+      Coordinate("y", $"{paramName}.y is required as a number."),
+      Coordinate("z", $"{paramName}.z is required as a number; elevation 0 will not be assumed.")
     );
   }
 }

@@ -1,11 +1,14 @@
 // Source-text guard on the PLUGIN (reads Civil3D-MCP-Plugin/*.cs as text, runs nothing): keeps code patterns that would
 // freeze Civil 3D on a very long profile, and keeps the plugin answering health while a long call runs.
-// Runs from the repo root (relative path Civil3D-MCP-Plugin/). If a plugin file is renamed, update this test.
+// The plugin folder is found from this file's location, so it runs from any working folder. If a plugin file is
+// renamed, update this test.
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const plugin = (file: string) => readFileSync(`Civil3D-MCP-Plugin/${file}`, "utf8");
+const PLUGIN_FOLDER = join(import.meta.dirname, "..", "Civil3D-MCP-Plugin");
+const plugin = (file: string) => readFileSync(join(PLUGIN_FOLDER, file), "utf8");
 
 /**
  * A 6.5 mile ground profile has 9,662 PVIs and entities. Reading its PVIs takes 37 s by any route, and reading its

@@ -3,9 +3,11 @@
 // JSON-RPC methods: profileAddPvi, profileDeletePvi, profileAddCurve, profileSetGrade, profileViewCreate,
 // profileViewBandSet (writes, CivilExecution.WriteAsync: command context, document lock, one transaction, one undo
 // step); profileGetElevation (same as ProfileCommands.getProfileElevation) and profileCheckKValues (reads,
-// CivilExecution.ReadAsync: main thread, no undo step). MinimumK (AASHTO K tables) is also used by SightDistanceCommands.
-// Alignments and profiles are found by name through CivilObjectUtils, styles through LookupUtils. Curve properties in
-// the K check are read late-bound through CivilObjectUtils. No file access.
+// CivilExecution.ReadAsync: main thread, no undo step). MinimumK (AASHTO K tables) and DrawingLengthUnits (the drawing's
+// length unit, converted by SightMath) are also used by SightDistanceCommands. Entity indexes are by station, as
+// ProfileCommands.EntitiesByStation numbers them for getProfile. Alignments and profiles are found by name through
+// CivilObjectUtils, styles through LookupUtils. Curve properties in the K check are read late-bound through
+// CivilObjectUtils. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -147,8 +149,8 @@ public static class ProfileEditCommands
   /// profileSetGrade (changes the drawing, one undo step): gives tangent <c>entityIndex</c> of the profile the
   /// <c>grade</c> (a fraction, 0.02 = 2%) by moving the elevation of the PVI at its down-station end; the next
   /// tangent's grade changes with it. All of <c>alignmentName</c>, <c>profileName</c>, <c>entityIndex</c>,
-  /// <c>grade</c> are required. The index counts profile.Entities in Civil 3D's own order (not sorted by station).
-  /// Returns the PVI station and its previous and new elevation. Throws CIVIL3D.INVALID_INPUT for a grade above 1 in
+  /// <c>grade</c> are required. The index counts the entities by station, as getProfile numbers them
+  /// (ProfileCommands.EntitiesByStation), not in Civil 3D's own order. Returns the PVI station and its previous and new elevation. Throws CIVIL3D.INVALID_INPUT for a grade above 1 in
   /// size, an index out of range or an entity that is a curve, CIVIL3D.API_ERROR when no PVIs are found at its ends.
   /// </summary>
   public static Task<object?> SetGradeAsync(JsonObject? parameters)
@@ -169,7 +171,7 @@ public static class ProfileEditCommands
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForWrite);
-      var entities = profile.Entities.Cast<ProfileEntity>().ToList();
+      var entities = ProfileCommands.EntitiesByStation(profile);
       if (entityIndex < 0 || entityIndex >= entities.Count)
       {
         throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Entity index {entityIndex} is out of range: profile '{profile.Name}' has {entities.Count} entities.");
@@ -220,38 +222,40 @@ public static class ProfileEditCommands
 
   /// <summary>
   /// profileCheckKValues (read-only): for each vertical curve of the profile, K = length / |grade change in %| against
-  /// the AASHTO stopping-sight-distance minimum for <c>designSpeed</c> (mph and feet, or km/h and metres when the
-  /// drawing's INSUNITS is metres). <c>alignmentName</c>, <c>profileName</c>, <c>designSpeed</c> required. Returns the
-  /// minimums, one row per curve (sag when the grade rises, else crest) and allPass. Throws CIVIL3D.OBJECT_NOT_FOUND
-  /// for an unknown alignment or profile, CIVIL3D.TRANSACTION_FAILED when the profile has no Entities collection.
+  /// the AASHTO stopping-sight-distance minimum for <c>designSpeed</c>: km/h and the metric table in a metric drawing
+  /// (metres, millimetres, centimetres...), else mph and the feet table, the minimum converted to the drawing's length
+  /// units (<see cref="DrawingLengthUnits"/>). <c>alignmentName</c>, <c>profileName</c>, <c>designSpeed</c> required;
+  /// a speed that isn't positive is CIVIL3D.INVALID_INPUT. Returns the minimums, one row per curve (sag when the grade
+  /// rises, else crest; <c>entityIndex</c> numbered by station as getProfile shows it) and allPass. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment or profile.
   /// </summary>
   public static Task<object?> CheckKValuesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
     var profileName = PluginRuntime.GetRequiredString(parameters, "profileName");
     var designSpeed = PluginRuntime.GetRequiredDouble(parameters, "designSpeed");
+    if (!(designSpeed > 0) || double.IsInfinity(designSpeed))
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"designSpeed must be a positive number (mph in a foot drawing, km/h in a metric one), not {designSpeed}.");
+    }
 
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var profile = CivilObjectUtils.FindProfileByName(alignment, transaction, profileName, OpenMode.ForRead);
 
-      var entities = CivilObjectUtils.GetPropertyValue<object>(profile, "Entities");
-      if (entities == null)
-      {
-        throw new JsonRpcDispatchException(
-          "CIVIL3D.TRANSACTION_FAILED",
-          $"Profile '{profileName}' does not expose an Entities collection.");
-      }
-
-      // K is length per percent of grade change, so the table follows the drawing's units: feet and mph, or metres
-      // and km/h. Both are stopping sight distance values (AASHTO Green Book 2011, Exhibits 3-72 and 3-75).
-      var metric = database.Insunits == UnitsValue.Meters;
-      var (kSagMin, kCrestMin) = MinimumK(designSpeed, metric);
+      // K is length per percent of grade change, so the table follows the drawing's units: mph and the feet table, or
+      // km/h and the metre table, then converted to the drawing's own length unit (13 m/% is 13000 in millimetres).
+      // Both are stopping sight distance values (AASHTO Green Book 2011, Exhibits 3-72 and 3-75).
+      var units = DrawingLengthUnits(database, civilDoc);
+      var metric = units.Metric;
+      var (tableSag, tableCrest) = MinimumK(designSpeed, metric);
+      var kSagMin = SightMath.KInDrawingUnits(tableSag, metric, units.PerMetre);
+      var kCrestMin = SightMath.KInDrawingUnits(tableCrest, metric, units.PerMetre);
 
       var results = new List<Dictionary<string, object?>>();
       var index = 0;
-      foreach (var entity in (System.Collections.IEnumerable)entities)
+      foreach (var entity in ProfileCommands.EntitiesByStation(profile))
       {
         var entityType = entity?.GetType().Name ?? string.Empty;
         var isCurve = entityType.ToLowerInvariant().Contains("parabola")
@@ -298,6 +302,10 @@ public static class ProfileEditCommands
         ["profileName"] = profile.Name,
         ["designSpeed"] = designSpeed,
         ["designSpeedUnits"] = metric ? "km/h" : "mph",
+        ["drawingUnits"] = units.Name,
+        ["kUnits"] = units.PerMetre == null
+          ? $"{(metric ? "metres" : "feet")} per percent (the drawing's units are not set, so not converted)"
+          : $"{units.Name} per percent",
         ["kSagMinimum"] = kSagMin,
         ["kCrestMinimum"] = kCrestMin,
         ["curves"] = results,
@@ -315,7 +323,8 @@ public static class ProfileEditCommands
   /// profileViewCreate (changes the drawing, one undo step): a profile view <c>profileViewName</c> of
   /// <c>alignmentName</c> at <c>insertX</c>/<c>insertY</c> (all required), with optional <c>style</c> and
   /// <c>bandSet</c> (default: the drawing's first band set). Returns profileViewName, handle, alignmentName and the
-  /// insertion point. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment, style or band set.
+  /// insertion point. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment, style or band set,
+  /// CIVIL3D.INVALID_INPUT when no band set is named and the drawing has none.
   /// </summary>
   public static Task<object?> ProfileViewCreateAsync(JsonObject? parameters)
   {
@@ -332,9 +341,16 @@ public static class ProfileEditCommands
       var styleId = LookupUtils.GetProfileViewStyleId(
         civilDoc, transaction, PluginRuntime.GetOptionalString(parameters, "style"));
       var bandSetName = PluginRuntime.GetOptionalString(parameters, "bandSet");
+      // With no band set named, the drawing's first one; a drawing with none can't make a profile view this way.
       var bandSetId = string.IsNullOrWhiteSpace(bandSetName)
-        ? civilDoc.Styles.ProfileViewBandSetStyles.First()
+        ? civilDoc.Styles.ProfileViewBandSetStyles.Cast<ObjectId>().FirstOrDefault()
         : LookupUtils.GetProfileViewBandSetId(civilDoc, transaction, bandSetName);
+      if (bandSetId.IsNull)
+      {
+        throw new JsonRpcDispatchException(
+          "CIVIL3D.INVALID_INPUT",
+          "The drawing has no profile view band set styles, so no band set could be chosen. Import or create a band set style (e.g. from the drawing's template) and pass its name as bandSet.");
+      }
 
       var pvId = ProfileView.Create(alignment.ObjectId, insertionPoint, profileViewName, bandSetId, styleId);
       var profileView = CivilObjectUtils.GetRequiredObject<ProfileView>(transaction, pvId, OpenMode.ForRead);
@@ -442,6 +458,29 @@ public static class ProfileEditCommands
   }
 
   private const double PviTolerance = 1.0;
+
+  /// <summary>
+  /// The drawing's length unit for K and speed checks (also SightDistanceCommands): its name, one metre in it (null
+  /// when unknown) and whether it is metric (SightMath.UnitsPerMetre / IsMetricUnits). INSUNITS first, as the rest of
+  /// the plugin reads units; when that is Undefined or unusual, Civil 3D's own drawing unit setting (Drawing Settings,
+  /// Units and Zone). A metric drawing is any metric unit, not only metres.
+  /// </summary>
+  internal static (string Name, double? PerMetre, bool Metric) DrawingLengthUnits(
+    Database database,
+    Autodesk.Civil.ApplicationServices.CivilDocument civilDoc)
+  {
+    var name = database.Insunits.ToString();
+    if (SightMath.UnitsPerMetre(name) == null)
+    {
+      var civilUnits = civilDoc.Settings.DrawingSettings.UnitZoneSettings.DrawingUnits.ToString();
+      if (SightMath.UnitsPerMetre(civilUnits) != null)
+      {
+        name = civilUnits;
+      }
+    }
+
+    return (name, SightMath.UnitsPerMetre(name), SightMath.IsMetricUnits(name));
+  }
 
   /// <summary>The stopping sight distance K for a design speed: km/h and metres, or mph and feet. Interpolated
   /// between table speeds; below or above the table it takes the first or last row.</summary>

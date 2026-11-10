@@ -19,6 +19,7 @@
     <Compile Include="..\..\Civil3D-MCP-Plugin\RpcTcpServer.cs" Link="RpcTcpServer.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\PointText.cs" Link="PointText.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\PipeMath.cs" Link="PipeMath.cs" />
+    <Compile Include="..\..\Civil3D-MCP-Plugin\DesignMath.cs" Link="DesignMath.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\StationMath.cs" Link="StationMath.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\SightMath.cs" Link="SightMath.cs" />
     <Compile Include="..\..\Civil3D-MCP-Plugin\HostGuard.cs" Link="HostGuard.cs" />

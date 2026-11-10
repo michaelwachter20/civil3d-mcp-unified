@@ -6,7 +6,10 @@
  * action, a hash of the exact parameters and a fingerprint of the active drawing, so it can't be reused for a
  * different change or another drawing. CIVIL3D_APPROVAL_MODE=disabled switches the policy off (test setups only).
  * The decision comes only from what an action declares (capabilities, name, safeForRetry), so a write declared as a
- * query would skip approval (CLAUDE.md rule 4). The fingerprint is the one plugin call made here (getDrawingInfo).
+ * query would skip approval (CLAUDE.md rule 4). One exception, also declared by the action: `readOnlyCall`, set by
+ * domainRuntime.ts when the call's own validated arguments make it change nothing (a dryRun, applyChanges off, no
+ * outputPath; DomainActionDefinition.readOnlyWhen) or the action is declared unsupported (never sent to the plugin).
+ * The fingerprint is the one plugin call made here (getDrawingInfo).
  */
 import { createHash, randomUUID } from "node:crypto";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
@@ -21,6 +24,11 @@ export interface ApprovalTarget {
   capabilities: ToolCapability[];
   safeForRetry: boolean;
   requiresActiveDrawing?: boolean;
+  /**
+   * This call changes nothing: its validated arguments ask for a preview only (readOnlyWhen) or the action never
+   * reaches the plugin (unsupported). Only domainRuntime.ts's approvalTargetFor sets it; then no token is needed.
+   */
+  readOnlyCall?: boolean;
 }
 
 /** One issued token's binding, kept in memory until used or the server stops. */
@@ -40,13 +48,27 @@ export interface ApprovalReceipt {
 }
 
 /**
- * The action needs a token and the call carried none. It has no `code`, so domainRuntime.ts infers CIVIL3D.CONFLICT
- * from the message ("Approval required").
+ * The action needs a token and the call carried none: CIVIL3D.APPROVAL_REQUIRED, which domainRuntime.ts reports as the
+ * result's errorCode (HTTP 409 on the bridge). The message tells the AI what to call.
  */
-export class ApprovalRequiredError extends Error {}
+export class ApprovalRequiredError extends Error {
+  public readonly code = "CIVIL3D.APPROVAL_REQUIRED";
+  // -32060 / -32061: a block the plugin's JsonRpcProtocol.NumericErrorCode doesn't use (these codes are Node-only).
+  public readonly rpcCode = -32060;
+}
 
-/** The token is unknown, used, expired or doesn't match the call or the drawing; or no approval was needed. */
-export class ApprovalValidationError extends Error {}
+/**
+ * The token is unknown, used, expired or doesn't match the call or the drawing: CIVIL3D.APPROVAL_INVALID (HTTP 409).
+ * civil3d_request_approval also throws it, as CIVIL3D.INVALID_INPUT, for an action that needs no approval.
+ */
+export class ApprovalValidationError extends Error {
+  public readonly rpcCode: number;
+
+  public constructor(message: string, public readonly code: "CIVIL3D.APPROVAL_INVALID" | "CIVIL3D.INVALID_INPUT" = "CIVIL3D.APPROVAL_INVALID") {
+    super(message);
+    this.rpcCode = code === "CIVIL3D.INVALID_INPUT" ? -32602 : -32061;
+  }
+}
 
 /** Returns the active drawing's fingerprint; replaced by a fake in tests. */
 export type DrawingFingerprintProvider = () => Promise<string>;
@@ -91,9 +113,12 @@ function hashParameters(parameters: JsonObject): string {
   return createHash("sha256").update(stableJson(normalized)).digest("hex");
 }
 
-/** Whether `enforce` will demand a token: the action is risky and approval mode isn't disabled. */
+/**
+ * Whether `enforce` will demand a token: the action is risky, this call isn't a declared read-only call (readOnlyCall)
+ * and approval mode isn't disabled.
+ */
 export function isApprovalRequired(target: ApprovalTarget): boolean {
-  if (process.env.CIVIL3D_APPROVAL_MODE === "disabled") {
+  if (process.env.CIVIL3D_APPROVAL_MODE === "disabled" || target.readOnlyCall === true) {
     return false;
   }
 
@@ -163,6 +188,7 @@ export class ApprovalPolicyService {
     if (!isApprovalRequired(target)) {
       throw new ApprovalValidationError(
         `'${target.toolName}' action '${target.action}' does not require approval. Execute it directly.`,
+        "CIVIL3D.INVALID_INPUT",
       );
     }
 
@@ -185,10 +211,10 @@ export class ApprovalPolicyService {
   }
 
   /**
-   * Lets the call through, or throws: ApprovalRequiredError when a token is needed and missing (its message tells the
-   * AI what to call), ApprovalValidationError when the token is unknown, used, expired, for another action or
-   * parameters, or for a drawing that has changed. The token is consumed before the checks, so a failed attempt
-   * still uses it up.
+   * Lets the call through, or throws: ApprovalRequiredError (CIVIL3D.APPROVAL_REQUIRED) when a token is needed and
+   * missing (its message tells the AI what to call), ApprovalValidationError (CIVIL3D.APPROVAL_INVALID) when the token
+   * is unknown, used, expired, for another action or parameters, or for a drawing that has changed. The token is
+   * consumed before the checks, so a failed attempt still uses it up.
    */
   public async enforce(target: ApprovalTarget, parameters: JsonObject): Promise<void> {
     if (!isApprovalRequired(target)) {

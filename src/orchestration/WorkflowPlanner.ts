@@ -10,7 +10,7 @@
  * The titles, summaries, notes and questions are returned to the AI as-is; the intent names must match the explicit
  * routes in ToolCatalog.ts, or the hand-written plan is silently replaced by the one-step fallback.
  */
-import { RouteParams, RouteResult } from "./IntentRouter.js";
+import { hasRequiredValue, RouteParams, RouteResult } from "./IntentRouter.js";
 import { ProjectContext } from "./ProjectContextService.js";
 
 /** One step of a plan; `status` is "blocked" when the drawing lacks what the step needs (e.g. no surfaces). */
@@ -47,20 +47,12 @@ function getObjectCounts(projectContext: ProjectContext) {
   return drawingInfo.objectCounts ?? {};
 }
 
-/** The required fields that are absent, blank strings or non-finite numbers in the routed parameters. */
+/**
+ * The required fields not given in the routed parameters (absent, blank strings, non-finite numbers, empty arrays):
+ * IntentRouter's hasRequiredValue, the same rule the router and civil3d_orchestrate.ts use.
+ */
 function findMissingFields(params: RouteParams, requiredFields: string[]) {
-  return requiredFields.filter((field) => {
-    const value = params[field as keyof RouteParams];
-    if (typeof value === "string") {
-      return value.trim().length === 0;
-    }
-
-    if (typeof value === "number") {
-      return !Number.isFinite(value);
-    }
-
-    return value == null;
-  });
+  return requiredFields.filter((field) => !hasRequiredValue(params[field as keyof RouteParams]));
 }
 
 /** A plain question for each missing field, for the AI to ask the user; unknown fields get a generic one. */

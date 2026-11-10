@@ -3,8 +3,11 @@
 // each to a `*Workflow` method in WorkflowCommands.cs; composed ones import pipeDomain, surfaceDomain and surveyDomain
 // and call those actions' `execute` directly (no second approval or schema check). Approval comes from each workflow
 // action's own capabilities (approvalPolicy.ts): the read-only ones (grading_surface_volume,
-// surface_comparison_report, drawing_readiness_audit, corridor_qc_report) run without a token; the rest create, edit,
-// export or match a name rule (sync, publish, fix) and need an approvalToken. Details per action are below.
+// surface_comparison_report, drawing_readiness_audit, corridor_qc_report without outputPath) run without a token; the
+// rest create, edit, export or match a name rule (sync, publish, fix) and need an approvalToken, unless the call is a
+// declared preview (readOnlyWhen: a dryRun, applyChanges off, no outputPath). feature_line_to_grading and
+// survey_import_adjust_figures are declared unsupported (their plugin steps always refuse) and in no exposure.
+// Details per action below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -19,7 +22,7 @@ import { SURVEY_DOMAIN_DEFINITION } from "./surveyDomain.js";
  * Two kinds:
  *   - Native workflows run in the plugin as one call (`*Workflow` methods in WorkflowCommands.cs): corridor QC,
  *     surface comparison report, data shortcut publish/reference sync, project startup and reference setup, drawing
- *     readiness audit, feature line to grading, plan production publish, QC fix and verify.
+ *     readiness audit, plan production publish, QC fix and verify (and feature line to grading, unsupported and unexposed).
  *   - Composed workflows run here and call other domains' actions in turn: grading_surface_volume (surface),
  *     pipe_network_design (pipe) and survey_import_adjust_figures (survey). They call those actions' `execute`
  *     directly, so the inner steps skip domainRuntime: approval and argument validation happen once, for the
@@ -101,7 +104,6 @@ const canonicalWorkflowInputShape = {
     "project_startup",
     "project_reference_setup",
     "drawing_readiness_audit",
-    "feature_line_to_grading",
     "pipe_network_design",
     "plan_production_publish",
     "qc_fix_and_verify",
@@ -128,13 +130,6 @@ const canonicalWorkflowInputShape = {
   templatePath: z.string().optional(),
   saveAs: z.string().optional(),
   limit: z.number().optional(),
-  featureLineName: z.string().optional(),
-  groupName: z.string().optional(),
-  groupDescription: z.string().optional(),
-  createGroup: z.boolean().optional(),
-  useProjection: z.boolean().optional(),
-  criteriaName: z.string().optional(),
-  side: WorkflowGradingSideSchema.optional(),
   networkName: z.string().optional(),
   partsList: z.string().optional(),
   defaultDesignFlow: z.number().positive().optional(),
@@ -344,16 +339,17 @@ const SurveyImportAdjustFiguresArgsSchema = z.object({
 export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "workflow",
   actions: {
-    // Native: one plugin call. Declared non-retryable because it can write a report file (outputPath). It has no
-    // mutating or export capability, so approvalPolicy does not ask for a token even when it writes that file.
+    // Native: one plugin call. With outputPath it writes a report file, so it declares export (non-retryable) and
+    // needs a token then; without one it only reads (readOnlyWhen), so no approval.
     corridor_qc_report: {
       action: "corridor_qc_report",
       inputSchema: CorridorQcReportArgsSchema,
       responseSchema: WorkflowResponseSchema,
-      capabilities: ["query", "analyze", "generate"],
+      capabilities: ["query", "analyze", "generate", "export"],
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["corridorQcReportWorkflow"],
+      readOnlyWhen: (args) => !args.outputPath,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("corridorQcReportWorkflow", {
           corridorName: args.corridorName,
@@ -417,7 +413,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
     // Native (dataShortcutPublishSyncWorkflow): publishes an object as a data shortcut, then syncs; needs approval
-    // ("sync" in the name, and a non-retryable create).
+    // ("sync" in the name, and a non-retryable create). A dryRun publishes nothing and only lists what the sync would
+    // do, so it needs none.
     data_shortcut_publish_sync: {
       action: "data_shortcut_publish_sync",
       inputSchema: DataShortcutPublishSyncArgsSchema,
@@ -426,6 +423,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["dataShortcutPublishSyncWorkflow"],
+      readOnlyWhen: (args) => args.dryRun === true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("dataShortcutPublishSyncWorkflow", {
           objectType: args.objectType,
@@ -437,7 +435,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Native (dataShortcutReferenceSyncWorkflow): references a shortcut into this drawing, then syncs; needs approval.
+    // Native (dataShortcutReferenceSyncWorkflow): references a shortcut into this drawing, then syncs; needs approval,
+    // except a dryRun (no reference, the sync only lists).
     data_shortcut_reference_sync: {
       action: "data_shortcut_reference_sync",
       inputSchema: DataShortcutReferenceSyncArgsSchema,
@@ -446,6 +445,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["dataShortcutReferenceSyncWorkflow"],
+      readOnlyWhen: (args) => args.dryRun === true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("dataShortcutReferenceSyncWorkflow", {
           projectFolder: args.projectFolder,
@@ -474,7 +474,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Native (projectReferenceSetupWorkflow): references several shortcuts, syncs, reviews, optionally saves; needs approval.
+    // Native (projectReferenceSetupWorkflow): references several shortcuts, syncs, reviews, optionally saves; needs
+    // approval, except a dryRun without saveAs (the plugin still saves to a given saveAs on a dry run).
     project_reference_setup: {
       action: "project_reference_setup",
       inputSchema: ProjectReferenceSetupArgsSchema,
@@ -483,6 +484,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["projectReferenceSetupWorkflow"],
+      readOnlyWhen: (args) => args.dryRun === true && !args.saveAs,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("projectReferenceSetupWorkflow", {
           references: args.references,
@@ -512,8 +514,9 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
     // Native (featureLineToGradingWorkflow): optional grading group, grading from a feature line, optional grading
-    // surface; writes the drawing, needs approval. Note: surfaceName is in this schema but not in the canonical input
-    // shape above, so only the alias advertises it.
+    // surface. Unsupported for now: its grading step (GradingCommands' createGrading) always refuses, because Civil 3D's
+    // API doesn't reach gradings, so the workflow could never complete. It is in no exposure, and the runtime refuses it
+    // without a plugin call should the orchestrator reach it.
     feature_line_to_grading: {
       action: "feature_line_to_grading",
       inputSchema: FeatureLineToGradingArgsSchema,
@@ -522,6 +525,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["featureLineToGradingWorkflow"],
+      unsupported: "Its grading step can't be done: Civil 3D's API doesn't reach grading groups or gradings. Use the Grading Creation Tools; the resulting group's surface can then be read with the surface tools.",
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("featureLineToGradingWorkflow", {
           featureLineName: args.featureLineName,
@@ -537,7 +541,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
     // Composed: sizes the network (pipe.size_network, which resizes only with applyChanges), then runs the hydraulic
     // analysis unless runHydraulicAnalysis is false; a skipped analysis is reported as a warning. Declared "edit" and
-    // non-retryable, so it needs approval even when applyChanges is false.
+    // non-retryable, so it needs approval when applyChanges is true (each resized pipe is its own undo step); without
+    // it both steps only read (readOnlyWhen), so no approval.
     pipe_network_design: {
       action: "pipe_network_design",
       inputSchema: PipeNetworkDesignArgsSchema,
@@ -545,6 +550,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["analyze", "edit", "generate"],
       requiresActiveDrawing: true,
       safeForRetry: false,
+      readOnlyWhen: (args) => args.applyChanges !== true,
       pluginMethods: [
         "getPipeNetwork",
         "listPipePartsCatalog",
@@ -634,8 +640,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Native (qcFixAndVerifyWorkflow): layer standards audit, fix, re-audit; "fix" in the name, so it needs approval
-    // (dryRun included).
+    // Native (qcFixAndVerifyWorkflow): layer standards audit, fix, re-audit; "fix" in the name, so it needs approval,
+    // except a dryRun, where the fix step only lists its changes (layers opened for read).
     qc_fix_and_verify: {
       action: "qc_fix_and_verify",
       inputSchema: QcFixAndVerifyArgsSchema,
@@ -644,6 +650,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["qcFixAndVerifyWorkflow"],
+      readOnlyWhen: (args) => args.dryRun === true,
       execute: async (args) => await withApplicationConnection(
         async (appClient) => await appClient.sendCommand("qcFixAndVerifyWorkflow", {
           layerPrefix: args.layerPrefix,
@@ -659,9 +666,9 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
     // Composed: imports a survey LandXML file, then (with networkName) lists observations and adjusts the network, then
     // (with figureName and pointNumbers) creates a figure, and finally lists the figures. Skipped steps become warnings.
-    // Note: no exposure lists this action in its supportedActions, so no tool reaches it at the moment. Its first step,
-    // survey.landxml_import, is always refused by the plugin (CIVIL3D.API_ERROR, see surveyDomain.ts), so it could not
-    // complete anyway.
+    // Not exposed and declared unsupported: its first step, survey.landxml_import, and its adjustment step,
+    // survey.network_adjust, are always refused by the plugin (see surveyDomain.ts), so it could never complete.
+    // Expose it (and drop `unsupported`) only once the plugin can import LandXML into a survey database.
     survey_import_adjust_figures: {
       action: "survey_import_adjust_figures",
       inputSchema: SurveyImportAdjustFiguresArgsSchema,
@@ -670,6 +677,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["importSurveyLandXml", "listSurveyObservations", "adjustSurveyNetwork", "createSurveyFigure", "listSurveyFigures"],
+      unsupported: "Civil 3D's survey interface has no LandXML import and can't run a network adjustment. Use Import Survey Data and Network Adjustment in the Survey tab, then create figures with civil3d_survey.",
       execute: async (args) => {
         const importResult = await SURVEY_DOMAIN_DEFINITION.actions.landxml_import.execute({
           action: "landxml_import",
@@ -806,7 +814,6 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         "project_startup",
         "project_reference_setup",
         "drawing_readiness_audit",
-        "feature_line_to_grading",
         "pipe_network_design",
         "plan_production_publish",
         "qc_fix_and_verify",
@@ -1001,36 +1008,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         },
       }),
     },
-    {
-      toolName: "civil3d_workflow_feature_line_to_grading",
-      displayName: "Civil 3D Workflow Feature Line To Grading",
-      description: "Inspects a feature line, optionally creates a grading group, builds grading from it, and can generate a grading surface.",
-      inputShape: {
-        featureLineName: z.string(),
-        groupName: z.string(),
-        groupDescription: z.string().optional(),
-        createGroup: z.boolean().optional(),
-        useProjection: z.boolean().optional(),
-        criteriaName: z.string().optional(),
-        side: WorkflowGradingSideSchema.optional(),
-        surfaceName: z.string().optional(),
-      },
-      supportedActions: ["feature_line_to_grading"],
-      resolveAction: (rawArgs) => ({
-        action: "feature_line_to_grading",
-        args: {
-          action: "feature_line_to_grading",
-          featureLineName: rawArgs.featureLineName,
-          groupName: rawArgs.groupName,
-          groupDescription: rawArgs.groupDescription,
-          createGroup: rawArgs.createGroup,
-          useProjection: rawArgs.useProjection,
-          criteriaName: rawArgs.criteriaName,
-          side: rawArgs.side,
-          surfaceName: rawArgs.surfaceName,
-        },
-      }),
-    },
+    // feature_line_to_grading has no alias (and isn't in the canonical tool): it is unsupported for now.
     {
       toolName: "civil3d_workflow_pipe_network_design",
       displayName: "Civil 3D Workflow Pipe Network Design",

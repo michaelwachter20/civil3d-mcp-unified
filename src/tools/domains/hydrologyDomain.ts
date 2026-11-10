@@ -10,8 +10,9 @@
  * The surface-sampling results are approximations; their response schemas below are checked on every answer.
  *
  * Approval (approvalPolicy.ts): almost everything is a read. set_catchment_properties and copy_catchment_to_group
- * change the drawing, export_stm (export) and import_stm (import) open Civil 3D's dialogs; those four need an
- * approvalToken. The three workflows only calculate and need none.
+ * change the drawing, export_stm (export), import_stm (import) and open_storm_sanitary_analysis (edit: the dialog can
+ * resize pipes) open Civil 3D's dialogs; those five need an approvalToken. The three workflows only calculate and
+ * need none.
  */
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
@@ -216,7 +217,7 @@ const canonicalHydrologyInputShape = {
   findLowPointSampleSpacing: z.number().optional(),
   catchmentSampleSpacing: z.number().optional(),
   runoffAreaUnits: AreaUnitsSchema.optional(),
-  allowableOutflow: z.number().optional(),
+  allowableOutflow: z.number().optional().describe("In the drawing's flow units: cfs in a drawing in feet, m³/s in a metric one"),
   stormDuration: z.number().optional(),
   detentionMethod: DetentionMethodSchema.optional(),
   sideSlope: z.number().optional(),
@@ -369,9 +370,17 @@ const ImportStmArgsSchema = z.object({
   action: z.literal("import_stm"),
 });
 
+/**
+ * The analysis dialog (AnalyzeGravityNetwork) works on the drawing's gravity networks and takes no file, so a
+ * `filePath` is refused rather than silently ignored.
+ */
 const OpenStormSanitaryAnalysisArgsSchema = z.object({
   action: z.literal("open_storm_sanitary_analysis"),
   filePath: z.string().optional(),
+}).refine((value) => value.filePath === undefined, {
+  message: "open_storm_sanitary_analysis takes no file: the analysis dialog works on the drawing's gravity networks. " +
+    "Leave out filePath (to bring in an .stm file, use import_stm).",
+  path: ["filePath"],
 });
 
 const WatershedRunoffWorkflowArgsSchema = z.object({
@@ -762,13 +771,14 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("importStm", {}),
       ),
     },
-    // Opens Storm and Sanitary Analysis. The schema accepts `filePath`, but execute sends no arguments, so it is
-    // ignored. No mutating capability, so no approval.
+    // Opens Storm and Sanitary Analysis (AnalyzeGravityNetwork) and answers when the user closes it. It takes no file
+    // (a filePath is refused). The dialog can resize pipes and change their results in the drawing (one undo step), so
+    // it is declared an edit and, like export_stm / import_stm, needs approval.
     open_storm_sanitary_analysis: {
       action: "open_storm_sanitary_analysis",
       inputSchema: OpenStormSanitaryAnalysisArgsSchema,
       responseSchema: GenericHydrologyResponseSchema,
-      capabilities: ["query", "inspect"],
+      capabilities: ["inspect", "edit"],
       requiresActiveDrawing: true,
       safeForRetry: false,
       pluginMethods: ["openStormSanitaryAnalysis"],
@@ -998,7 +1008,7 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         runoffCoefficient: z.number().min(0).max(1),
         rainfallIntensity: z.number().positive(),
         intensityUnits: IntensityUnitsSchema,
-        allowableOutflow: z.number().positive(),
+        allowableOutflow: z.number().positive().describe("In the drawing's flow units: cfs in a drawing in feet, m³/s in a metric one"),
         stormDuration: z.number().positive().optional(),
         detentionMethod: DetentionMethodSchema.optional(),
         sideSlope: z.number().positive().optional(),

@@ -33,7 +33,7 @@ const canonicalQcInputShape = {
     "generate_report",
   ]),
   name: z.string().optional(),
-  designSpeed: z.number().optional(),
+  designSpeed: z.number().optional().describe("check_alignment: mph in a drawing in feet, km/h otherwise"),
   checkTangents: z.boolean().optional(),
   checkCurves: z.boolean().optional(),
   checkSpirals: z.boolean().optional(),
@@ -59,8 +59,8 @@ const canonicalQcInputShape = {
 };
 
 /**
- * `check_alignment`: zero-length or invalid entities, and with `designSpeed` curves under a rough minimum radius
- * (V squared / 15: a sanity check, not a design check).
+ * `check_alignment`: zero-length or invalid entities, and with `designSpeed` (mph in a drawing in feet, km/h
+ * otherwise) curves under a rough minimum radius (a sanity check, not a design check). Findings carry `speedUnit`.
  */
 const QcAlignmentArgsSchema = z.object({
   action: z.literal("check_alignment"),
@@ -268,7 +268,7 @@ export const QC_DOMAIN_DEFINITION: DomainToolDefinition = {
       description: "Runs QC checks on a Civil 3D alignment.",
       inputShape: {
         name: z.string(),
-        designSpeed: z.number().positive().optional(),
+        designSpeed: z.number().positive().optional().describe("mph in a drawing in feet, km/h otherwise"),
         checkTangents: z.boolean().optional(),
         checkCurves: z.boolean().optional(),
         checkSpirals: z.boolean().optional(),

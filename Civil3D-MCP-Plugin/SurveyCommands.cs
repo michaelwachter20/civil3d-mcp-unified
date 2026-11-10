@@ -2,11 +2,15 @@
 // Methods (CommandDispatcher.cs): listSurveyDatabases, createSurveyDatabase, listSurveyNetworks, createSurveyNetwork,
 // listSurveyPoints, addSurveyPoint, addSurveySetup, listSurveyObservations, adjustSurveyNetwork, listSurveyFigures,
 // getSurveyFigure, createSurveyFigure, addSurveyToDrawing, importSurveyLandXml. Everything goes through SurveyCom
-// (late-bound COM). Every call runs through CivilExecution.WithDocumentLockAsync (host gate, command context, document
-// lock, no transaction: COM opens objects itself), and COM errors become CIVIL3D.API_ERROR. Survey databases are files
-// in the survey working folder, so changes to them are not drawing changes and Undo can't take them back; only
-// addSurveyToDrawing changes the drawing (one undo mark). adjustSurveyNetwork and importSurveyLandXml always refuse
-// (the COM API has no call for them). Survey data is the user's: never move or edit points unless asked.
+// (late-bound COM), and COM errors become CIVIL3D.API_ERROR. The lists and getSurveyFigure only read (databases opened
+// read-only) and run on the read path (CivilExecution.OnActiveDocumentAsync: host gate, main thread, no lock, no
+// command context, no transaction, no undo step); the calls that change something run through
+// CivilExecution.WithDocumentLockAsync (host gate, command context, document lock, no transaction: COM opens objects
+// itself). Survey databases are files in the survey working folder, so changes to them are not drawing changes and
+// Undo can't take them back; only addSurveyToDrawing changes the drawing (one undo mark). adjustSurveyNetwork and
+// importSurveyLandXml always refuse (checked against Civil 3D 2027's survey COM interop: it has the adjustment settings
+// but no call that runs an adjustment or imports a LandXML file). Survey data is the user's: never move or edit points
+// unless asked.
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -83,7 +87,7 @@ public static class SurveyCommands
   /// Opens each database read-only; changes nothing.</summary>
   public static Task<object?> ListSurveyDatabasesAsync()
   {
-    return OnCom(() =>
+    return OnComRead(() =>
     {
       dynamic projects = SurveyCom.Document().Projects;
       var databases = new List<object?>();
@@ -187,7 +191,7 @@ public static class SurveyCommands
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
 
-    return OnCom(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
+    return OnComRead(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
     {
       dynamic drawing = SurveyCom.Document().Database;
       var networks = new List<object?>();
@@ -245,7 +249,7 @@ public static class SurveyCommands
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
     var limit = PluginRuntime.GetOptionalInt(parameters, "limit") ?? 500;
 
-    return OnCom(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
+    return OnComRead(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
     {
       dynamic drawing = SurveyCom.Document().Database;
       var numbers = SurveyCom.Numbers((object?)project.GetPointNumbers());
@@ -429,7 +433,7 @@ public static class SurveyCommands
     var networkName = PluginRuntime.GetOptionalString(parameters, "networkName");
     var observationType = PluginRuntime.GetOptionalString(parameters, "observationType") ?? "all";
 
-    return OnCom(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
+    return OnComRead(() => SurveyCom.WithDatabase<object?>(databaseName, false, project =>
     {
       var units = (Units)Units.Of(project);
       var rows = new List<object?>();
@@ -536,7 +540,7 @@ public static class SurveyCommands
   {
     var databaseName = PluginRuntime.GetOptionalString(parameters, "databaseName");
 
-    return OnCom(() =>
+    return OnComRead(() =>
     {
       var names = new List<string>();
       foreach (var project in SurveyCom.Items(SurveyCom.Document().Projects))
@@ -576,7 +580,7 @@ public static class SurveyCommands
     var name = PluginRuntime.GetRequiredString(parameters, "name");
     var databaseName = PluginRuntime.GetOptionalString(parameters, "databaseName");
 
-    return OnCom(() =>
+    return OnComRead(() =>
     {
       var names = new List<string>();
       foreach (var project in SurveyCom.Items(SurveyCom.Document().Projects))
@@ -771,30 +775,42 @@ public static class SurveyCommands
     });
   }
 
-  /// <summary>Survey calls on the document's context, with what COM raises turned into an answer the AI can read.
-  /// Runs through CivilExecution.WithDocumentLockAsync (host gate, command context, lock, no transaction); COM and
-  /// late-binding errors become CIVIL3D.API_ERROR; COM objects are released after every call.</summary>
+  /// <summary>Survey calls that change something (a survey database, or the drawing for addSurveyToDrawing), with what
+  /// COM raises turned into an answer the AI can read. Runs through CivilExecution.WithDocumentLockAsync (host gate,
+  /// command context, lock, no transaction); see <see cref="RunCom"/> for the errors.</summary>
   private static Task<object?> OnCom(Func<object?> action)
   {
-    return CivilExecution.WithDocumentLockAsync<object?>((_, _) =>
+    return CivilExecution.WithDocumentLockAsync<object?>((_, _) => RunCom(action));
+  }
+
+  /// <summary>Survey calls that only read (lists and gets: databases opened read-only, nothing saved). Runs through
+  /// CivilExecution.OnActiveDocumentAsync, the read path (host gate, main thread, the verified drawing) with no lock,
+  /// no command context and no transaction, since COM opens what it reads itself: no undo step, as for any read.</summary>
+  private static Task<object?> OnComRead(Func<object?> action)
+  {
+    return CivilExecution.OnActiveDocumentAsync<object?>(_ => RunCom(action));
+  }
+
+  /// <summary>Runs a survey COM call: COM and late-binding errors become CIVIL3D.API_ERROR; COM objects are released
+  /// after every call.</summary>
+  private static object? RunCom(Func<object?> action)
+  {
+    try
     {
-      try
-      {
-        return action();
-      }
-      catch (COMException exception)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Civil 3D's survey interface refused: {exception.Message}");
-      }
-      catch (RuntimeBinderException exception)
-      {
-        throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Civil 3D's survey interface has no such member: {exception.Message}");
-      }
-      finally
-      {
-        SurveyCom.ReleaseObjects();
-      }
-    });
+      return action();
+    }
+    catch (COMException exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Civil 3D's survey interface refused: {exception.Message}");
+    }
+    catch (RuntimeBinderException exception)
+    {
+      throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", $"Civil 3D's survey interface has no such member: {exception.Message}");
+    }
+    finally
+    {
+      SurveyCom.ReleaseObjects();
+    }
   }
 
   /// <summary>The name for a COM enum value, or the number when it has none.</summary>

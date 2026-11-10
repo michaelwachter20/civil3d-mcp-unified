@@ -166,14 +166,15 @@ public static class CogoCommands
   }
 
   // -------------------------------------------------------------------------
-  // cogoCurveSolve  -- solve horizontal curve from two of: radius/delta/length/tangent/chord
+  // cogoCurveSolve  -- solve horizontal curve from any two of: radius/delta/length/tangent/chord (CurveMath)
   // -------------------------------------------------------------------------
 
   /// <summary>
   /// cogoCurveSolve: a circular curve's radius, delta, length, tangent, chord, external, middle ordinate and degree
   /// of curve (arc definition) from optional <c>radius</c>, <c>deltaDegrees</c>, <c>length</c>, <c>tangent</c>,
-  /// <c>chord</c>. Only these pairs are solved: radius with any one other, or length with tangent (Newton
-  /// iteration). Any other input is CIVIL3D.INVALID_INPUT. Doesn't touch the drawing.
+  /// <c>chord</c>: exactly two of them, any pair (CurveMath.Solve: closed form, or bisection for length with tangent
+  /// and length with chord). Not exactly two, a value that isn't positive, or a pair that can't make a curve is
+  /// CIVIL3D.INVALID_INPUT saying why; a solve that doesn't converge is CIVIL3D.API_ERROR. Doesn't touch the drawing.
   /// </summary>
   public static Task<object?> CogoCurveSolveAsync(JsonObject? parameters)
   {
@@ -183,42 +184,7 @@ public static class CogoCommands
     var tangent = PluginRuntime.GetOptionalDouble(parameters, "tangent");
     var chord = PluginRuntime.GetOptionalDouble(parameters, "chord");
 
-    // Need at least two elements to solve
-    double R, delta;
-
-    if (radius.HasValue && deltaDegreesInput.HasValue)
-    {
-      R = radius.Value;
-      delta = deltaDegreesInput.Value * Math.PI / 180.0;
-    }
-    else if (radius.HasValue && length.HasValue)
-    {
-      R = radius.Value;
-      delta = length.Value / R;
-    }
-    else if (radius.HasValue && tangent.HasValue)
-    {
-      R = radius.Value;
-      delta = 2 * Math.Atan(tangent.Value / R);
-    }
-    else if (radius.HasValue && chord.HasValue)
-    {
-      R = radius.Value;
-      delta = 2 * Math.Asin(chord.Value / (2 * R));
-    }
-    else if (length.HasValue && tangent.HasValue)
-    {
-      // Iterative solve: L/2 = T => not closed form; approximate
-      // T = R*tan(d/2), L = R*d => R = L/d, T = (L/d)*tan(d/2)
-      // Solve numerically via Newton
-      delta = SolveDeltaFromLengthAndTangent(length.Value, tangent.Value);
-      R = length.Value / delta;
-    }
-    else
-    {
-      throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT",
-        "cogoCurveSolve requires at least two of: radius, deltaDegrees, length, tangent, chord.");
-    }
+    var (R, delta) = CurveMath.Solve(radius, deltaDegreesInput, length, tangent, chord);
 
     var L = R * delta;
     var T = R * Math.Tan(delta / 2);
@@ -287,28 +253,5 @@ public static class CogoCommands
     var m = (int)mFrac;
     var s = (mFrac - m) * 60;
     return $"{d:D3}°{m:D2}'{s:00.0}\"";
-  }
-
-  /// <summary>
-  /// The central angle (radians) for arc length <paramref name="L"/> and tangent <paramref name="T"/>, by Newton's
-  /// method on T = (L/d)·tan(d/2). Stops after <paramref name="maxIter"/> steps or if a step leaves (0, 2π], returning
-  /// the last estimate without reporting non-convergence.
-  /// </summary>
-  private static double SolveDeltaFromLengthAndTangent(double L, double T, int maxIter = 50)
-  {
-    // T = R*tan(d/2) and L = R*d => R = L/d
-    // So T = (L/d)*tan(d/2). Solve for d.
-    var delta = L / (L / 2); // initial guess: d ~ 1 radian
-    for (var i = 0; i < maxIter; i++)
-    {
-      var f = (L / delta) * Math.Tan(delta / 2) - T;
-      var fPrime = -(L / (delta * delta)) * Math.Tan(delta / 2) + (L / delta) * 0.5 / (Math.Cos(delta / 2) * Math.Cos(delta / 2));
-      if (Math.Abs(fPrime) < 1e-12) break;
-      var next = delta - f / fPrime;
-      if (next <= 0 || next > 2 * Math.PI) break;
-      if (Math.Abs(next - delta) < 1e-9) { delta = next; break; }
-      delta = next;
-    }
-    return delta;
   }
 }

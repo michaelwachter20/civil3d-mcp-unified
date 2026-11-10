@@ -1,9 +1,10 @@
 // Guards repo rule 1 for everything git tracks under skills/ (skills and lessons.seed.jsonl): runs the same job-data check
 // as generalKnowledge.ts against the job names found in this PC's shared projects folder (read only; none on a build
-// server). Needs git on PATH (it asks git which files are tracked).
+// server). It asks git which files are tracked: git on PATH, else the copy GitHub Desktop bundles (as
+// scripts/publish-release.mjs finds it). Without git it is skipped with a message, except on CI (CI set), where it fails.
 
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { jobDataProblems, jobNames } from "../src/tools/generalKnowledge.js";
@@ -17,9 +18,25 @@ import { sharedRoot } from "../src/tools/knowledgeBase.js";
  */
 const repository = path.resolve(import.meta.dirname, "..");
 
+/** git: PATH first, then the newest copy bundled with GitHub Desktop; undefined when there is none. */
+function findGit(): string | undefined {
+  if (!spawnSync("git", ["--version"]).error) return "git";
+  const desktop = path.join(process.env.LOCALAPPDATA ?? "", "GitHubDesktop");
+  if (!existsSync(desktop)) return undefined;
+  for (const app of readdirSync(desktop).filter((name) => name.startsWith("app-")).sort().reverse()) {
+    const candidate = path.join(desktop, app, "resources", "app", "git", "cmd", "git.exe");
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+const git = findGit();
+if (!git && process.env.CI) throw new Error("knowledge_audit needs git, and none was found on this CI runner.");
+if (!git) console.warn("knowledge_audit skipped: git wasn't found (not on PATH, no GitHub Desktop copy). Install Git to run it.");
+
 describe("shipped know-how is general", () => {
-  it("names no job, path, profile folder or drawing file", () => {
-    const tracked = execFileSync("git", ["ls-files", "-z", "skills"], { cwd: repository, encoding: "utf8" }).split("\0").filter(Boolean);
+  it.skipIf(!git)("names no job, path, profile folder or drawing file", () => {
+    const tracked = execFileSync(git!, ["ls-files", "-z", "skills"], { cwd: repository, encoding: "utf8" }).split("\0").filter(Boolean);
     expect(tracked.length).toBeGreaterThan(0);
     const names = jobNames(path.join(sharedRoot(), "projects"));
     const hits = tracked.flatMap((file) =>

@@ -201,8 +201,11 @@ function extractSurfacePair(request: string) {
   };
 }
 
-/** Whether a field counts as given: non-blank string, finite number, non-empty array, or any other non-null value. */
-function hasRequiredValue(value: unknown): boolean {
+/**
+ * Whether a field counts as given: non-blank string, finite number, non-empty array, or any other non-null value.
+ * The one rule for the whole orchestrator: the router, WorkflowPlanner and civil3d_orchestrate.ts all use it.
+ */
+export function hasRequiredValue(value: unknown): boolean {
   if (typeof value === "string") {
     return value.trim().length > 0;
   }

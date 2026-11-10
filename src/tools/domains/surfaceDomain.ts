@@ -118,6 +118,9 @@ const SurfaceStatisticsResultSchema = z.object({
   area3d: z.number(),
   numberOfPoints: z.number(),
   numberOfTriangles: z.number(),
+  // Set by the plugin for a surface with no data: the statistics are then zeros, and `note` says so.
+  isEmpty: z.boolean().optional(),
+  note: z.string().optional(),
   units: z.object({
     horizontal: z.string(),
     vertical: z.string(),
@@ -947,8 +950,15 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
         );
 
         const elevations = sampledElevations.samples.map((sample) => sample.elevation);
-        const startElevation = elevations[0] ?? 0;
-        const endElevation = elevations[elevations.length - 1] ?? 0;
+        // Math.min/max of nothing is +-Infinity, which would come back as an elevation; refuse instead.
+        if (elevations.length === 0) {
+          throw Object.assign(new Error(
+            `No elevations could be sampled on surface '${args.name}' along the flow path from (${args.x}, ${args.y}). ` +
+            "Check that the start point lies inside the surface, then try again.",
+          ), { code: "CIVIL3D.INVALID_INPUT" });
+        }
+        const startElevation = elevations[0];
+        const endElevation = elevations[elevations.length - 1];
 
         return {
           surface,
@@ -1034,10 +1044,11 @@ export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
       toolName: "civil3d_surface_volume_calculate",
       displayName: "Civil 3D Surface Volume Calculate",
       description: "Calculate cut/fill volumes between two Civil 3D surfaces.",
+      // Only the methods volume_calculate accepts (the canonical tool's wider enum also serves sample_elevations).
       inputShape: {
         baseSurface: z.string(),
         comparisonSurface: z.string(),
-        method: z.enum(["tin_volume", "average_end_area", "prismoidal", "grid", "points", "transect"]).optional(),
+        method: z.enum(["tin_volume", "average_end_area", "prismoidal"]).optional(),
       },
       supportedActions: ["volume_calculate"],
       resolveAction: (rawArgs) => ({
