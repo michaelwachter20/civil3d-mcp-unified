@@ -1,3 +1,9 @@
+// Point domain: `civil3d_point` and its aliases, listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Each action
+// is one call to PointCommands.cs or PointGroupCommands.cs. Safety: COGO points are survey data, so every write here
+// (create, import, import_file, delete, group_*, transform) needs an approvalToken (approvalPolicy.ts), create and
+// typed-in import are also confirmed by the user inside Civil 3D, and transform refuses to move every point unless
+// allPoints: true is given (the one check done in Node). Export also needs approval (export capability) although it
+// only returns text. Details per schema and action are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -230,6 +236,12 @@ const PointTransformArgsSchema = z.object({
  */
 export const POINT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "point",
+  // Action -> plugin method. Read-only: list (listCogoPoints, paged, 500 by default), get (getCogoPoint), list_groups
+  // (listPointGroups), list_formats (listPointFileFormats). Writes, each one undo step in the plugin and each needing
+  // approval: create (createCogoPoints), import (importCogoPoints), import_file (importPointFile), delete
+  // (deleteCogoPoints), group_create / group_update / group_delete (createPointGroup / updatePointGroup /
+  // deletePointGroup; deleting a group keeps its points), transform (transformCogoPoints). export (exportCogoPoints)
+  // reads only but is approval-gated by its export capability.
   actions: {
     list: {
       action: "list",

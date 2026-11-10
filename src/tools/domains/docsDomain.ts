@@ -1,6 +1,3 @@
-import { z } from "zod";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The docs domain: `civil3d_docs` (two actions), its alias `list_tool_capabilities`, and `civil3d_orchestrate`, which
  * toolManifest.ts lists to MCP clients even in compact mode. Neither action calls the plugin from here:
@@ -12,6 +9,8 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * Both modules are imported lazily inside `execute` because they import the tool manifest, which imports this file;
  * a static import would be a cycle.
  */
+import { z } from "zod";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 /** The catalog answer: every domain name, and the catalog entries left after the domain and status filters. */
 const ToolCapabilityListResponseSchema = z.object({

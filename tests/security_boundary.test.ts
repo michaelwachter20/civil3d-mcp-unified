@@ -1,3 +1,7 @@
+// Repo-boundary test (CLAUDE.md rule 5): plugin file writes go through FileBoundary.cs, FileBoundary canonicalizes
+// paths and writes by atomic move, and JSON-RPC errors keep their domain code in error.data.code. Reads the plugin
+// source as text; no Civil 3D. The behaviour itself is run by tests/FileBoundaryHarness (npm run test:p2-boundaries).
+
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";

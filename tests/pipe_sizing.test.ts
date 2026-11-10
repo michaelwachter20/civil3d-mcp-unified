@@ -1,3 +1,8 @@
+// Guards pipe sizing in the pipe domain (src/tools/domains/pipeDomain.ts): the catalog size is read in the drawing's
+// units, a pipe already on the right part is left alone, a swap to the bigger part sends no separate diameter, and
+// nothing changes without applyChanges or in a drawing whose units are not feet or meters.
+// ConnectionManager is mocked; no plugin or Civil 3D.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { sendCommandMock } = vi.hoisted(() => ({
@@ -26,6 +31,7 @@ function network(units: string) {
   };
 }
 
+/** Runs the size action against the fake plugin and returns what was sent and answered. */
 async function sizeNetwork(units: string, designFlow: number, applyChanges: boolean) {
   sendCommandMock.mockImplementation(async (method: string) => {
     if (method === "getPipeNetwork") return network(units);

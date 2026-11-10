@@ -1,3 +1,11 @@
+// Geometry domain: the `civil3d_geometry` tool plus aliases for each action (`civil3d_cogo_*`,
+// `create_line_segment`, `acad_create_polyline`, `acad_create_3dpolyline`, `acad_create_text`, `acad_create_mtext`).
+// Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Every action is one plugin call; no logic in Node.
+// - cogo_* -> CogoCommands.cs (cogoInverse, cogoDirectionDistance, cogoTraverse, cogoCurveSolve): pure
+//   calculations, read-only, no approval.
+// - create_* -> AcadCommands.cs (createLineSegment, createPolyline, create3dPolyline, createText, createMText): add
+//   AutoCAD entities to model space in one undo step. They are "create" and not safe to retry, so approvalPolicy.ts
+//   asks for an approvalToken.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -20,6 +28,7 @@ const CreateMTextArgs = z.object({ action: z.literal("create_mtext"), text: z.st
 export const GEOMETRY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "geometry",
   actions: {
+    // cogo_*: read-only calculations (no approval). create_*: add one entity to model space (approval needed).
     cogo_inverse: { action: "cogo_inverse", inputSchema: CogoInverseArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["cogoInverse"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("cogoInverse", { x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2 })) },
     cogo_direction_distance: { action: "cogo_direction_distance", inputSchema: CogoDirectionDistanceArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["cogoDirectionDistance"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("cogoDirectionDistance", { fromX: args.fromX, fromY: args.fromY, fromZ: args.fromZ ?? 0, bearingDegrees: args.bearingDegrees, distance: args.distance, slope: args.slope ?? null })) },
     cogo_traverse: { action: "cogo_traverse", inputSchema: CogoTraverseArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["cogoTraverse"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("cogoTraverse", { startX: args.startX, startY: args.startY, startZ: args.startZ ?? 0, courses: args.courses, isClosed: args.isClosed ?? false })) },

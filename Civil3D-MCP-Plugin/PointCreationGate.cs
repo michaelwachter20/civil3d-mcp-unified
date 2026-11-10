@@ -1,3 +1,13 @@
+// The rule that COGO points are made only when the user asks, and the window that lets the user say so.
+// Points from a file come in through Civil 3D's own importer (importPointFile) with no question. Every other way the
+// AI can make points first calls RequireAsync, which opens a modal "Allow / Don't allow" window in Civil 3D:
+// PointCommands.createCogoPoints and the typed-in importCogoPoints (civil3d_point create / import, pointDomain.ts),
+// ScriptCommands for civil3d_execute and saved scripts whose code adds or deletes points (PointCreationRules decides)
+// and for acad_command with a point-making command (CREATEPOINTS ...). "Don't allow" is the default button, and no
+// answer within 50 s counts as no; then the call fails with CIVIL3D.USER_DECLINED and nothing is changed.
+// This is on top of the TS approval token: the AI can request a token itself, but only the user can click Allow.
+// CIVIL3D_POINT_CREATION=ask (default) | off (always refuse) | allow (no window; unattended tests only).
+// The window is shown on the main thread (CivilExecution.OnMainThreadAsync); no drawing access here.
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
@@ -21,6 +31,7 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class PointCreationGate
 {
+  /// <summary>Seconds the window waits before counting as "Don't allow"; below the common 60 s client limit.</summary>
   public const int TimeoutSeconds = 50;
 
   /// <summary>True when <paramref name="code"/> (a script) makes COGO points (PointCreationRules).</summary>
@@ -68,8 +79,10 @@ public static class PointCreationGate
   /// Asks the user in Civil 3D whether the AI may make points (<paramref name="what"/> says what, e.g. "3 COGO points,
   /// the first at E 2000.50, N 5000.25"). <paramref name="details"/>, when given, goes in a collapsed "Details" section
   /// under it (the values the AI passed, the code it runs, the points it types in), so the user can look before
-  /// answering. Returns when allowed; throws CIVIL3D.USER_DECLINED when the user says no or doesn't answer in time, and
-  /// CIVIL3D.POINT_CREATION_OFF when the policy is off.
+  /// answering. <paramref name="action"/> ("create", "delete", "create and delete") goes in the window's title and
+  /// question. Returns when allowed (or at once when the policy is allow); throws CIVIL3D.USER_DECLINED when the user
+  /// says no or doesn't answer in time, and CIVIL3D.POINT_CREATION_OFF when the policy is off. Callers ask before they
+  /// queue their write, so nothing has been changed when it throws.
   /// </summary>
   public static async Task RequireAsync(string what, string? details = null, string action = "create")
   {

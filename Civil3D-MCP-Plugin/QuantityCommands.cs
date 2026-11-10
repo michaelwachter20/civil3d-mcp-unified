@@ -1,3 +1,13 @@
+// Quantity takeoff on the open drawing: surface-to-surface volumes, gravity and pressure pipe lengths, parcel areas,
+// alignment lengths, point counts per point group, and a CSV export of several of these.
+// JSON-RPC methods (CommandDispatcher.cs): qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths,
+// qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv and qtyEarthworkSummary serve
+// civil3d_quantity_takeoff (src/tools/domains/quantityTakeoffDomain.ts). qtyCorridorVolumes and qtyMaterialListGet are
+// dispatched but no TS domain calls them; they always throw CIVIL3D.API_ERROR.
+// Nothing here changes the drawing. Reads go through CivilExecution.ReadAsync (main thread, no undo step). The two
+// volume methods use MeasureAsync: a temporary TinVolumeSurface needs a document lock, the transaction is never
+// committed, and the lock leaves one blank undo step. qtyExportToCsv writes its .csv only through FileBoundary.
+// A value the API can't give throws (GetRequiredEngineeringDouble) rather than being reported as 0.
 using System.Collections;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -19,6 +29,11 @@ public static class QuantityCommands
   // qtyCorridorVolumes
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Not supported: corridor material quantities live in a sample-line group's QTO material lists, not on the
+  /// corridor. Reads <c>name</c> (required, CIVIL3D.INVALID_INPUT without it) and then always throws CIVIL3D.API_ERROR,
+  /// so no made-up zero quantities are returned. No TS domain calls it.
+  /// </summary>
   public static Task<object?> QtyCorridorVolumesAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "name");
@@ -31,6 +46,14 @@ public static class QuantityCommands
   // qtySurfaceVolume
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Exact cut, fill and net volume between <c>baseSurface</c> and <c>comparisonSurface</c> (both required), from a
+  /// temporary TinVolumeSurface. <c>corridorName</c> is optional, echoed back and not used. Doesn't change the drawing
+  /// (MeasureAsync: the temporary surface is never committed). Returns the two names, <c>cutVolume</c>,
+  /// <c>fillVolume</c>, <c>netVolume</c> (unadjusted), <c>net2dArea</c> (always null), <c>units</c> and a <c>note</c>.
+  /// Throws CIVIL3D.INVALID_INPUT for a missing name or for surfaces that are the same, empty or don't overlap, and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
+  /// </summary>
   public static Task<object?> QtySurfaceVolumeAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -42,6 +65,7 @@ public static class QuantityCommands
       var baseSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurfaceName, OpenMode.ForRead);
       var compSurface = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, comparisonSurfaceName, OpenMode.ForRead);
 
+      // Before Create: Civil 3D answers a same, empty or non-overlapping pair only with "Fail to create a surface".
       CivilObjectUtils.RequireDifferentSurfaces(baseSurface, compSurface);
       var temporaryName = $"MCP_TMP_VOLUME_{Guid.NewGuid():N}";
       var volumeSurfaceId = TinVolumeSurface.Create(temporaryName, baseSurface.ObjectId, compSurface.ObjectId);
@@ -68,6 +92,13 @@ public static class QuantityCommands
   // qtyPipeNetworkLengths
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Total 3D pipe length of gravity network <c>name</c> (required), with a breakdown by size, material or both
+  /// (<c>groupBySize</c>, <c>groupByMaterial</c>, both off by default; the key is "All" without grouping). Read-only.
+  /// Returns <c>networkName</c>, <c>totalLength</c>, <c>pipeCount</c>, <c>breakdown</c> (key, length, count, longest
+  /// first) and the drawing's linear <c>units</c>. Throws CIVIL3D.INVALID_INPUT without <c>name</c> and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown network.
+  /// </summary>
   public static Task<object?> QtyPipeNetworkLengthsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -133,6 +164,12 @@ public static class QuantityCommands
   // qtyPressureNetworkLengths
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Total center-to-center length (3D, else 2D) of pressure network <c>name</c> (required), with the same optional
+  /// <c>groupBySize</c> / <c>groupByMaterial</c> breakdown and result shape as qtyPipeNetworkLengths. Read-only.
+  /// Throws CIVIL3D.INVALID_INPUT without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown network, and
+  /// CIVIL3D.API_ERROR when a pipe's length or diameter can't be read (the diameter is read even without grouping).
+  /// </summary>
   public static Task<object?> QtyPressureNetworkLengthsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -197,6 +234,12 @@ public static class QuantityCommands
   // qtyParcelAreas
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Area and perimeter of the parcels in every site, or only in <c>siteName</c>, and only those in
+  /// <c>parcelNames</c> (a string array) when given; both optional, matched case-insensitively. Read-only. Returns
+  /// <c>parcels</c> (name, area, perimeter, siteName), <c>totalArea</c>, <c>parcelCount</c> and <c>units</c>, which
+  /// is the drawing's linear unit name (areas are in its square). Throws no error codes of its own.
+  /// </summary>
   public static Task<object?> QtyParcelAreasAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetOptionalString(parameters, "siteName");
@@ -257,6 +300,12 @@ public static class QuantityCommands
   // qtyAlignmentLengths
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Lengths of every alignment, or only those in <c>names</c> (optional string array). <c>startStation</c> and
+  /// <c>endStation</c> (optional) are clamped to each alignment's own range, and the length reported is that station
+  /// difference. Read-only. Returns <c>alignments</c> (name, length, totalLength, startStation, endStation),
+  /// <c>totalLength</c> and <c>units</c>. Throws no error codes of its own.
+  /// </summary>
   public static Task<object?> QtyAlignmentLengthsAsync(JsonObject? parameters)
   {
     var namesNode = PluginRuntime.GetParameter(parameters, "names") as JsonArray;
@@ -309,6 +358,11 @@ public static class QuantityCommands
   // qtyPointCountByGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Number of points in every point group, or only those in <c>groupNames</c> (optional string array). Read-only.
+  /// Returns <c>groups</c> (name, count) and <c>totalPoints</c>, the drawing's COGO point count (not the sum of the
+  /// groups, which overlap). Throws no error codes of its own.
+  /// </summary>
   public static Task<object?> QtyPointCountByGroupAsync(JsonObject? parameters)
   {
     var groupNamesNode = PluginRuntime.GetParameter(parameters, "groupNames") as JsonArray;
@@ -367,6 +421,17 @@ public static class QuantityCommands
   // qtyExportToCsv
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Writes a quantities .csv to <c>outputPath</c> (required) through FileBoundary.WriteAllTextAtomic (inside the
+  /// export roots, no overwrite unless <c>overwrite</c>). Each section is its own header row and rows, then a blank
+  /// line: alignments (<c>includeAlignmentLengths</c>, or the older <c>includeAlignments</c>, on by default), surfaces
+  /// (<c>includeSurfaceVolumes</c> or <c>includeSurfaces</c>: elevation range and point count, not volumes),
+  /// <c>includePipeNetworks</c>, <c>includeParcelAreas</c> and <c>includePointGroups</c> (off by default).
+  /// <c>filterNames</c> (optional string array) keeps only objects, networks, parcels or groups with those names.
+  /// Doesn't change the drawing. Returns the canonical <c>outputPath</c>, <c>rowsWritten</c> and
+  /// <c>sectionsIncluded</c>. FileBoundary's codes pass through (CIVIL3D.PATH_NOT_ALLOWED, FILE_TYPE_NOT_ALLOWED,
+  /// CONFLICT, FILE_IO_ERROR); CIVIL3D.API_ERROR when a pipe's length, diameter or slope can't be read.
+  /// </summary>
   public static Task<object?> QtyExportToCsvAsync(JsonObject? parameters)
   {
     var outputPath = PluginRuntime.GetRequiredString(parameters, "outputPath");
@@ -501,6 +566,11 @@ public static class QuantityCommands
   // qtyMaterialListGet
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Not supported: QTO material lists belong to sample-line groups, and corridor baselines don't expose them. Reads
+  /// <c>corridorName</c> (required, CIVIL3D.INVALID_INPUT without it) and then always throws CIVIL3D.API_ERROR rather
+  /// than return an empty list. No TS domain calls it.
+  /// </summary>
   public static Task<object?> QtyMaterialListGetAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -513,6 +583,15 @@ public static class QuantityCommands
   // qtyEarthworkSummary
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Whole-surface earthwork between <c>baseSurface</c> and <c>designSurface</c> (both required), from a temporary
+  /// TinVolumeSurface as in qtySurfaceVolume (MeasureAsync, never committed, drawing unchanged). Giving
+  /// <c>alignmentName</c>, <c>startStation</c> or <c>endStation</c> throws CIVIL3D.API_ERROR before the drawing is
+  /// touched: station-by-station volumes need sample lines. Returns <c>cumulativeCut</c>, <c>cumulativeFill</c>,
+  /// <c>netEarthwork</c>, <c>stationCount</c> 0, an empty <c>stations</c> list, <c>volumeUnits</c> and a <c>note</c>.
+  /// Also throws CIVIL3D.INVALID_INPUT for a missing name or a same, empty or non-overlapping pair, and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
+  /// </summary>
   public static Task<object?> QtyEarthworkSummaryAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -550,6 +629,7 @@ public static class QuantityCommands
   // Private helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The gravity pipe network named <paramref name="name"/> (case-insensitive), opened for read, or null.</summary>
   private static AcDbObject? FindPipeNetworkByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -565,6 +645,7 @@ public static class QuantityCommands
     return null;
   }
 
+  /// <summary>The pressure network named <paramref name="name"/> (case-insensitive), opened for read, or null.</summary>
   private static AcDbObject? FindPressureNetworkByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -580,6 +661,7 @@ public static class QuantityCommands
     return null;
   }
 
+  /// <summary>Every gravity pipe network in the drawing, opened for read.</summary>
   private static IEnumerable<AcDbObject> EnumerateAllPipeNetworks(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction)
@@ -591,6 +673,11 @@ public static class QuantityCommands
     }
   }
 
+  /// <summary>
+  /// Child object ids of <paramref name="owner"/>, trying each member name both as a method and as a property, for
+  /// members named differently across releases. Null ids are skipped. Ids are not de-duplicated: a name that works as
+  /// both, or two names that reach the same list, would give an id more than once.
+  /// </summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(AcDbObject owner, params string[] memberNames)
   {
     foreach (var memberName in memberNames)
@@ -608,6 +695,7 @@ public static class QuantityCommands
     }
   }
 
+  /// <summary>The first of several property names that has a value, for properties named differently across releases.</summary>
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -618,6 +706,8 @@ public static class QuantityCommands
     return null;
   }
 
+  /// <summary>Like GetAnyDouble, but throws CIVIL3D.API_ERROR naming <paramref name="valueDescription"/> when no
+  /// property has a value, so a quantity is never silently 0.</summary>
   private static double GetRequiredEngineeringDouble(object? value, string valueDescription, params string[] propertyNames)
   {
     var result = GetAnyDouble(value, propertyNames);
@@ -627,6 +717,7 @@ public static class QuantityCommands
       $"Could not read {valueDescription} from the managed API. Zero was not substituted.");
   }
 
+  /// <summary>The first of several string properties that is not blank, or null.</summary>
   private static string? GetAnyString(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -637,6 +728,8 @@ public static class QuantityCommands
     return null;
   }
 
+  /// <summary>The surface elevation at (x, y), or null when Civil 3D throws (for example outside the surface).
+  /// Not called anywhere at present.</summary>
   private static double? InvokeSurfaceElevationSafe(CivilSurface surface, double x, double y)
   {
     try
@@ -651,6 +744,7 @@ public static class QuantityCommands
     }
   }
 
+  /// <summary>Quotes a CSV field that holds a comma, a double quote or a line feed, doubling any quotes inside.</summary>
   private static string EscapeCsv(string value)
   {
     if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))

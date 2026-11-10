@@ -1,3 +1,10 @@
+// RpcTcpServer.cs - the plugin end of the wire between the TypeScript MCP server (src/utils/SocketClient.ts) and
+// Civil 3D. PluginRuntime.StartServer creates it on C3DMCPSTART (or the ribbon toggle) with
+// PluginRuntime.HandleRawRequestAsync as the handler; that handler parses the JSON-RPC envelope and calls
+// CommandDispatcher, whose handlers queue their drawing work on the one serialized host gate (CivilExecution).
+// Rules it keeps: loopback 127.0.0.1 only and an exclusive port (one Civil 3D window at a time); exactly one JSON-RPC
+// request per TCP connection, read within 30 s, at most 1 MiB, strict UTF-8; a client that disconnects cancels its
+// request so queued work never starts. It never touches a drawing itself.
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -23,6 +30,10 @@ public sealed class RpcTcpServer
   private TcpListener? _listener;
   private Task? _acceptLoop;
 
+  /// <summary>Creates the listener without binding it; <see cref="Start"/> binds.</summary>
+  /// <param name="port">TCP port on 127.0.0.1 (8080 by default, set by PluginRuntime).</param>
+  /// <param name="handler">Takes the raw request text and a cancellation token, returns the serialized JSON-RPC
+  /// response (PluginRuntime.HandleRawRequestAsync).</param>
   public RpcTcpServer(int port, Func<string, CancellationToken, Task<string>> handler)
   {
     _port = port;
@@ -52,6 +63,9 @@ public sealed class RpcTcpServer
     }
   }
 
+  /// <summary>Accepts connections until stopped and hands each one to its own <see cref="ProcessClientAsync"/> task.
+  /// Requests are not serialized here: ordering and one-at-a-time drawing access come from the host gate
+  /// (CivilExecution) that every handler goes through.</summary>
   private async Task AcceptLoopAsync()
   {
     while (!_cts.IsCancellationRequested)

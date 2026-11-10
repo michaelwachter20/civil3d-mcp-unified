@@ -1,3 +1,7 @@
+// Response schemas shared by several domain files in src/tools/domains/ (imported as `responseSchema` of an action).
+// domainRuntime.ts validates each plugin answer against the action's responseSchema before returning it, so these stay
+// loose (`.passthrough()`) on purpose: a stricter schema would turn a harmless extra field from the plugin into a
+// failed call. No plugin calls and no side effects here.
 import { z } from "zod";
 
 /**

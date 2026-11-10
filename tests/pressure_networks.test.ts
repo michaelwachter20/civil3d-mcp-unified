@@ -1,3 +1,8 @@
+// Guards the intended input and response shapes (zod) of the pressure-network tool actions (networks, pipes, cover,
+// connect, validation).
+// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// Pure schema tests: no Civil 3D, no plugin.
+
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

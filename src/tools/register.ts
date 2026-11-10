@@ -1,12 +1,17 @@
+// Registration order for everything the MCP server offers, called once by src/index.ts at startup: the manifest
+// domains (toolManifest.ts, which also captures every handler for the HTTP bridge), the approval tools
+// (approvalTool.ts), civil3d_help (helpTool.ts), and the MCP resources (mcpResources.ts, plus the help resources).
+// Registering touches no drawing and needs no Civil 3D.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerApprovalTool } from "./approvalTool.js";
 import { registerManifestTools } from "./toolManifest.js";
 import { registerMcpResources } from "./mcpResources.js";
 import { registerHelpResources, registerHelpTool } from "./helpTool.js";
 
+/** Registers every tool and resource on `server`. */
 export async function registerTools(server: McpServer) {
-  // Manifest-driven domains: alignment, surface, profile, corridor, section, pipe, assembly, point, grading, parcel, survey, plan_production, project, standards, qc, hydrology, quantity_takeoff, sight_distance, detention, slope_analysis, cost_estimation, geometry, drawing, coordinate_system, job, plugin, docs.
-  // Add new migrated domains to toolManifest.ts, not here.
+  // Manifest-driven domains: every entry of MIGRATED_DOMAIN_DEFINITIONS (alignment, surface, ..., workflow, plugin,
+  // docs, scripting). Add new migrated domains to toolManifest.ts, not here.
   registerManifestTools(server);
   registerApprovalTool(server);
   registerHelpTool(server);

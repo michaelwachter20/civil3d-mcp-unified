@@ -1,3 +1,10 @@
+// Corridor assemblies: list, inspect, create, add stock subassemblies, edit or delete a subassembly.
+// JSON-RPC methods (CommandDispatcher): listAssemblies, getAssembly, createAssembly, createSubassembly, editAssembly.
+// Called by src/tools/domains/assemblyDomain.ts (civil3d_assembly).
+// listAssemblies/getAssembly use CivilExecution.ReadAsync; createAssembly, createSubassembly and editAssembly use
+// WriteAsync (one undo step; a thrown error leaves the transaction uncommitted, so nothing changes). Subassemblies
+// come from Civil 3D's stock catalog (ImportStockSubassembly); their parameters live in ParamsDouble/Long/String.
+// Late-bound property access for non-stock subassemblies goes through Civil3DCompatibility. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -17,6 +24,10 @@ public static class AssemblyCreationCommands
   private const int SideRight = 0;
   private const int SideLeft = 1;
 
+  /// <summary>
+  /// listAssemblies: every assembly (name, handle, subassembly count, type) with the corridors whose regions use it
+  /// (<c>usedByCorridors</c>). Read only; no parameters.
+  /// </summary>
   public static Task<object?> ListAssembliesAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -48,6 +59,10 @@ public static class AssemblyCreationCommands
     });
   }
 
+  /// <summary>
+  /// getAssembly: assembly <c>name</c> (required) with style, type, its subassemblies (name, handle, type, side,
+  /// parameters) and the corridors that use it. Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown assembly.
+  /// </summary>
   public static Task<object?> GetAssemblyAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -82,6 +97,12 @@ public static class AssemblyCreationCommands
     });
   }
 
+  /// <summary>
+  /// createAssembly: adds an empty assembly <c>name</c> at (<c>insertX</c>, <c>insertY</c>) of type
+  /// <c>assemblyType</c> (an AssemblyType enum name, case-insensitive), all required, with optional
+  /// <c>description</c>. Changes the drawing. CIVIL3D.INVALID_INPUT for an unknown assembly type (the message lists
+  /// the valid ones).
+  /// </summary>
   public static Task<object?> CreateAssemblyAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -114,6 +135,14 @@ public static class AssemblyCreationCommands
     });
   }
 
+  /// <summary>
+  /// createSubassembly: imports stock subassembly <c>subassemblyType</c> (e.g. BasicLane or Subassembly.BasicLane) on
+  /// <c>side</c> Left, Right or Both (one per side) and attaches it to assembly <c>assemblyName</c> (all required).
+  /// Optional <c>parameters</c> object sets its stock parameters (Width, Slope...). Each gets a unique generated
+  /// name. Changes the drawing. Throws CIVIL3D.INVALID_INPUT for a bad side or a parameter the subassembly doesn't
+  /// have (message lists its parameters), CIVIL3D.API_ERROR when it has no Side parameter, CIVIL3D.OBJECT_NOT_FOUND
+  /// for an unknown assembly.
+  /// </summary>
   public static Task<object?> CreateSubassemblyAsync(JsonObject? parameters)
   {
     var assemblyName = PluginRuntime.GetRequiredString(parameters, "assemblyName");
@@ -177,6 +206,12 @@ public static class AssemblyCreationCommands
     });
   }
 
+  /// <summary>
+  /// editAssembly on assembly <c>assemblyName</c> (required). Without <c>subassemblyName</c>: lists its subassemblies
+  /// (still run as a write, though nothing changes). With it: <c>delete</c> true erases that subassembly; otherwise the
+  /// <c>parameters</c> object sets its stock parameters or properties. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// assembly or subassembly, CIVIL3D.INVALID_INPUT when any parameter couldn't be written (nothing is committed).
+  /// </summary>
   public static Task<object?> EditAssemblyAsync(JsonObject? parameters)
   {
     var assemblyName = PluginRuntime.GetRequiredString(parameters, "assemblyName");
@@ -243,6 +278,7 @@ public static class AssemblyCreationCommands
     });
   }
 
+  /// <summary>A JSON object of parameter values as a case-insensitive dictionary: numbers as double, booleans, everything else as text.</summary>
   private static Dictionary<string, object?> ReadParameters(JsonObject? values)
   {
     var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -258,6 +294,7 @@ public static class AssemblyCreationCommands
     return result;
   }
 
+  /// <summary>The assembly named <paramref name="name"/> (case-insensitive). CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static Assembly FindAssemblyByName(
     CivilDocument civilDocument,
     Transaction transaction,
@@ -273,6 +310,7 @@ public static class AssemblyCreationCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Assembly '{name}' was not found in the drawing.");
   }
 
+  /// <summary>Every subassembly in the assembly's groups, without duplicates.</summary>
   private static List<ObjectId> GetSubassemblyIds(Assembly assembly)
   {
     return assembly.Groups
@@ -282,6 +320,10 @@ public static class AssemblyCreationCommands
       .ToList();
   }
 
+  /// <summary>
+  /// Writes each value as a stock parameter, else as a property (late-bound). Returns the keys that were written;
+  /// the caller compares them with what was asked.
+  /// </summary>
   private static List<string> ApplySubassemblyParameters(AcDbObject subassembly, IReadOnlyDictionary<string, object?> parameters)
   {
     var updated = new List<string>();
@@ -322,6 +364,7 @@ public static class AssemblyCreationCommands
     return false;
   }
 
+  /// <summary>All of a stock subassembly's parameters (double, long and string) by key.</summary>
   private static Dictionary<string, object?> ParameterValues(Subassembly subassembly)
   {
     var values = new Dictionary<string, object?>();
@@ -345,6 +388,10 @@ public static class AssemblyCreationCommands
       .ToList();
   }
 
+  /// <summary>
+  /// A subassembly as the answer shape. Stock ones report their Side parameter and Params lists; anything else falls
+  /// back to late-bound Side and readable scalar properties.
+  /// </summary>
   private static Dictionary<string, object?> ToSubassemblySummary(AcDbObject subassembly)
   {
     if (subassembly is Subassembly stock)

@@ -1,3 +1,13 @@
+// QC checks on the open drawing: alignments, profiles, corridors, gravity pipe networks, surfaces, styles and label
+// sets, and layer standards. Each check returns findings (severity, type, message) for the AI to summarize or act on.
+// JSON-RPC methods (CommandDispatcher.cs): qcCheckAlignment, qcCheckProfile, qcCheckCorridor, qcCheckPipeNetwork,
+// qcCheckSurface and qcReportGenerate serve civil3d_qc (src/tools/domains/qcDomain.ts); qcCheckLabels,
+// qcCheckDrawingStandards and qcFixDrawingStandards serve civil3d_standards (standardsDomain.ts).
+// Every check reads through CivilExecution.ReadAsync (main thread, no undo step). qcReportGenerate also writes a .txt
+// file, only through FileBoundary.WriteAllTextAtomic. qcFixDrawingStandards is the one drawing write: WriteAsync
+// (command context, document lock, one transaction, one undo step), with a dryRun preview.
+// Unexpected errors come back as CIVIL3D.QC_ERROR; a JsonRpcDispatchException thrown inside passes through as is.
+// Civil 3D properties are read late-bound through CivilObjectUtils helpers; this file does no reflection of its own.
 using System.Collections;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -37,6 +47,10 @@ public static class QcCommands
   /// parameters, and, with <c>designSpeed</c>, curves below a rough minimum radius of V squared / 15 (a simplified
   /// stand-in for the AASHTO formula, not a design check). <c>checkTangents</c>, <c>checkCurves</c> and
   /// <c>checkSpirals</c> (all on by default) select the checks.
+  /// <c>name</c> is required; <c>designSpeed</c> is optional (the message calls it km/h whatever the drawing units).
+  /// Read-only. Returns the alignment's name, length, start and end station, <c>findings</c> and
+  /// <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// alignment, and CIVIL3D.QC_ERROR for any other failure.
   /// </summary>
   public static Task<object?> QcCheckAlignmentAsync(JsonObject? parameters)
   {
@@ -211,13 +225,12 @@ public static class QcCommands
   // qcCheckProfile
   // -------------------------------------------------------------------------
 
-  /// <summary>
-  /// Checks profile <c>profileName</c> of alignment <c>alignmentName</c>: tangents and curve ends with a grade above
-  /// <c>maxGrade</c>, and vertical curves whose K value is below <c>minKValue</c>. Grades are compared as the API gives
-  /// them (a fraction, e.g. 0.06 for 6 %), so pass <c>maxGrade</c> the same way.
-  /// </summary>
+  /// <summary>One profile entity as qcCheckProfile needs it: tangent or curve, its station range, length and the grade
+  /// in and out (a tangent's single grade is both).</summary>
   private readonly record struct EntityGrades(bool Tangent, double Start, double End, double Length, double GradeIn, double GradeOut);
 
+  /// <summary>Reads the grades of a tangent or a symmetric, asymmetric or circular vertical curve. Any other entity type
+  /// reads as a curve with grades 0.</summary>
   private static EntityGrades ReadGrades(ProfileEntity entity)
   {
     var (tangent, gradeIn, gradeOut) = entity switch
@@ -231,6 +244,14 @@ public static class QcCommands
     return new EntityGrades(tangent, entity.StartStation, entity.EndStation, entity.Length, gradeIn, gradeOut);
   }
 
+  /// <summary>
+  /// Checks profile <c>profileName</c> of alignment <c>alignmentName</c>: tangents and curve ends with a grade above
+  /// <c>maxGrade</c>, and vertical curves whose K value is below <c>minKValue</c>. Grades are compared as the API gives
+  /// them (a fraction, e.g. 0.06 for 6 %), so pass <c>maxGrade</c> the same way.
+  /// <c>alignmentName</c> and <c>profileName</c> are required; both limits are optional and unchecked when left out.
+  /// Read-only. Returns the two names, <c>findings</c> and <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT for a
+  /// missing name, CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment or profile, CIVIL3D.QC_ERROR for anything else.
+  /// </summary>
   public static Task<object?> QcCheckProfileAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -318,7 +339,9 @@ public static class QcCommands
   // -------------------------------------------------------------------------
 
   /// <summary>Checks corridor <c>name</c>: whether it reports itself invalid (needs a rebuild), and each baseline
-  /// region for zero or inverted station ranges and a missing assembly.</summary>
+  /// region for zero or inverted station ranges and a missing assembly. <c>name</c> is required. Read-only. Returns
+  /// <c>corridorName</c>, <c>findings</c> and <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT without
+  /// <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor, CIVIL3D.QC_ERROR for anything else.</summary>
   public static Task<object?> QcCheckCorridorAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -430,6 +453,10 @@ public static class QcCommands
   /// Checks every pipe of gravity network <c>name</c> against the limits given: <c>minSlope</c> / <c>maxSlope</c>,
   /// <c>minCover</c>, <c>minVelocity</c> / <c>maxVelocity</c>. Cover and velocity are the values stored on the pipe;
   /// a pipe without a stored velocity reads as 0 and is not reported as too slow.
+  /// <c>name</c> is required; every limit is optional and unchecked when left out. With <c>minCover</c>, a pipe with no
+  /// reference surface gets a "pipe_cover_unknown" info finding instead of a cover check.
+  /// Read-only. Returns <c>networkName</c>, <c>findings</c> and <c>totalViolations</c>. Throws CIVIL3D.INVALID_INPUT
+  /// without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for an unknown network, CIVIL3D.QC_ERROR for anything else.
   /// </summary>
   public static Task<object?> QcCheckPipeNetworkAsync(JsonObject? parameters)
   {
@@ -573,6 +600,10 @@ public static class QcCommands
   /// <c>flatTriangleThreshold</c>), and every elevation near zero (a likely datum or units problem). The triangle count
   /// comes from a TIN surface's TIN properties, as in SurfaceCommands; a grid surface has none, so the no-triangles
   /// check doesn't apply to it.
+  /// <c>name</c> is required; <c>flatTriangleThreshold</c> defaults to 0.01. Read-only. Returns the surface name, point
+  /// and triangle counts, min and max elevation, <c>findings</c> and <c>totalViolations</c>; an empty surface returns a
+  /// single "surface_no_points" finding. Throws CIVIL3D.INVALID_INPUT without <c>name</c>, CIVIL3D.OBJECT_NOT_FOUND for
+  /// an unknown surface, CIVIL3D.QC_ERROR for anything else.
   /// </summary>
   public static Task<object?> QcCheckSurfaceAsync(JsonObject? parameters)
   {
@@ -709,7 +740,11 @@ public static class QcCommands
   // -------------------------------------------------------------------------
 
   /// <summary>Looks for alignments without a label set and alignments, surfaces and corridors without a style.
-  /// <c>objectType</c> limits the check to one kind of object.</summary>
+  /// <c>objectType</c> limits the check to one kind of object.
+  /// All parameters are optional: <c>objectType</c> ("alignment", "surface" or "corridor"; any other value matches
+  /// nothing), <c>checkMissing</c> (label sets, alignments only) and <c>checkStyleViolations</c> (styles), both on by
+  /// default. Read-only. Returns <c>objectType</c> ("all" when not given), <c>findings</c> and <c>totalViolations</c>.
+  /// Throws CIVIL3D.QC_ERROR on failure.</summary>
   public static Task<object?> QcCheckLabelsAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetOptionalString(parameters, "objectType");
@@ -827,6 +862,12 @@ public static class QcCommands
   /// <c>outputPath</c> (.txt, through FileBoundary.WriteAllTextAtomic: inside the export roots, no overwrite unless
   /// <c>overwrite</c>). The checks here are simpler than the single-object ones above. It runs as a read: the drawing
   /// isn't changed, only the file is written.
+  /// <c>outputPath</c> is required; the include flags are optional: <c>includeAlignments</c>, <c>includeCorridors</c>,
+  /// <c>includePipeNetworks</c>, <c>includeSurfaces</c>, <c>includeLabels</c> (on by default), <c>includeProfiles</c>
+  /// (read but no profile section is written) and <c>includeDrawingStandards</c> (off by default).
+  /// Returns the canonical <c>outputPath</c>, <c>checksRun</c>, <c>totalViolations</c>, <c>sectionsIncluded</c> and
+  /// <c>reportGenerated</c>. FileBoundary's own codes pass through (CIVIL3D.PATH_NOT_ALLOWED, FILE_TYPE_NOT_ALLOWED,
+  /// CONFLICT for an existing file without <c>overwrite</c>, FILE_IO_ERROR); other failures are CIVIL3D.QC_ERROR.
   /// </summary>
   public static Task<object?> QcReportGenerateAsync(JsonObject? parameters)
   {
@@ -1032,6 +1073,8 @@ public static class QcCommands
   /// Checks every layer except 0 and Defpoints: missing <c>layerPrefix</c>, names over 64 characters or with spaces,
   /// frozen layers, and, on request, ByLayer lineweights (<c>checkLineweights</c>) and ByLayer/ByBlock colors
   /// (<c>checkColors</c>). Most findings are "info": they point at things a standard may forbid.
+  /// All parameters are optional; <c>checkLineweights</c> and <c>checkColors</c> are off by default. Read-only.
+  /// Returns <c>layerPrefix</c>, <c>findings</c> and <c>totalViolations</c>. Throws CIVIL3D.QC_ERROR on failure.
   /// </summary>
   public static Task<object?> QcCheckDrawingStandardsAsync(JsonObject? parameters)
   {
@@ -1179,6 +1222,11 @@ public static class QcCommands
   /// with <c>applyToAllLayers</c>; a layer that already has them isn't listed.
   /// A rename to a name that already exists is skipped and reported. With <c>dryRun</c> it only lists what would
   /// change. Approval-gated on the TypeScript side.
+  /// All parameters are optional. Changes the drawing unless <c>dryRun</c> (one WriteAsync transaction, one undo step;
+  /// a dry run still goes through WriteAsync but opens layers for read only). Returns <c>layerPrefix</c>,
+  /// <c>applyToAllLayers</c>, <c>changedCount</c>, <c>changes</c> (per layer: <c>renamedTo</c> or
+  /// <c>renameSkipped</c>/<c>targetName</c>, <c>colorIndex</c>, <c>lineweight</c>) and <c>dryRun</c>.
+  /// Throws CIVIL3D.QC_ERROR when an API call fails.
   /// </summary>
   public static Task<object?> QcFixDrawingStandardsAsync(JsonObject? parameters)
   {
@@ -1310,6 +1358,8 @@ public static class QcCommands
   // Private helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The gravity pipe network named <paramref name="name"/> (case-insensitive), opened for read, or null.
+  /// Despite its name it uses the typed GetPipeNetworkIds and reads the name through CivilObjectUtils.</summary>
   private static AcDbObject? FindPipeNetworkByNameReflection(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -1326,6 +1376,7 @@ public static class QcCommands
     return null;
   }
 
+  /// <summary>Every gravity pipe network in the drawing, opened for read.</summary>
   private static IEnumerable<AcDbObject> EnumerateAllPipeNetworks(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction)
@@ -1337,6 +1388,11 @@ public static class QcCommands
     }
   }
 
+  /// <summary>
+  /// Child object ids of <paramref name="owner"/>, trying each member name both as a method and as a property, for
+  /// members named differently across releases. Null ids are skipped. Ids are not de-duplicated: a name that works as
+  /// both, or two names that reach the same list, would give an id more than once.
+  /// </summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(AcDbObject owner, params string[] memberNames)
   {
     foreach (var memberName in memberNames)
@@ -1376,7 +1432,6 @@ public static class QcCommands
     return true;
   }
 
-  /// <summary>The first of several property names that has a value, for properties named differently across releases.</summary>
   /// <summary>Whether a pipe has no reference surface: Civil 3D throws on the id when none was ever set.</summary>
   private static bool HasNoReferenceSurface(Pipe pipe)
   {
@@ -1390,6 +1445,7 @@ public static class QcCommands
     }
   }
 
+  /// <summary>The first of several property names that has a value, for properties named differently across releases.</summary>
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)

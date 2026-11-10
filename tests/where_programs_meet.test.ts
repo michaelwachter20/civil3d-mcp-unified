@@ -1,3 +1,7 @@
+// Guards the edges where Civil 3D MCP meets the job database that the other suite programs also write (repo rule 2):
+// folder ownership between jobs, archive and moved/missing file paths, superseded facts, and civil3d_drawing open
+// choosing among same-named drawings. Uses a copy of tests/fixtures/fixture.db in temp folders; no Civil 3D.
+
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

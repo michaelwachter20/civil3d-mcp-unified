@@ -1,3 +1,9 @@
+// The plugin's only reflection: late-bound property, field and method access for Civil 3D members missing from the
+// referenced API or differing between releases, COM late binding (sheet sets, AutoCAD COM objects), and the loaded
+// assembly list Roslyn scripts compile against. tests/reflection_boundary.test.ts fails if reflection appears in any
+// other plugin file. Serves no JSON-RPC method; used through CivilObjectUtils and directly by command classes,
+// ScriptEngine and SheetSetCom. Lookups are cached per type and name. Reads never throw (null/false on
+// failure); it never writes files and never touches the drawing except through the setters callers invoke.
 using System.Collections.Concurrent;
 using System.Reflection;
 
@@ -29,6 +35,10 @@ internal static class Civil3DCompatibility
   private static readonly ConcurrentDictionary<LoadedStaticMethodKey, CachedMethods> LoadedStaticMethodCache = new();
   private static readonly ConcurrentDictionary<string, CachedType> TypeCache = new(StringComparer.Ordinal);
 
+  /// <summary>
+  /// A public instance property read late-bound and converted to <typeparamref name="T"/> (Convert.ChangeType);
+  /// default when the target is null, the property is missing, its getter throws or the value doesn't convert.
+  /// </summary>
   public static T? GetPropertyValue<T>(object? target, string propertyName)
   {
     var raw = GetPropertyValue(target, propertyName);
@@ -58,6 +68,7 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>A public instance property read late-bound (finding an inherited getter if needed); null on any failure.</summary>
   public static object? GetPropertyValue(object? target, string propertyName)
   {
     if (target == null)
@@ -81,6 +92,7 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>An indexed property (indexer) read late-bound with <paramref name="indexes"/>; null on any failure.</summary>
   public static object? GetIndexedPropertyValue(object? target, string propertyName, params object?[] indexes)
   {
     if (target == null)
@@ -99,6 +111,7 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>A public instance field read late-bound; null on any failure.</summary>
   public static object? GetFieldValue(object? target, string fieldName)
   {
     if (target == null)
@@ -120,6 +133,11 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>
+  /// Writes a public instance property late-bound, converting <paramref name="value"/> to its type (enum names parsed
+  /// case-insensitively). True when written; false when the target is null, the property is missing or read-only, or
+  /// conversion or the setter fails. Changes the object (the drawing, when it is database-resident and open for write).
+  /// </summary>
   public static bool TrySetProperty(object? target, string propertyName, object? value)
   {
     if (target == null)
@@ -150,6 +168,7 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>Every readable, non-indexed string, bool, int or double property of <paramref name="target"/> by name; getters that throw are left out.</summary>
   public static IReadOnlyDictionary<string, object?> GetReadableScalarProperties(object target)
   {
     var properties = ScalarPropertyCache.GetOrAdd(target.GetType(), static type =>
@@ -181,6 +200,10 @@ internal static class Civil3DCompatibility
     return values;
   }
 
+  /// <summary>
+  /// Calls a public instance method late-bound, trying each overload with the same argument count. Null when none
+  /// matches; an exception thrown by the method itself propagates (wrapped in TargetInvocationException).
+  /// </summary>
   public static object? InvokeMethod(object? target, string methodName, params object?[] arguments)
   {
     if (target == null)
@@ -192,6 +215,7 @@ internal static class Civil3DCompatibility
     return result;
   }
 
+  /// <summary>As <see cref="InvokeMethod"/>, but says whether a matching method was found and called.</summary>
   public static bool TryInvokeMethod(object? target, string methodName, out object? result, params object?[] arguments)
   {
     result = null;
@@ -199,17 +223,25 @@ internal static class Civil3DCompatibility
       && TryInvokeCandidates(target.GetType(), target, methodName, isStatic: false, arguments, out result);
   }
 
+  /// <summary>Calls a public static method of <paramref name="type"/> late-bound; null when no overload matches.</summary>
   public static object? InvokeStaticMethod(Type type, string methodName, params object?[] arguments)
   {
     TryInvokeCandidates(type, null, methodName, isStatic: true, arguments, out var result);
     return result;
   }
 
+  /// <summary>As <see cref="InvokeStaticMethod"/>, but says whether a matching method was found and called.</summary>
   public static bool TryInvokeStaticMethod(Type type, string methodName, out object? result, params object?[] arguments)
   {
     return TryInvokeCandidates(type, null, methodName, isStatic: true, arguments, out result);
   }
 
+  /// <summary>
+  /// Tries every public static overload of <paramref name="methodName"/>, fewest parameters first: for each,
+  /// <paramref name="argumentBuilder"/> gets the parameter types and returns the arguments (or null to skip it). The
+  /// first call that succeeds wins; <paramref name="invokedArguments"/> returns the array used, so by-ref outputs can
+  /// be read. Overloads that reject their arguments, including by throwing inside, are skipped.
+  /// </summary>
   public static bool TryInvokeStaticOverloads(
     Type type,
     string methodName,
@@ -262,6 +294,11 @@ internal static class Civil3DCompatibility
     return false;
   }
 
+  /// <summary>
+  /// Finds a public static method named <paramref name="methodName"/> in any loaded assembly whose first parameter
+  /// accepts <paramref name="firstParameterType"/> (an extension method such as Database.GetCivilCatchmentGroups) and
+  /// calls the first that accepts the arguments. The scan of every loaded type runs once per key and is cached.
+  /// </summary>
   public static bool TryInvokeLoadedStaticMethod(
     string methodName,
     Type firstParameterType,
@@ -322,6 +359,10 @@ internal static class Civil3DCompatibility
   public static T CreateComObject<T>(string progId) =>
     (T)Activator.CreateInstance(Type.GetTypeFromProgID(progId, throwOnError: true)!)!;
 
+  /// <summary>
+  /// The first of <paramref name="fullNames"/> that resolves to a type, as an assembly-qualified name or by full name
+  /// in any loaded assembly; null when none does. Results (including misses) are cached.
+  /// </summary>
   public static Type? FindLoadedType(params string[] fullNames)
   {
     foreach (var fullName in fullNames)
@@ -383,6 +424,7 @@ internal static class Civil3DCompatibility
     return property;
   }
 
+  /// <summary>The public property of that name (cached, misses too); null when the type has none.</summary>
   private static PropertyInfo? ResolveProperty(Type type, string propertyName, bool isStatic)
   {
     var key = new PropertyKey(type, propertyName, isStatic);
@@ -393,6 +435,10 @@ internal static class Civil3DCompatibility
     }).Value;
   }
 
+  /// <summary>
+  /// Calls the first public overload with the right name and argument count that accepts the arguments. Overloads
+  /// that refuse the argument types are skipped; an exception from inside a called method propagates.
+  /// </summary>
   private static bool TryInvokeCandidates(
     Type type,
     object? target,
@@ -491,6 +537,7 @@ internal static class Civil3DCompatibility
     }
   }
 
+  /// <summary>Whether a custom attribute's constructor belongs to a type named InternalsVisibleToAttribute (reference or definition).</summary>
   private static bool IsInternalsVisibleTo(System.Reflection.Metadata.MetadataReader md, System.Reflection.Metadata.CustomAttribute attribute)
   {
     System.Reflection.Metadata.EntityHandle type = default;

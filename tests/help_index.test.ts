@@ -1,3 +1,7 @@
+// Guards civil3d_help (src/help/*, src/tools/helpTool.ts): finding the Autodesk Offline Help install, parsing topic
+// HTML safely (no script execution), the search index, the video catalog, and serving topics/images as MCP resources.
+// Builds a small made-up help install in a temp folder (createHelpFixture); needs no real Civil 3D help files.
+
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -171,6 +175,7 @@ describe("Civil 3D offline help", () => {
   });
 });
 
+/** Builds a tiny made-up Offline Help install in a temp folder and returns its paths for the tests. */
 function createHelpFixture(): {
   tempRoot: string;
   programFilesRoot: string;

@@ -1,3 +1,9 @@
+// Background jobs for a few long operations, and status/cancel for any job.
+// JSON-RPC methods (CommandDispatcher): startJob, getJobStatus, cancelJob. Called by src/tools/domains/jobDomain.ts
+// (civil3d_job). startJob re-enters CommandDispatcher with the job's plugin method on a worker task, so the work still
+// goes through CivilExecution (host queue, drawing check, one undo step for a write) and runs only on the drawing that
+// was active when the job started. getJobStatus/cancelJob only read JobRegistry: no host queue, no drawing access.
+// Any files a job writes (PDFs) go through FileBoundary inside the called method.
 using System.Collections;
 using System.Text.Json.Nodes;
 
@@ -11,6 +17,7 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class JobCommands
 {
+  /// <summary>The operations startJob accepts, mapped to the plugin method each one runs.</summary>
   private static readonly IReadOnlyDictionary<string, string> LongRunningOperations =
     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -25,7 +32,8 @@ public static class JobCommands
   /// job at once. The work goes through <c>CommandDispatcher</c> like a normal request, so it takes its turn in the
   /// host queue and runs only on the drawing that was active when the job started. It waits 250 ms first so an
   /// immediate cancel still stops it; a cancel that arrives once the Civil 3D work has begun can't undo it, and the
-  /// job is then reported completed with a warning saying so. Errors become a failed job, never a thrown error here.
+  /// job is then reported completed with a warning saying so. Errors in the work become a failed job, never a thrown
+  /// error here; only an unknown operation or a full registry (CIVIL3D.HOST_BUSY) is thrown.
   /// </summary>
   public static Task<object?> StartJobAsync(JsonObject? parameters)
   {

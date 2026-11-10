@@ -1,3 +1,8 @@
+// Survey domain: `civil3d_survey` and its `civil3d_survey_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts). Each action is one call to SurveyCommands.cs. The *_list / *_get actions are read-only. The
+// create/add actions write the survey database on disk (not undoable) and add_to_drawing writes the drawing; all are
+// non-retryable mutations, so approvalPolicy asks for an approvalToken. Survey data is the user's field data: the AI
+// adds to it only when asked. Details are in the comment block below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -193,6 +198,12 @@ const SurveyLandXmlImportArgsSchema = z.object({
  */
 export const SURVEY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "survey",
+  // Action -> plugin method. Read-only: database_list (listSurveyDatabases), network_list (listSurveyNetworks),
+  // point_list (listSurveyPoints), figure_list (listSurveyFigures), figure_get (getSurveyFigure), observation_list
+  // (listSurveyObservations). Writes needing approval: database_create (createSurveyDatabase), network_create
+  // (createSurveyNetwork), point_add (addSurveyPoint), setup_add (addSurveySetup), figure_create (createSurveyFigure),
+  // add_to_drawing (addSurveyToDrawing). Not exposed, always refused by the plugin: network_adjust
+  // (adjustSurveyNetwork), landxml_import (importSurveyLandXml).
   actions: {
     database_list: {
       action: "database_list",

@@ -1,8 +1,3 @@
-import {
-  closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync,
-} from "node:fs";
-import path from "node:path";
-
 /**
  * Writing the knowledge files safely when several programs share them (two AI apps each running this server, Project
  * Analyzer and TBC MCP next to it), with Node built-ins only:
@@ -11,7 +6,17 @@ import path from "node:path";
  *   withFileLock         <target>.lock around a read-modify-write; a dead or stale holder's lock is taken over
  *   keepBackup           a copy in <folder>\<stem>.backups\<stem> YYYY-MM-DD HHMMSS<ext>, the newest 3 kept
  *   sweepTemporaryFiles  temp files a crashed write left behind (older than an hour)
+ *
+ * Used by knowledgeBase.ts (preferences, lessons, and the startup temp-file sweep), practices.ts (the shared
+ * practices.json, under lock with a backup), projectDb.ts (backup naming and rotation of job databases) and
+ * helpIndex.ts (the help index cache). Only for this tool's own files and the suite's shared knowledge folder: never
+ * for drawings or job folders. The lock (pid on the first line, 2 s grace for an empty one) behaves like TBC MCP's, and
+ * the backup time stamp matches Project Analyzer's.
  */
+import {
+  closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync,
+} from "node:fs";
+import path from "node:path";
 
 const RENAME_RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
 
@@ -88,6 +93,7 @@ export function setFileLockTimingForTesting(value?: Partial<typeof DEFAULT_LOCK_
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** Whether a process with this id exists (signal 0 only checks; it sends nothing). */
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -126,6 +132,7 @@ function takeOver(lock: string, content: string) {
   try { rmSync(aside, { force: true }); } catch { /* removed later */ }
 }
 
+/** The CIVIL3D.CONFLICT error for a lock still held after the wait; names the lock file so the user can clear it. */
 function lockError(target: string, lock: string) {
   const error = new Error(
     `${path.basename(target)} is being changed by another program (it holds ${lock}); try again in a moment. ` +

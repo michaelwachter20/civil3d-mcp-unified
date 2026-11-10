@@ -1,3 +1,13 @@
+// The host gate: the one way every handler (*Commands.cs) reaches the drawing. Every request is serialized through
+// one SemaphoreSlim (PluginRuntime counts the queue and refuses beyond 64 waiting with CIVIL3D.HOST_BUSY), then:
+// - ReadAsync runs on AutoCAD's main thread outside command context, no lock, an open-close transaction: no undo step.
+// - WriteAsync waits until no command is active (CMDACTIVE), then runs in command context with a document lock and
+//   one transaction committed on success: one undo step per request; ViewFollower then pans to what changed.
+// - MeasureAsync / WithDocumentLockAsync / OnActiveDocumentAsync cover the few special cases (see each).
+// Each request runs on the drawing active when its turn comes; a request bound to another drawing gets
+// CIVIL3D.CONFLICT and changes nothing. Waiting past CIVIL3D_IDLE_WAIT_SECONDS gives CIVIL3D.HOST_BUSY, and work that
+// never started is abandoned so it can't run late. Rule: handlers never open their own transaction or lock outside
+// this class (CLAUDE.md rule 3).
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.ApplicationServices;
@@ -5,8 +15,13 @@ using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>
+/// The serialized host gate for drawing reads and writes. Handlers call <see cref="ReadAsync{T}"/> or
+/// <see cref="WriteAsync{T}"/> with a lambda that gets the active Document, CivilDocument, Database and Transaction.
+/// </summary>
 public static class CivilExecution
 {
+  /// <summary>One operation on the host at a time; every Read/Write/Measure call passes through it.</summary>
   private static readonly SemaphoreSlim HostExecutionGate = new(1, 1);
 
   // Main-thread context captured at plugin load. Read-only work is posted here so it
@@ -39,6 +54,13 @@ public static class CivilExecution
       : $"Read-only requests run outside command context via {_mainThreadContext.GetType().Name}.");
   }
 
+  /// <summary>
+  /// Runs <paramref name="action"/> on the verified active drawing. <paramref name="write"/> true: command context,
+  /// document lock, one transaction committed when the action returns (rolled back if it throws), then the view
+  /// follows the changes unless <paramref name="followView"/> is false. <paramref name="write"/> false: main thread,
+  /// no lock, an open-close transaction that is never committed. Throws CIVIL3D.NO_DRAWING (no drawing open),
+  /// CIVIL3D.CONFLICT (active drawing changed while queued) and CIVIL3D.HOST_BUSY (a command kept running).
+  /// </summary>
   public static async Task<T> ExecuteAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action, bool write, bool followView = true)
   {
     Task<T> Run()
@@ -84,6 +106,11 @@ public static class CivilExecution
     }
   }
 
+  /// <summary>
+  /// Runs <paramref name="action"/> through the host gate in Autodesk command context (one undo step), after waiting
+  /// until no command is active. Throws CIVIL3D.HOST_BUSY when Civil 3D stays busy longer than the idle wait or the
+  /// queued work never starts. The action itself takes any lock or transaction it needs.
+  /// </summary>
   public static async Task<T> ExecuteInCommandContextAsync<T>(Func<Task<T>> action)
   {
     return await ExecuteSerializedAsync(async () =>
@@ -95,12 +122,6 @@ public static class CivilExecution
     });
   }
 
-  /// <summary>
-  /// Runs work that must not modify the drawing on the AutoCAD main thread in
-  /// application context, so it leaves no undo step. While a command is active it
-  /// retries until the command ends (never queuing into command context, which can
-  /// hang), and fails with CIVIL3D.HOST_BUSY after the idle wait.
-  /// </summary>
   /// <summary>Runs <paramref name="action"/> on AutoCAD's main thread, outside any command or transaction: where a
   /// window may be shown (PointCreationGate asks the user there). Runs it in place when already on that thread, or
   /// when the main thread's context was never captured.</summary>
@@ -115,6 +136,13 @@ public static class CivilExecution
     return PostToMainThreadAsync(context, action);
   }
 
+  /// <summary>
+  /// Runs work that must not modify the drawing on the AutoCAD main thread in
+  /// application context, so it leaves no undo step. While a command is active it
+  /// retries until the command ends (never queuing into command context, which can
+  /// hang), and fails with CIVIL3D.HOST_BUSY after the idle wait. Falls back to command
+  /// context when the main thread was never captured or CIVIL3D_READ_CONTEXT=command.
+  /// </summary>
   public static async Task<T> ExecuteReadOnlyAsync<T>(Func<Task<T>> action)
   {
     return await ExecuteSerializedAsync(async () =>
@@ -177,6 +205,10 @@ public static class CivilExecution
     }
   }
 
+  /// <summary>
+  /// The CIVIL3D.HOST_BUSY error for a request that waited too long: names the open Civil 3D window when one is
+  /// waiting for an answer, otherwise the active command(s), and tells the AI what to do next.
+  /// </summary>
   private static JsonRpcDispatchException BusyError()
   {
     var names = CommandLineMonitor.ActiveCommandNames();
@@ -189,6 +221,11 @@ public static class CivilExecution
           ". Finish or cancel it (Esc) and try again. Use civil3d_drawing action=command_line to see what it is waiting for.");
   }
 
+  /// <summary>
+  /// Queues <paramref name="action"/> with DocumentManager.ExecuteInCommandContextAsync and waits for its result. If
+  /// the work hasn't started within the idle wait it is marked abandoned (so it never runs late) and
+  /// CIVIL3D.HOST_BUSY is thrown.
+  /// </summary>
   private static async Task<T> RunInCommandContextAsync<T>(Func<Task<T>> action)
   {
     var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -256,6 +293,10 @@ public static class CivilExecution
     return await task;
   }
 
+  /// <summary>
+  /// Posts <paramref name="action"/> to the captured main-thread dispatcher and completes with its result or
+  /// exception. Does not go through the host gate by itself.
+  /// </summary>
   private static Task<T> PostToMainThreadAsync<T>(SynchronizationContext context, Func<Task<T>> action)
   {
     var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -292,6 +333,7 @@ public static class CivilExecution
     return completion.Task;
   }
 
+  /// <summary>True while an AutoCAD command is active (CMDACTIVE != 0). Main thread only; an unreadable value counts as busy.</summary>
   private static bool IsCommandActive()
   {
     try
@@ -325,6 +367,10 @@ public static class CivilExecution
     return (doc, civilDoc);
   }
 
+  /// <summary>
+  /// A read: main thread, no lock, an open-close transaction, no undo step. The action must not change the drawing.
+  /// Errors as for <see cref="ExecuteAsync{T}"/>.
+  /// </summary>
   public static Task<T> ReadAsync<T>(Func<Document, CivilDocument, Database, Transaction, T> action)
   {
     return ExecuteAsync(action, false);
@@ -383,6 +429,11 @@ public static class CivilExecution
     return ExecuteInCommandContextAsync(Run);
   }
 
+  /// <summary>
+  /// Runs <paramref name="action"/> once it holds the host gate, keeping PluginRuntime's queue counters (used by health)
+  /// in step. Throws CIVIL3D.HOST_BUSY when the queue is full, and OperationCanceledException when the request is
+  /// cancelled while waiting.
+  /// </summary>
   private static async Task<T> ExecuteSerializedAsync<T>(Func<Task<T>> action)
   {
     var cancellationToken = PluginRuntime.GetCurrentRequestCancellationToken();

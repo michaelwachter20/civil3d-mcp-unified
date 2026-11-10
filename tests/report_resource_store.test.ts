@@ -1,3 +1,6 @@
+// Guards src/tools/reportResourceStore.ts: reports kept as MCP resources are size-bounded (an oversized report is not
+// kept, old ones are evicted). Pure unit test.
+
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearReportResourcesForTesting,

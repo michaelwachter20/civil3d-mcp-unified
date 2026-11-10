@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The assembly domain: `civil3d_assembly` (corridor assemblies and their subassemblies) and its aliases
  * `civil3d_assembly_create`, `civil3d_subassembly_create` and `civil3d_assembly_edit`. The plugin side is
@@ -11,7 +7,13 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  *
  * Assemblies are found by name, subassemblies by name within their assembly. corridorDomain.ts uses an assembly by
  * name when it adds a corridor region.
+ *
+ * Approval (approvalPolicy.ts): list (listAssemblies) and get (getAssembly) are reads; create (createAssembly),
+ * create_subassembly (createSubassembly) and edit (editAssembly) change the drawing and need an approvalToken.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 const GenericAssemblyResponseSchema = z.object({}).passthrough();
 

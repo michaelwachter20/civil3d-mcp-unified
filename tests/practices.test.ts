@@ -1,3 +1,8 @@
+// Guards civil3d_practices (src/tools/practices.ts), the suite's shared practices.json (repo rule 2): only entries with
+// source "civil3d" are changed, other tools' entries and unknown fields are kept, ids are never reused, files that do not
+// parse are never rewritten, output is UTF-8 without BOM, LF, 2-space indent. Uses a copy of
+// tests/fixtures/fixture-practices.json (Project Analyzer's made-up fixture) in a temp folder.
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

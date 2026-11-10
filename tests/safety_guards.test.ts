@@ -1,3 +1,7 @@
+// Guards actions that write files or touch many objects (point transform, parcel report, QC report, profile sampling):
+// the right ones need approval, and bad values are refused before reaching the plugin.
+// ConnectionManager is mocked; no plugin or Civil 3D.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { sendCommandMock } = vi.hoisted(() => ({
@@ -19,6 +23,7 @@ import { PROFILE_DOMAIN_DEFINITION } from "../src/tools/domains/profileDomain.js
 import { QC_DOMAIN_DEFINITION } from "../src/tools/domains/qcDomain.js";
 
 /** The approval target of one action, as the runtime builds it. */
+/** Builds the approval-policy target for one action of a domain definition. */
 function target(toolName: string, definition: { actions: Record<string, { action: string; capabilities: never[]; safeForRetry: boolean }> }, action: string) {
   const a = definition.actions[action];
   return { toolName, action: a.action, capabilities: a.capabilities, safeForRetry: a.safeForRetry };

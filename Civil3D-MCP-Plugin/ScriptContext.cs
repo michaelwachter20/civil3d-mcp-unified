@@ -1,3 +1,11 @@
+// ScriptContext.cs - the globals a Roslyn script sees (civil3d_execute, civil3d_query, saved scripts, MCPRUN).
+// ScriptEngine.RunInDocumentAsync creates one per run with the active document, its database, the one transaction
+// the run uses, the call's args, the mode and the cancellation token. Every public member is a name scripts can use
+// (Document, CivilDoc, Database, Transaction, Editor, Args, ModelSpace, IsWriteMode, CancellationToken, Get<T>,
+// AddToModelSpace, FromHandle, Print, FocusOn, Reference, OpenDrawings and safe Civil 3D helpers). Write helpers refuse
+// in read mode; whatever a script does, the transaction is committed only for write runs and aborted for reads.
+// Also here: ScriptArgs (typed argument reads), ScriptJson (number/point parsing shared with ScriptCommands and
+// ScriptLibrary) and SectionSourceInfo. Nothing here touches files; other drawings open only read-only (ReferenceDrawing).
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -27,6 +35,7 @@ public sealed class ScriptContext
   private BlockTableRecord? _modelSpace;
   private readonly Dictionary<string, ReferenceDrawing> _references = new(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>Built by ScriptEngine for one run; the transaction belongs to the engine, which commits or aborts it.</summary>
   public ScriptContext(
     Document document,
     CivilDocument civilDoc,
@@ -137,6 +146,7 @@ public sealed class ScriptContext
     }
   }
 
+  /// <summary>The area named with FocusOn, if any; ViewFollower zooms to it after a committed write.</summary>
   internal Extents3d? Focus { get; private set; }
 
   /// <summary>
@@ -242,6 +252,9 @@ public sealed class ScriptContext
     return SectionSources(sampleLineGroupId);
   }
 
+  /// <summary>Erases and recreates every sample line of the group (same name, vertices, layer, style) and its section
+  /// views (same name, location, style, layer, offset and elevation ranges), so lines made before a source was sampled
+  /// get its sections. Changes the drawing (write mode only, inside the run's transaction).</summary>
   private void RecreateSampleLines(Autodesk.Civil.DatabaseServices.SampleLineGroup group)
   {
     foreach (ObjectId lineId in group.GetSampleLineIds().Cast<ObjectId>().ToList())
@@ -313,6 +326,8 @@ public sealed class ScriptContext
     return reference;
   }
 
+  /// <summary>Closes every reference drawing this run opened (their changes are rolled back); called by ScriptEngine
+  /// after every run.</summary>
   internal void CloseReferences()
   {
     foreach (var reference in _references.Values)
@@ -330,7 +345,9 @@ public sealed class ScriptContext
     return Database.GetObjectId(false, new Handle(value), 0);
   }
 
-  /// <summary>Appends a line to the output returned with the result (also usable from MCPRUN).</summary>
+  /// <summary>Appends a line to the output returned with the result (also usable from MCPRUN). Numbers use the
+  /// invariant culture. After 500 lines or 64 KB a "... output truncated ..." line is added and later calls are
+  /// ignored.</summary>
   public void Print(object? value)
   {
     if (_outputTruncated)
@@ -357,6 +374,7 @@ public sealed class ScriptContext
     _outputCharacters += text.Length;
   }
 
+  /// <summary>The Print lines so far, returned as <c>output</c> with the run's result.</summary>
   internal IReadOnlyList<string> Output => _output;
 }
 
@@ -373,12 +391,16 @@ public sealed class ScriptArgs
     _values = values ?? new JsonObject();
   }
 
+  /// <summary>True when the argument is present and not null.</summary>
   public bool Has(string name) => _values.ContainsKey(name) && _values[name] != null;
 
+  /// <summary>The names of every argument passed.</summary>
   public IEnumerable<string> Names => _values.Select(pair => pair.Key);
 
+  /// <summary>The argument's JSON as passed, or null.</summary>
   public JsonNode? Raw(string name) => _values[name];
 
+  /// <summary>The argument as text (non-strings as their JSON text). Missing: the default, else ArgumentException.</summary>
   public string GetString(string name, string? defaultValue = null)
   {
     var node = _values[name];
@@ -390,6 +412,8 @@ public sealed class ScriptArgs
     return node is JsonValue value && value.TryGetValue<string>(out var text) ? text : node.ToJsonString();
   }
 
+  /// <summary>The argument as a number (a numeric string is parsed with the invariant culture). Missing: the default,
+  /// else ArgumentException; not a number: ArgumentException.</summary>
   public double GetDouble(string name, double? defaultValue = null)
   {
     var node = _values[name];
@@ -405,6 +429,7 @@ public sealed class ScriptArgs
     throw new ArgumentException($"Argument '{name}' is not a number.");
   }
 
+  /// <summary>The argument as a number rounded to an int. Missing: the default, else ArgumentException.</summary>
   public int GetInt(string name, int? defaultValue = null)
   {
     if (!Has(name))
@@ -415,6 +440,8 @@ public sealed class ScriptArgs
     return (int)Math.Round(GetDouble(name));
   }
 
+  /// <summary>The argument as a bool: true/false, "true"/"false", or a number (non-zero is true). Missing: the default,
+  /// else ArgumentException.</summary>
   public bool GetBool(string name, bool? defaultValue = null)
   {
     var node = _values[name];
@@ -462,6 +489,7 @@ public sealed class ScriptArgs
     return node == null ? defaultValue : node.Deserialize<T>();
   }
 
+  /// <summary>All arguments as one JSON object.</summary>
   public override string ToString() => _values.ToJsonString();
 }
 
@@ -472,6 +500,7 @@ public sealed class ScriptArgs
 /// </summary>
 internal static class ScriptJson
 {
+  /// <summary>True, with the value, when the node is a JSON number (parsed or built in code).</summary>
   public static bool TryGetDouble(JsonNode? node, out double number)
   {
     number = 0;
@@ -480,6 +509,8 @@ internal static class ScriptJson
       double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number);
   }
 
+  /// <summary>Reads {x, y, z?} (z defaults to 0); ArgumentException naming <paramref name="name"/> when x or y is
+  /// missing or a coordinate isn't a number.</summary>
   public static Point3d ToPoint3d(JsonObject point, string name)
   {
     return new Point3d(
@@ -503,6 +534,7 @@ internal static class ScriptJson
 /// <summary>Builds output text for MCPRUN without exposing internals.</summary>
 internal static class ScriptOutputFormatter
 {
+  /// <summary>The lines, each preceded by a newline (the command line's message format).</summary>
   public static string Join(IEnumerable<string> lines)
   {
     var builder = new StringBuilder();

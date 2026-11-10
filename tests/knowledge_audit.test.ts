@@ -1,3 +1,7 @@
+// Guards repo rule 1 for everything git tracks under skills/ (skills and lessons.seed.jsonl): runs the same job-data check
+// as generalKnowledge.ts against the job names found in this PC's shared projects folder (read only; none on a build
+// server). Needs git on PATH (it asks git which files are tracked).
+
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";

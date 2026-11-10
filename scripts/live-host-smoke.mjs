@@ -1,3 +1,14 @@
+// Live end-to-end smoke test that CHANGES a drawing: through the running MCP server's HTTP bridge
+// (CIVIL3D_MCP_HTTP_URL, default http://127.0.0.1:3000, bearer MCP_HTTP_TOKEN if set) it opens a new drawing, makes and
+// deletes two surfaces (and checks a volume's temporary surface is rolled back), draws and undoes a line, creates and
+// deletes one COGO point, and starts, cancels and completes bulk-QC background jobs that write a report under
+// CIVIL3D_LIVE_SMOKE_QC_PATH (a .txt path inside the plugin's allowed export roots). Every write goes through
+// civil3d_request_approval, like a real client.
+//
+//   npm run test:live-host   (also the opt-in step of .github/workflows/civil3d-plugin-ci.yml on a self-hosted runner)
+//
+// Safety: refuses to start unless CIVIL3D_LIVE_SMOKE_CONFIRM=DISPOSABLE_DRAWING. Needs Civil 3D 2027 open with the AI
+// connection on, the MCP server running, and a person at the machine. Automated sessions must never run it.
 const confirmation = "DISPOSABLE_DRAWING";
 if (process.env.CIVIL3D_LIVE_SMOKE_CONFIRM !== confirmation) {
   throw new Error(`Refusing to mutate Civil 3D. Set CIVIL3D_LIVE_SMOKE_CONFIRM=${confirmation} and use a disposable session.`);
@@ -11,6 +22,7 @@ const headers = {
     : {}),
 };
 
+/** GET/POST one bridge endpoint and return the parsed JSON; throws with the body on any non-2xx status. */
 async function request(path, init = {}) {
   const response = await fetch(`${baseUrl}${path}`, { ...init, headers: { ...headers, ...init.headers } });
   const body = await response.json();
@@ -18,10 +30,12 @@ async function request(path, init = {}) {
   return body;
 }
 
+/** Calls one tool through POST /execute (the same handler an MCP call gets, approval checks included). */
 async function execute(tool, parameters) {
   return request("/execute", { method: "POST", body: JSON.stringify({ tool, parameters }) });
 }
 
+/** Gets a single-use approval token for exactly these parameters, then makes the call with it. */
 async function approved(toolName, action, parameters) {
   const receipt = await execute("civil3d_request_approval", { toolName, action, parameters });
   return execute(toolName, { ...parameters, approvalToken: receipt.approvalToken });
@@ -97,6 +111,8 @@ await approved("civil3d_geometry", "create_line_segment", {
 });
 await approved("civil3d_drawing", "undo", { action: "undo", steps: 1 });
 
+// A high, time-based point number so it can't collide with real points. Point creation also asks the user in a
+// Civil 3D window first (see the server instructions), so someone must answer it.
 const pointNumber = 900000 + (Date.now() % 90000);
 await approved("civil3d_point", "create", {
   action: "create", startNumber: pointNumber,

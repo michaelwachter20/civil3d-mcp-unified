@@ -1,3 +1,6 @@
+// Guards the health response schema of src/tools/domains/pluginDomain.ts: queue, job and file-log fields from the plugin
+// must survive validation. Pure schema test.
+
 import { describe, expect, it } from "vitest";
 import { PLUGIN_DOMAIN_DEFINITION } from "../src/tools/domains/pluginDomain.js";
 

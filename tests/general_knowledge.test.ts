@@ -1,3 +1,8 @@
+// Guards repo rule 1 (no job data in general know-how): src/tools/generalKnowledge.ts refuses preferences, lessons,
+// skills and scripts that name a job, folder, drawing file, profile or network path, before anything is saved.
+// Uses a temporary shared folder (PROJECT_KNOWLEDGE_DIR) and copies of the made-up job in tests/fixtures/ (copies of
+// Project Analyzer's fixtures). Never touches the user's real shared folder.
+
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";

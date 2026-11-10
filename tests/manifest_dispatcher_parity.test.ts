@@ -1,3 +1,6 @@
+// Repo-boundary test (CLAUDE.md rule 5): every pluginMethods name declared in the TypeScript manifest must have a case in
+// Civil3D-MCP-Plugin/CommandDispatcher.cs. Reads the .cs file as text; no Civil 3D.
+
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GENERATED_TOOL_CATALOG_ENTRIES } from "../src/tools/toolManifest.js";

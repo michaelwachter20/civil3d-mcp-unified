@@ -1,3 +1,8 @@
+// The drawing's coordinate system and point transforms between coordinate systems.
+// JSON-RPC methods (CommandDispatcher): getCoordinateSystemInfo, transformCoordinates. Called by
+// src/tools/domains/coordinateSystemDomain.ts (civil3d_coordinate_system).
+// Both are CivilExecution.ReadAsync (no undo step, nothing changes): the drawing is read only for its own
+// coordinate system code. Transforms use AutoCAD's GeoCoordinateTransformer. No file access, no reflection.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -21,6 +26,11 @@ public static class CoordinateSystemCommands
   // getCoordinateSystemInfo
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// getCoordinateSystemInfo: the drawing's coordinate system code (<c>name</c>), category as <c>zone</c>, datum,
+  /// projection, linear units, description, EPSG code, central meridian, false easting/northing, scale factor and all
+  /// projection parameters. With no system assigned the code and details are null. Read only; no parameters.
+  /// </summary>
   public static Task<object?> GetCoordinateSystemInfoAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -67,6 +77,13 @@ public static class CoordinateSystemCommands
   // transformCoordinates
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// transformCoordinates: transforms (<c>x</c>, <c>y</c>, optional <c>z</c>) from <c>fromSystem</c> to <c>toSystem</c>
+  /// (all required except z). A system is a coordinate system code, "drawing" (the drawing's own) or "geographic"
+  /// (LL84 longitude/latitude). The same system on both sides returns the input with <c>identityTransform</c> true.
+  /// Read only. CIVIL3D.INVALID_INPUT for "drawing" when none is assigned, CIVIL3D.API_ERROR when Civil 3D can't
+  /// transform between the codes.
+  /// </summary>
   public static Task<object?> TransformCoordinatesAsync(JsonObject? parameters)
   {
     var fromSystem = PluginRuntime.GetRequiredString(parameters, "fromSystem");
@@ -149,6 +166,7 @@ public static class CoordinateSystemCommands
     return parameters;
   }
 
+  /// <summary>The first projection parameter whose name (underscores read as spaces) contains <paramref name="word"/>, else null.</summary>
   private static double? Parameter(Dictionary<string, double> parameters, string word)
   {
     foreach (var (name, value) in parameters)

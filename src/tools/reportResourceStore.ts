@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 /**
  * Keeps large or report-like tool results for an hour as MCP resources (`civil3d://reports/{id}`), so a client that
  * truncates long tool output can still read the whole answer, and an AI can come back to a report later in the
@@ -7,8 +5,10 @@ import { randomUUID } from "node:crypto";
  * is kept; mcpResources.ts serves and lists them.
  *
  * Held in memory only (gone when the server restarts): at most 64 results, 8 MiB each, 64 MiB in all; the oldest are
- * dropped first to make room.
+ * dropped first to make room. Nothing is written to disk.
  */
+import { randomUUID } from "node:crypto";
+
 const MAX_REPORT_RESOURCES = 64;
 const MAX_REPORT_RESOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_REPORT_BYTES = 64 * 1024 * 1024;
@@ -31,6 +31,7 @@ export interface StoredReportResource {
 
 const reports = new Map<string, StoredReportResource>();
 
+/** Forgets results past their hour; called before every read and store. */
 function removeExpired(now = Date.now()): void {
   for (const [id, report] of reports) {
     if (report.expiresAt <= now) {
@@ -102,6 +103,7 @@ export function listReportResources(): StoredReportResource[] {
   return [...reports.values()];
 }
 
+/** For tests: forget every kept result. */
 export function clearReportResourcesForTesting(): void {
   reports.clear();
 }

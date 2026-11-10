@@ -1,3 +1,14 @@
+/**
+ * civil3d_orchestrate: turns a plain-language request (or an explicit toolName) into a plan and, with
+ * `execute: true`, runs it. It is exposed by the docs domain (docsDomain.ts, loaded with a dynamic import) and kept
+ * visible in compact mode. The pieces live in src/orchestration/: IntentRouter picks the route, ProjectContextService
+ * reads the drawing and selection, SelectionResolver fills names from the selection, WorkflowPlanner writes the plan.
+ * This file joins them, decides whether the call can run, and runs the chosen tool through executeRegisteredTool,
+ * the same handler an MCP or HTTP call gets, so validation and approval are never skipped (a write still needs its
+ * approvalToken in the parameters). It never touches a drawing itself.
+ *
+ * executeToolCallViaOrchestrator is also used by the HTTP bridge (httpBridge.ts) for its legacy endpoints.
+ */
 import { z } from "zod";
 import { routeIntent, type RouteParams, type RouteResult } from "../orchestration/IntentRouter.js";
 import { findToolCatalogEntry } from "../orchestration/ToolCatalog.js";
@@ -5,17 +16,6 @@ import { getProjectContext } from "../orchestration/ProjectContextService.js";
 import { buildWorkflowPlan } from "../orchestration/WorkflowPlanner.js";
 import { resolveParamsFromSelection } from "../orchestration/SelectionResolver.js";
 import { executeRegisteredTool } from "./toolHandlerRegistry.js";
-
-/**
- * civil3d_orchestrate: turns a plain-language request (or an explicit toolName) into a plan and, with
- * `execute: true`, runs it. It is exposed by the docs domain (docsDomain.ts) and kept visible in compact mode. The
- * pieces live in src/orchestration/: IntentRouter picks the route, ProjectContextService reads the drawing and
- * selection, SelectionResolver fills names from the selection, WorkflowPlanner writes the plan. This file joins
- * them, decides whether the call can run, and runs the chosen tool through executeRegisteredTool, the same handler
- * an MCP or HTTP call gets, so validation and approval are never skipped.
- *
- * executeToolCallViaOrchestrator is also used by the HTTP bridge for its legacy endpoints.
- */
 
 /** The orchestrator's input: `request` or `toolName` (+ toolAction, toolParameters), plus any route parameter given directly. */
 const Civil3DOrchestrateInputShape = {
@@ -78,6 +78,7 @@ const Civil3DOrchestrateInputShape = {
 
 const Civil3DOrchestrateInputSchema = z.object(Civil3DOrchestrateInputShape);
 
+/** Parsed civil3d_orchestrate arguments (also built by executeToolCallViaOrchestrator for HTTP calls). */
 export type OrchestrateArgs = z.infer<typeof Civil3DOrchestrateInputSchema>;
 
 /** The RouteParams fields that may be copied out of toolParameters into the route's parameters. */
@@ -328,6 +329,7 @@ function buildExactToolParameters(
   );
 }
 
+/** Whether a required field counts as given: non-blank string, finite number, non-empty array, or any non-null value. */
 function hasRequiredValue(value: unknown): boolean {
   if (typeof value === "string") {
     return value.trim().length > 0;
@@ -473,6 +475,7 @@ async function executeIntent(intent: ReturnType<typeof routeIntent>, params: Rou
   return await executeRegisteredToolDirectly(intent.match.toolName, toolArgs);
 }
 
+/** Calls the registered handler by name (validation, approval and idempotency included); throws on an error result. */
 async function executeRegisteredToolDirectly(
   toolName: string,
   parameters: Record<string, unknown>,

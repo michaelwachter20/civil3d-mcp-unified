@@ -1,3 +1,14 @@
+// Scripting and knowledge domain, listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Unlike other domains,
+// every exposure here is shown to MCP clients in compact mode (selectManifestExposures): civil3d_execute,
+// civil3d_query, acad_command, civil3d_script (ScriptCommands.cs: Roslyn code, AutoCAD commands, saved .csx scripts),
+// and the knowledge tools civil3d_skills, civil3d_preferences, civil3d_memory, civil3d_project_notes and
+// civil3d_practices, which work without the plugin (skillsLibrary.ts, knowledgeBase.ts, projectNotes.ts,
+// practices.ts; at most they ask it for the Civil 3D release through currentRelease, falling back when it is off).
+// Safety: execute, command, script_save/run/delete need an approvalToken (approvalPolicy.ts); query is read-only (the
+// plugin rolls it back). Knowledge writes are checked for job data before saving (generalKnowledge.ts: skills,
+// preferences, lessons, scripts; practices via jobDataProblems), and the tool descriptions tell the AI to ask the user
+// first. civil3d_project_notes reads the suite's job database as reference only and writes only this tool's own rows
+// (tool = 'civil3d'); practices.json entries are changed only when source is "civil3d".
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -153,9 +164,12 @@ async function withLessons(code: string, result: unknown) {
   return enriched;
 }
 
+/** One plugin call on its own connection (the shorthand every plugin-backed action here uses). */
 const sendCommand = (method: string, params: Record<string, unknown>) =>
   withApplicationConnection(async (appClient) => await appClient.sendCommand(method, params));
 
+// Shared text for the civil3d_execute / civil3d_query descriptions. These strings end up in the tool descriptions and
+// docs/tools.generated.md: change them only on purpose and regenerate the docs.
 const CHECK_EXISTING_FIRST =
   "Before writing new code, check for an existing solution: civil3d_script action=list (ready-to-run saved scripts) " +
   "and civil3d_skills action=search (proven templates); adapt a match instead of starting from scratch.";
@@ -179,9 +193,19 @@ const SCRIPT_GLOBALS_HELP =
   "Never move, explode or edit COGO points unless the user explicitly asks; label positions are separate. " +
   "Any exception rolls back the whole transaction. Prefer a dedicated civil3d_* tool when one exists; check civil3d_skills for working templates.";
 
+/**
+ * The scripting domain's actions and exposures. Each exposure maps its short action names to the internal ones by
+ * prefix (civil3d_skills `read` -> `skills_read`, civil3d_project_notes `overview` -> `project_overview`, ...);
+ * civil3d_script keeps `compile` and `status` unprefixed.
+ */
 export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "scripting",
   actions: {
+    // Code execution (ScriptCommands.cs). execute (executeCode): C# with write access, one transaction and one undo
+    // step; create/edit and not retry-safe, so it needs approval. query (queryCode): the same engine, rolled back, no
+    // approval. Both add matching lessons and, once per session, a project overview (withLessons). compile
+    // (compileCode) and status (getScriptingStatus) only inspect. command (runAcadCommand): an AutoCAD command line;
+    // needs approval.
     execute: {
       action: "execute", inputSchema: ExecuteArgs, responseSchema: GenericResponseSchema,
       capabilities: ["create", "edit"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["executeCode"],
@@ -228,7 +252,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       },
     },
     // Learning actions only change the user's knowledge-base files (never the drawing), so they don't use the
-    // drawing approval flow; the tool descriptions tell the assistant to ask the user first.
+    // drawing approval flow; the tool descriptions tell the assistant to ask the user first. Their capability is
+    // "register", which approvalPolicy doesn't count as mutating. Exception: an action whose name contains a word from
+    // approvalPolicy's name rule still needs a token, which here means every *_remove (preferences, memory, project,
+    // practices). Skills are written by skillsLibrary.ts (user library in the shared folder, built-ins read-only).
     skills_write: {
       action: "skills_write", inputSchema: SkillsWriteArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
@@ -251,6 +278,8 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => retireSkill(args.skillName as string),
     },
+    // Preferences and lessons (knowledgeBase.ts): preferences.json and memory\lessons.jsonl in the shared folder's
+    // civil3d\ directory. Lessons are stamped with the running Civil 3D release (currentRelease asks the plugin).
     preferences_list: {
       action: "preferences_list", inputSchema: PreferencesListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
@@ -286,6 +315,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => removeLesson(args.id as string, await currentRelease()),
     },
+    // civil3d_project_notes (projectNotes.ts over projectDb.ts, userKnowledge.ts): the suite's job database. Reads
+    // (overview, search, file, entity, timeline, locate, latest, checks, changes, list, files, read) open it read-only
+    // and answer with a reference-only note. Writes (link, unlink, add, update, remove) touch only this tool's own
+    // facts/folders rows (tool = 'civil3d'); remove retires a note instead of deleting it.
     project_list: {
       action: "project_list", inputSchema: ProjectListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["query"], requiresActiveDrawing: false, safeForRetry: true,
@@ -381,6 +414,8 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
         since: args.since as string | undefined, file: args.file as string | undefined, limit: args.limit as number | undefined,
       }),
     },
+    // civil3d_practices (practices.ts): the suite's shared practices.json. Anyone's entries can be read; update and
+    // remove work only on entries with source "civil3d", and remove retires rather than deletes.
     practices_list: {
       action: "practices_list", inputSchema: PracticesListArgs, responseSchema: GenericResponseSchema,
       capabilities: ["inspect"], requiresActiveDrawing: false, safeForRetry: true,
@@ -406,6 +441,10 @@ export const SCRIPTING_DOMAIN_DEFINITION: DomainToolDefinition = {
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: true,
       execute: async (args) => removePractice(args.id as string),
     },
+    // Saved scripts (ScriptCommands.cs, .csx files the plugin keeps). script_save checks the script for job data here
+    // (checkGeneral) before the plugin writes it, and needs approval ("save"). script_list / script_get read only.
+    // script_run (scriptRun) runs a saved script with write access and needs approval; script_delete (scriptDelete)
+    // archives it and needs approval.
     script_save: {
       action: "script_save", inputSchema: ScriptSaveArgs, responseSchema: GenericResponseSchema,
       capabilities: ["register"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["scriptSave"],

@@ -1,3 +1,9 @@
+// civil3d_skills: the skill library. Reads the built-in skills shipped in skills\ (read-only) and the user's skills in
+// <shared folder>\civil3d\skills (or CIVIL3D_USER_SKILLS_DIR), and writes only the user's. Used by scriptingDomain.ts
+// (the tool) and serverInstructions.ts (the list of skills in every AI's instructions). Every written skill passes the
+// job-data check (generalKnowledge.ts); a replaced or retired skill is moved to skills\_archive, never deleted; files
+// are written with an atomic rename (writeAtomically from knowledgeBase.ts; no lock file here). Never calls the plugin:
+// the AI runs a skill's C# itself through civil3d_query / civil3d_execute. Format and rules in the block below.
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +41,7 @@ import { knowHowPath, knowledgeError, writeAtomically } from "./knowledgeBase.js
  * Skill format and parser ported from barbosaihan/civil3d-mcp (MIT) with CRLF-safe parsing.
  */
 
+/** One input a skill's script reads from `args`, as declared in the frontmatter's parameters list. */
 export interface SkillParameter {
   name: string;
   type: string;
@@ -52,6 +59,7 @@ export interface SkillMetadata {
 
 export type SkillSource = "built-in" | "personal";
 
+/** A parsed skill file: frontmatter fields plus the Markdown body (`content`). */
 export interface Skill extends SkillMetadata {
   content: string;
   relativePath: string;
@@ -85,6 +93,7 @@ export function personalSkillsDirectory(): string {
   return process.env.CIVIL3D_USER_SKILLS_DIR?.trim() || knowHowPath("skills");
 }
 
+/** Every *.skill.md under `directory`, recursively and sorted; skills\_archive is skipped. */
 function findSkillFiles(directory: string): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -109,6 +118,11 @@ function unquote(value: string): string {
 const parseVersions = (value: string | undefined) =>
   String(value ?? "").replace(/[[\]]/g, "").split(",").map((version) => version.trim()).filter(Boolean);
 
+/**
+ * Parses a skill file's frontmatter (a small line-based reader, not full YAML: top-level `key: value` lines and the
+ * `parameters:` list) and body. Returns undefined when there is no frontmatter; a missing name falls back to
+ * `fallbackName` (the file name), a missing category to "general".
+ */
 export function parseSkill(raw: string, fallbackName: string, relativePath = ""): Skill | undefined {
   const text = raw.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const match = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
@@ -180,6 +194,7 @@ function assignParameterField(target: Partial<SkillParameter>, key: string, rawV
   else if (key === "description") target.description = value;
 }
 
+/** Parses every skill file in one library; files without frontmatter are left out. */
 function loadFrom(directory: string | undefined, source: SkillSource): Skill[] {
   if (!directory || !existsSync(directory)) return [];
   return findSkillFiles(directory).flatMap((file): Skill[] => {
@@ -200,7 +215,10 @@ export function invalidateSkillCache() {
   cache = undefined;
 }
 
-/** Loads built-in and user skills; a user skill replaces a built-in one with the same name. */
+/**
+ * Loads built-in and user skills; a user skill replaces a built-in one with the same name (case-insensitive). Cached
+ * for 30 s per pair of folders, so the instructions and repeated searches don't re-read every file.
+ */
 export function loadSkills(): Skill[] {
   const builtInDirectory = resolveSkillsDirectory();
   const personalDirectory = personalSkillsDirectory();
@@ -221,11 +239,13 @@ export function loadSkills(): Skill[] {
   return skills;
 }
 
+/** A warning when the skill names its releases and the running one isn't among them. */
 function versionNote(skill: Skill, current?: string) {
   if (!current || skill.versions.length === 0 || skill.versions.includes(current)) return undefined;
   return `Verified on Civil 3D ${skill.versions.join(", ")}; you're running ${current}. Check it still works, then add a section for ${current} with append_version_section.`;
 }
 
+/** A skill without its body: what list and search show (parameter names only). */
 export function summarizeSkill(skill: Skill, current?: string) {
   const note = versionNote(skill, current);
   return {
@@ -241,6 +261,7 @@ export function summarizeSkill(skill: Skill, current?: string) {
   };
 }
 
+/** civil3d_skills action=list: both folders, every category, and the skills (optionally of one category). */
 export function listSkills(category?: string, current?: string) {
   const all = loadSkills();
   const skills = all.filter((skill) => !category || skill.category.toLowerCase() === category.toLowerCase());
@@ -253,6 +274,7 @@ export function listSkills(category?: string, current?: string) {
   };
 }
 
+/** civil3d_skills action=search: query words in the name score 5, category/description 3, body 1; top 20. */
 export function searchSkills(query: string, current?: string) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const scored = loadSkills()
@@ -279,6 +301,10 @@ function findSkill(skillName: string): Skill | undefined {
   return loadSkills().find((candidate) => candidate.name.toLowerCase() === normalized);
 }
 
+/**
+ * civil3d_skills action=read: the whole skill plus `howToUse`, which sends a write skill to civil3d_execute
+ * (approval-gated) and a read skill to civil3d_query. Throws OBJECT_NOT_FOUND listing the skills there are.
+ */
 export function readSkill(skillName: string, current?: string) {
   const skill = findSkill(skillName);
   if (!skill) {
@@ -316,6 +342,10 @@ function archive(file: string, reason: string) {
   return target;
 }
 
+/**
+ * The file text for a skill: frontmatter in the format parseSkill reads (with an `updated` stamp) and the body, LF
+ * line endings. Throws INVALID_INPUT over MAX_SKILL_BYTES.
+ */
 function render(meta: SkillMetadata & { versions: string[] }, body: string) {
   const frontmatter = [
     "---",
@@ -340,9 +370,11 @@ function render(meta: SkillMetadata & { versions: string[] }, body: string) {
   return text;
 }
 
+// The first line of every written skill's body; replaced on each write so it always lists the verified releases.
 const banner = (versions: string[]) => `> Verified on Civil 3D ${versions.join(", ")}.`;
 const stripBanner = (body: string) => body.replace(/^> Verified on Civil 3D [^\n]*\n+/, "");
 
+/** What civil3d_skills action=write passes to writeSkill. */
 export interface SkillWriteInput {
   name: string;
   category?: string;
@@ -356,7 +388,8 @@ export interface SkillWriteInput {
 /**
  * Creates or improves a user skill, verified on `release`. The previous version is archived. A skill verified
  * only on other releases is refused (use appendVersionSection). Writing a built-in skill's name saves the
- * user's version, which then replaces the built-in one.
+ * user's version, which then replaces the built-in one. Throws INVALID_INPUT for a bad name or category, an empty
+ * description or body, or job data. Writes <personal skills>\<category>\<name>.skill.md.
  */
 export function writeSkill(input: SkillWriteInput, release: string) {
   const name = input.name.trim().toLowerCase();

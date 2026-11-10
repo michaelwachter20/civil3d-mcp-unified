@@ -1,3 +1,11 @@
+// Low-level access to the suite's project database (one SQLite file per job in <shared folder>\projects): opening,
+// busy retries, damage detection, the analyzer's compressed text and FTS index, and which job a drawing belongs to.
+// Used by projectNotes.ts (civil3d_project_notes), openDrawing.ts, userKnowledge.ts (paths), generalKnowledge.ts (job
+// names for the job-data check) and practices.ts (TOOL). Uses node:sqlite and zlib (Node.js 22.15+), and
+// utils/atomicFiles.ts for backup rotation. Rules (project-analyzer's docs/suite-knowledge.md): reads open read-only;
+// writes are short BEGIN IMMEDIATE transactions on a database the caller asked to write; a damaged or newer-schema
+// database is never written; paths are stored without the user's profile. Callers write only tool = 'civil3d' rows.
+// Nothing here touches a job folder: only the shared folder. The block below the imports lists what is here.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -28,7 +36,9 @@ import { knowledgeError, sharedRoot } from "./knowledgeBase.js";
  * Uses Node's built-in node:sqlite and zlib zstd (Node.js 22.15 or newer); no native packages.
  */
 
+/** The schema version this tool writes; a database with a higher meta.schema_version is read but never written. */
 export const SCHEMA_VERSION = 1;
+/** This tool's name in the suite's `tool` / `source` columns: the only rows (and practices) Civil 3D MCP changes. */
 export const TOOL = "civil3d";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -48,11 +58,13 @@ function sqliteModule(): Sqlite {
   return sqlite;
 }
 
+/** The timestamp format the suite stores (UTC ISO 8601). */
 export const nowIso = () => new Date().toISOString();
 
 /** "Elm Street Drainage" -> "elm-street-drainage" (the same in every suite tool). */
 export const slug = (name: string) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 
+/** <shared folder>\projects, where every job's database lives (may not exist). */
 export function projectsDirectory(): string {
   return path.join(sharedRoot(), "projects");
 }
@@ -66,6 +78,10 @@ export function databaseFileFor(name: string): string {
 
 let schemaText: string | undefined;
 
+/**
+ * The text of project-db.sql: next to the compiled module (copied into build\ by scripts/copy-static-assets.mjs) or
+ * in src\tools when running from the repository. Read once. Throws when the installation lacks it.
+ */
 export function schemaSql(): string {
   if (schemaText === undefined) {
     const file = [path.join(moduleDirectory, "project-db.sql"), path.resolve(moduleDirectory, "..", "..", "src", "tools", "project-db.sql")]
@@ -181,6 +197,7 @@ export function restoreAdvice(file: string): string {
     : `Restore a backup: ${backups.length ? copy : `${copy}; if Project Analyzer is installed, ${restore} lists the ones it has`}.`;
 }
 
+/** The CIVIL3D.CONFLICT error for a damaged database: nothing was changed, and how to restore a backup. */
 function damagedError(file: string, detail: string) {
   return knowledgeError(
     "CIVIL3D.CONFLICT",
@@ -246,6 +263,7 @@ function explain(file: string, error: unknown): unknown {
 
 // ---------------------------------------------------------------- opening
 
+/** An open job database; the caller (withProjectDb) closes `db`. */
 export interface ProjectDb {
   db: DatabaseSync;
   file: string;
@@ -256,6 +274,7 @@ export interface ProjectDb {
   schemaVersion: number;
 }
 
+/** How to open a job database: read-only unless `write` or `create`. */
 export interface OpenOptions {
   /** Create the database when it is missing (from project-db.sql). Implies write. */
   create?: boolean;
@@ -291,6 +310,7 @@ function schemaVersionOf(db: DatabaseSync): number | undefined {
   return Number(metaValue(db, "schema_version") ?? 0) || 0;
 }
 
+/** Inserts or replaces one meta row. Call inside a write transaction. */
 export function setMeta(db: DatabaseSync, key: string, value: string) {
   db.prepare("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
@@ -445,6 +465,7 @@ export function openProjectDb(file: string, options: OpenOptions = {}): ProjectD
   }
 }
 
+// The database's journal mode in lower case ("wal", "delete", ...); WAL lets readers work while one tool writes.
 const journalMode = (db: DatabaseSync) =>
   String((db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string } | undefined)?.journal_mode ?? "").toLowerCase();
 
@@ -549,6 +570,7 @@ export function importJsonNotes(db: DatabaseSync, jsonFile: string): number {
 
 // ---------------------------------------------------------------- text
 
+/** One text_blocks row's bytes, by its codec (zstd from Project Analyzer; zlib and none also allowed by the contract). */
 function decompress(codec: string, data: Uint8Array): Buffer {
   if (codec === "zstd") return zlib.zstdDecompressSync(data);
   if (codec === "zlib") return zlib.inflateSync(data);
@@ -561,6 +583,7 @@ interface PartRow { id: number; file_id: string; label: string | null; block_id:
 /** Decompressed blocks by id, kept while one answer reads several parts (the contract: cache a block). */
 export type BlockCache = Map<number, Buffer>;
 
+/** A decompressed block, from `blocks` or read and added to it. */
 function block(db: DatabaseSync, blockId: number, blocks: BlockCache): Buffer {
   let found = blocks.get(blockId);
   if (!found) {
@@ -601,6 +624,7 @@ export function ftsQuery(text: string): string {
   return searchTokens(text).map((token) => `"${(token.match(PIECE) ?? []).join(" ")}"`).join(" ");
 }
 
+/** One search result: the file, the text part (its FTS rowid) and a short snippet around the first match. */
 export interface TextHit { fileId: string; partId: number; label: string | null; snippet: string }
 
 // Decompressed blocks one search keeps: small parts of many files share a block, but a block can be megabytes.
@@ -626,7 +650,9 @@ export function searchText(db: DatabaseSync, text: string, limit = 20): TextHit[
 
 // ---------------------------------------------------------------- finding the job of a drawing
 
+/** One folder that belongs to a job: who linked it (`tool`) and its comparison key (pathKey). */
 export interface JobRoot { path: string; tool: string; key: string }
+/** A job in the shared projects folder: its database file, slug, name and every folder that belongs to it. */
 export interface Job {
   file: string; slug: string; name: string; sourceRoot?: string; roots: JobRoot[];
   /** Why the database couldn't be read (damaged, busy, not a project database); the job is still listed. */
@@ -649,6 +675,7 @@ export function invalidateJobIndex() {
  */
 export const FOLDER_PREFIX = "<job folder: ";
 
+/** meta job_folders as [{name, path}]: a job's extra folders. Empty when missing, unreadable or not valid JSON; never throws. */
 export function jobFolders(db: DatabaseSync): Array<{ name: string; path: string }> {
   try {
     const folders = JSON.parse(metaValue(db, "job_folders") ?? "[]") as unknown;
@@ -693,6 +720,10 @@ export function storedPath(db: DatabaseSync, absolute: string): string | undefin
   return undefined;
 }
 
+/**
+ * One job's name and folders (source_root, every folders row of any tool, meta job_folders), read without waiting.
+ * Opened read-only. Throws the busy, damaged or not-a-project-database error.
+ */
 function readJob(file: string): Job {
   return withProjectDbSync(file, ({ db }) => {
     const name = metaValue(db, "project_name") ?? path.basename(file, ".db");

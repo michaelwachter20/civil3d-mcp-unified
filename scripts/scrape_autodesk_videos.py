@@ -9,6 +9,12 @@ This script can:
 - Crawl video index pages and inspect their linked video detail pages
 - Extract videos from YouTube, Vimeo, and other embedded players
 - Save results to JSON or CSV
+
+A maintainer's tool, run by hand (needs Python 3 with requests and beautifulsoup4; not part of npm build or CI):
+    python scripts/scrape_autodesk_videos.py <help URL> [...] -o autodesk_videos.json
+It refreshes the tutorial video catalog that civil3d_help serves (src/help/videoCatalog.ts); scripts/
+copy-static-assets.mjs copies the repository's autodesk_videos.json into build/help/data/. It only reads public
+Autodesk help pages over HTTPS and writes the one output file; it touches no drawing and no job data.
 """
 
 import argparse

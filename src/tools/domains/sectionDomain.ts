@@ -1,3 +1,8 @@
+// Section domain: `civil3d_section` and its `civil3d_section_view_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts). Each action is one call to SectionCommands.cs. Reads (list_sample_lines, get_section_data,
+// view_list) need no approval; the writes (create_sample_lines, view_create, view_update_style, view_group_create) are
+// non-retryable and view_export writes a CSV through the plugin's FileBoundary (export), so approvalPolicy asks for an
+// approvalToken on all of them. Details are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -202,6 +207,10 @@ const canonicalSectionInputShape = {
  */
 export const SECTION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "section",
+  // Action -> plugin method. Read-only: list_sample_lines (listSampleLineGroups), get_section_data (getSectionData),
+  // view_list (listSectionViews). Writes needing approval: create_sample_lines (createSampleLines), view_create
+  // (createSectionViews), view_update_style (updateSectionViewStyles), view_group_create (createSectionViewGroup),
+  // view_export (exportSectionData, writes a file, not the drawing).
   actions: {
     list_sample_lines: {
       action: "list_sample_lines",

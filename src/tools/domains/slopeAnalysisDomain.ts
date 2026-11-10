@@ -1,3 +1,7 @@
+// Slope analysis domain: canonical tool `civil3d_slope_analysis`, alias `civil3d_slope_geometry_calculate`. Listed in
+// MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts) and run by domainRuntime.ts. Its one action is a read-only query (no
+// approval) forwarded to SlopeAnalysisCommands.cs; Node only fills defaults (2:1 cut, 3:1 fill, 10-unit interval).
+// Geotechnical stability is deliberately not offered (see the tool description).
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -9,6 +13,7 @@ const SlopeGeometryArgs = z.object({ action: z.literal("geometry_calculate"), al
 export const SLOPE_ANALYSIS_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "slope_analysis",
   actions: {
+    // geometry_calculate: daylight and bench geometry along an alignment/profile against a surface (calculateSlopeGeometry); read-only.
     geometry_calculate: { action: "geometry_calculate", inputSchema: SlopeGeometryArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["calculateSlopeGeometry"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("calculateSlopeGeometry", { alignmentName: args.alignmentName ?? null, profileName: args.profileName ?? null, surfaceName: args.surfaceName ?? null, cutSlopeRatio: args.cutSlopeRatio ?? 2.0, fillSlopeRatio: args.fillSlopeRatio ?? 3.0, benchWidth: args.benchWidth ?? 0, benchHeightInterval: args.benchHeightInterval ?? 20, stationStart: args.stationStart ?? null, stationEnd: args.stationEnd ?? null, stationInterval: args.stationInterval ?? 10, roadwayWidth: args.roadwayWidth ?? null })) },
   },
   exposures: [

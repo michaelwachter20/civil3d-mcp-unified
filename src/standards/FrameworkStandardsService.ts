@@ -1,7 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 /**
  * The framework standards search behind `civil3d_standards action=lookup` (standardsDomain.ts) and the
  * `civil3d://standards/framework` resource (mcpResources.ts). The rules are general CAD-standards guidance
@@ -10,7 +6,11 @@ import { fileURLToPath } from "node:url";
  * drawing and no plugin call.
  *
  * Search is plain keyword scoring, no index: the file is small (a few dozen rules), read once and cached.
+ * Read-only; the rules file is general guidance and must hold no job data (CLAUDE.md rule 1).
  */
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** One rule as stored in civil3d_framework_rules.json: a section of the framework document and its guidance. */
 export interface FrameworkPromptRule {
@@ -31,6 +31,7 @@ export interface StandardsLookupArgs {
   maxResults?: number;
 }
 
+/** One returned rule: `sourceScore` is the rule's own weight, `matchScore` the ranking score (relevance + weight). */
 export interface StandardsLookupMatch {
   sectionNumber: string;
   title: string;
@@ -80,6 +81,7 @@ function getPromptRulesPath(): string {
   );
 }
 
+/** The parsed rules (a non-array file counts as no rules). */
 async function loadPromptRules(): Promise<FrameworkPromptRule[]> {
   if (!cachedRulesPromise) {
     cachedRulesPromise = readFile(getPromptRulesPath(), "utf8").then((raw) => {
@@ -96,6 +98,7 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\s_\-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Normalized words of two or more characters. */
 function splitTerms(value: string): string[] {
   return normalizeText(value)
     .split(" ")
@@ -103,6 +106,7 @@ function splitTerms(value: string): string[] {
     .filter((term) => term.length >= 2);
 }
 
+/** The topic's own words plus its TOPIC_ALIASES words, without duplicates. */
 function getTopicTerms(topic?: string): string[] {
   if (!topic) {
     return [];

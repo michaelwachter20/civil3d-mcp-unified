@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The pipe domain: `civil3d_pipe` for gravity and pressure networks, and its aliases (`civil3d_pipe_network*`,
  * `civil3d_pipe_catalog`, `civil3d_pressure_*`, ...). The plugin side is PipeNetworkCommands.cs,
@@ -11,7 +7,18 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * Most actions forward to one plugin method. Two run in Node and call several: `size_network` (picks a catalog part
  * for each pipe with Manning's equation, optionally resizing) and `automate_profile_view` (makes sure a surface
  * profile exists, then creates a profile view). workflowDomain.ts reuses `size_network` and `hydraulic_analysis`.
+ * The sizing math (`partDiameter`, `fullFlowCapacity`, `sizePipe`) is exported so tests can check it offline.
+ *
+ * Approval (approvalPolicy.ts): reads (list, get*, check_interference, catalog_list, calculate_hgl,
+ * hydraulic_analysis, validate_pressure_network) need none. Every create/add/edit/delete action needs an
+ * approvalToken, and so do size_network (declared as an edit even when it only recommends), automate_profile_view
+ * and export_pressure_network (its `export` capability, although it only returns data). The composite actions make
+ * one plugin write per step, so each step is its own undo step.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
+
 const Point3DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -460,6 +467,9 @@ export function sizePipe(
 export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "pipe",
   actions: {
+    // Gravity networks (PipeNetworkCommands.cs): list, get, get_pipe, get_structure, check_interference and
+    // catalog_list read; create, add_pipe and add_structure write (approval). calculate_hgl, hydraulic_analysis and
+    // get_structure_properties are read-only calculations in PipeHydraulicsCommands.cs.
     list: {
       action: "list",
       inputSchema: PipeListArgsSchema,
@@ -711,7 +721,9 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         return { networkName: args.networkName, alignmentName, surfaceName: surfaceName ?? null, profileName, profileView };
       }),
     },
-    // Pressure networks (PressureNetworkCommands.cs): one plugin call per action.
+    // Pressure networks (PressureNetworkCommands.cs): one plugin call per action. Reads: list_pressure_networks,
+    // get_pressure_network, validate_pressure_network, get_pressure_pipe_properties, get_pressure_fitting_properties.
+    // Everything else writes the drawing (or, for export_pressure_network, is export-flagged) and needs approval.
     list_pressure_networks: {
       action: "list_pressure_networks",
       inputSchema: PipeListPressureNetworksArgsSchema,

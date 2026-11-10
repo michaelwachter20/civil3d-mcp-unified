@@ -1,3 +1,9 @@
+// Plugin domain: the `civil3d_health` tool (one action, `health`). Listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts). Read-only, no approval.
+// It calls getCivil3DHealth (DrawingCommands.cs: connection, queue state, current operation, memory, jobs, log
+// file) and adds `knowledge` from knowledgeBase.ts (where the shared folder and civil3d\ know-how folder are).
+// A failure reading the knowledge folders is swallowed so the health check itself never fails on them; a plugin
+// that isn't reachable still fails the call with the connection error (SocketClient.ts).
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import { knowledgeStatus } from "../knowledgeBase.js";
@@ -44,6 +50,7 @@ const HealthResponseSchema = z.object({
 export const PLUGIN_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "plugin",
   actions: {
+    /** Plugin health plus the server's knowledge folder status (the latter only when it can be read). */
     health: {
       action: "health",
       inputSchema: z.object({ action: z.literal("health") }),

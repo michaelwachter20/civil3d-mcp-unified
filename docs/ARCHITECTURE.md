@@ -41,8 +41,10 @@ HTTP client --HTTP 127.0.0.1:3000-> src/httpBridge.ts
    arguments (for the canonical tool it reads `action`; an alias fixes the action and renames fields, e.g.
    `alignmentName` to `name`). The action's zod `inputSchema` parses them.
 4. **Approval.** `approvalPolicy.enforce` (`src/tools/approvalPolicy.ts`) decides from the action's `capabilities`,
-   its name and `safeForRetry` whether approval is needed (delete, import, export; names such as `save`, `undo`,
-   `publish`, `sync`, `fix`; any non-retryable mutation). If it is, the call must carry an `approvalToken` from
+   its name and `safeForRetry` whether approval is needed (delete, import, export; names such as `remove`, `save`,
+   `undo`, `publish`, `sync`, `fix`; any non-retryable mutation, where only `create`, `edit`, `delete`, `manage`,
+   `import` and `export` count as mutations). The name rule applies whatever the capabilities say, so the knowledge
+   tools' `*_remove` actions need a token too. If it is, the call must carry an `approvalToken` from
    `civil3d_request_approval`: single use, five minutes, bound to the tool, action, a hash of the exact parameters
    and a fingerprint of the active drawing (a hash of `getDrawingInfo`). `CIVIL3D_APPROVAL_MODE=disabled` turns this
    off for disposable test setups.
@@ -71,9 +73,11 @@ HTTP client --HTTP 127.0.0.1:3000-> src/httpBridge.ts
    - Waiting longer than `CIVIL3D_IDLE_WAIT_SECONDS` (default 30) fails with `CIVIL3D.HOST_BUSY` naming the active
      command, and work that never started is abandoned so it can't run late.
 9. **Back to the client.** The handler's return value becomes the JSON-RPC `result`. In Node, the response schema (if
-   any) validates it, a result over 32 KB or from a report/export/summary action is also kept for an hour as an MCP
-   resource (`civil3d://reports/{id}`, `reportResourceStore.ts`), and the MCP result
-   carries the JSON as text, as `structuredContent: { action, result }`, and the request id in `_meta`.
+   any) validates it, a result over 32 KB or from a report/export/summary/capabilities action is also kept for an
+   hour as an MCP resource (`civil3d://reports/{id}`, `reportResourceStore.ts`, in memory only), and the MCP result
+   carries the JSON as text, as `structuredContent: { action, result }`, and the request id in `_meta`. An answer over
+   2 MiB is replaced by its shape (first list items, cut strings) and a pointer to the resource (`largeAnswer.ts`),
+   because an MCP client drops the whole connection when one message is too big.
 
 The HTTP bridge (`src/httpBridge.ts`) doesn't have its own path: `POST /execute` looks the tool up in
 `toolHandlerRegistry.ts`, which captured every handler during registration (aliases too, even when they aren't
@@ -90,8 +94,11 @@ Each domain file exports one `DomainToolDefinition` (types in `domainRuntime.ts`
   C# methods the action calls, which a test checks against `CommandDispatcher.cs`.
 - `exposures`: the MCP tools that reach those actions. The **first** exposure is the canonical tool (for example
   `civil3d_surface` with an `action` argument); the rest are aliases (`civil3d_surface_volume_calculate`). By default
-  only the canonical tool of each domain is listed to MCP clients, plus all scripting tools and `civil3d_orchestrate`
-  (`selectManifestExposures` in `toolManifest.ts`); `CIVIL3D_ENABLE_TOOL_ALIASES=true` lists every alias.
+  only the canonical tool of each domain definition is listed to MCP clients, plus all scripting tools and
+  `civil3d_orchestrate` (`selectManifestExposures` in `toolManifest.ts`); `CIVIL3D_ENABLE_TOOL_ALIASES=true` lists
+  every alias. The choice is per definition file, not per `ToolDomain` name: `superelevationDomain.ts` and
+  `intersectionDomain.ts` use the domain name `alignment` but are their own definitions, so `civil3d_superelevation`
+  and `civil3d_intersection` are listed next to `civil3d_alignment`.
   An action can exist in `actions` without being in the canonical tool's `supportedActions`; then only an alias or
   the orchestrator reaches it.
 
@@ -103,17 +110,20 @@ Most domains are thin: each action forwards its arguments to one plugin method. 
 
 | Domain file | What runs in Node |
 |---|---|
-| `workflowDomain.ts` | Multi-step workflows. Most are one plugin call (`*Workflow` methods in `WorkflowCommands.cs`); `grading_surface_volume`, `pipe_network_design` and `survey_import_adjust_figures` call other domains' actions in turn and report each step. Those inner calls use the actions' `execute` directly, so approval is checked once, on the workflow action |
+| `workflowDomain.ts` | Multi-step workflows. Most are one plugin call (`*Workflow` methods in `WorkflowCommands.cs`); `grading_surface_volume` and `pipe_network_design` call other domains' actions in turn and report each step. Those inner calls use the actions' `execute` directly, so approval is checked once, on the workflow action. (`survey_import_adjust_figures` is written the same way but no exposure lists it, so no tool reaches it) |
+| `corridorDomain.ts` | `summary`: the corridor, its surfaces and, when it can, its volumes (`getCorridor`, `getCorridorSurfaces`, `computeCorridorVolumes`) |
+| `drawingRuntimeDomain.ts` | `open`: finds "the latest C-101" among the open drawings, then in the job database (`openDrawing.ts`), before asking the plugin to open it |
 | `surfaceDomain.ts` | `comparison_workflow` (two surfaces plus their volume) and `drainage_workflow` (flow path, elevations along it, Rational runoff) |
 | `pipeDomain.ts` | `size_network` (Manning's equation picks a catalog part per pipe, optionally resizes) and `automate_profile_view` |
 | `profileDomain.ts`, `alignmentDomain.ts` | `report` actions that sample stations and summarize |
 | `hydrologyDomain.ts` | Nothing: every action, the runoff workflows included, is one call to `HydrologyCommands.cs` and its neighbours |
-| `scriptingDomain.ts` | Code execution (`civil3d_execute`, `civil3d_query`, `acad_command`, `civil3d_script`) and every knowledge tool (below), which never call the plugin |
+| `scriptingDomain.ts` | Code execution (`civil3d_execute`, `civil3d_query`, `acad_command`, `civil3d_script`) and every knowledge tool (below), which work without the plugin (they only ask it, best effort, for the Civil 3D release or the active drawing) |
 | `docsDomain.ts` | `civil3d_docs` (the catalog) and `civil3d_orchestrate` |
 
 `civil3d_help` (`helpTool.ts`, `src/help/`) and the approval tools (`approvalTool.ts`) are registered directly, not
 through the manifest. Help searches the Autodesk Offline Help installed with Civil 3D (index cached under
-`%LOCALAPPDATA%\Civil3DMcp\help-index`) and doesn't need the plugin.
+`%LOCALAPPDATA%\Civil3DMcp\help-index`, or `CIVIL3D_HELP_CACHE_ROOT`) and doesn't need the plugin; its `reindex`
+action is refused unless `CIVIL3D_ENABLE_HELP_REINDEX=true`.
 
 ## The orchestration layer (`src/orchestration/`, `src/tools/civil3d_orchestrate.ts`)
 
@@ -126,7 +136,9 @@ through the manifest. Help searches the Autodesk Offline Help installed with Civ
   title and domain matches add points and explicit entries get a bonus. It also pulls values out of the text
   (quoted names, "alignment X", paths, points, numbers).
 - `ProjectContextService.ts` asks the plugin (`getProjectContext`) for drawing info, object types and the selection;
-  `SelectionResolver.ts` fills a missing alignment, surface or object name from what the user has selected.
+  `SelectionResolver.ts` fills a missing alignment, surface or object name from what the user has selected. This is
+  called on every orchestrate call, planning included, so the orchestrator needs Civil 3D running with the AI
+  connection on. ("Project context" here is the open drawing, not the job database of `civil3d_project_notes`.)
 - `WorkflowPlanner.ts` turns the routed intent into a plan: the steps, which are ready, missing input or blocked
   (for example no surfaces in the drawing), and questions to ask the user. It only plans; it never executes.
 - `civil3d_orchestrate.ts` puts these together and, when executing, calls the chosen tool through
@@ -153,13 +165,15 @@ through the manifest. Help searches the Autodesk Offline Help installed with Civ
 
 All of it lives outside the repository, in the suite's shared folder (`PROJECT_KNOWLEDGE_DIR`, by default
 `Documents\Project Knowledge`), shared with Project Analyzer and TBC MCP. The contract is Project Analyzer's
-`docs/suite-knowledge.md`. These tools run in Node only (`scriptingDomain.ts`) and don't need Civil 3D.
+`docs/suite-knowledge.md`. These tools run in Node (`scriptingDomain.ts`) and work without Civil 3D; when the
+plugin answers they use it for the Civil 3D release (`getCivil3DHealth`, else `CIVIL3D_RELEASE`, else 2027) and, for
+the project notes, to find the active drawing (`listOpenDrawings` / `getDrawingInfo`).
 
 - **Know-how on driving Civil 3D** (`civil3d\` in the shared folder): `knowledgeBase.ts` keeps `preferences.json`
   and `memory\lessons.jsonl` (`civil3d_preferences`, `civil3d_memory`); `skillsLibrary.ts` merges the built-in skills
   in `skills\` with the user's (`civil3d_skills`); saved scripts are `.csx` files the plugin manages
   (`civil3d_script`). Before anything is saved, `generalKnowledge.ts` refuses text that names a job, its folders or
-  files, a drawing file, an absolute path or the user's profile. Lessons whose topics appear in code sent to
+  files, a drawing file, an absolute or network (UNC) path or the user's profile; the same check as TBC MCP's. Lessons whose topics appear in code sent to
   `civil3d_execute` / `civil3d_query` come back with the result.
 - **The job** (`projects\<slug>.db`, one SQLite file per job): `projectDb.ts` opens it with Node's built-in
   `node:sqlite` (read-only for reads; short `BEGIN IMMEDIATE` writes; busy retries on a timer so the server keeps
@@ -168,11 +182,13 @@ All of it lives outside the repository, in the suite's shared folder (`PROJECT_K
   writes only its own notes and folders (`tool = 'civil3d'`). Every read answer carries a "reference only" note: the
   database is a snapshot for finding things, never data for edits. `userKnowledge.ts` reads the job's
   `User Knowledge` folder (text, .docx, .xlsx, .pptx) and only ever creates it. `openDrawing.ts` uses the database to
-  open "the latest C-101".
+  open "the latest C-101" when no open drawing matches.
 - **Good practices** (`practices.json`): `practices.ts`, `civil3d_practices`; only entries with
   `source: "civil3d"` are changed by this tool.
-- Shared files are changed under a lock file with a backup of the previous version and an atomic rename
-  (`src/utils/atomicFiles.ts`).
+- `preferences.json`, `lessons.jsonl` and `practices.json` are changed under a lock file with a backup of the
+  previous version and an atomic rename (`src/utils/atomicFiles.ts`). Skills are written atomically, with the
+  previous version moved to `skills\_archive` first. Job databases are changed in short SQLite transactions, and a
+  database this tool created gets a daily `VACUUM INTO` backup.
 
 The table layout of the job database is `src/tools/project-db.sql`, a copy of Project Analyzer's schema;
 `tests/project_notes.test.ts` checks the copy and the fixture job in `tests/fixtures/`.
@@ -210,5 +226,27 @@ schema and annotations. Nothing on the C# side is registered at startup: the dis
   `"<tool> action '<action>' failed: <message>"`, `errorCode` and `rpcCode`: taken from the error when it has them,
   otherwise inferred from the message (timeout, connection, not found, ...). Knowledge tools throw
   `knowledgeError(code, message)` the same way. Messages are written for the AI: they say what to do next.
+  Approval errors carry no code of their own: a missing token comes back as `CIVIL3D.CONFLICT` (from the words
+  "Approval required"), a refused token as `CIVIL3D.INTERNAL_ERROR`.
 - **HTTP bridge.** `executeRegisteredTool` turns an error result back into a thrown error, and the bridge maps it to
   an HTTP status and `{ error: { code, message } }`.
+
+## How this fits the suite
+
+Civil 3D MCP is one of four programs that share one knowledge folder on the user's PC; the map of all four is
+[`../project-analyzer/docs/SUITE-MAP.md`](../../project-analyzer/docs/SUITE-MAP.md) (Project Analyzer's repository,
+checked out next to this one). What this repository's TypeScript side shares with the others:
+
+- **Project Analyzer** (the hub) reads a job folder read-only and fills the job's project database
+  (`<shared folder>\projects\<slug>.db`). `civil3d_project_notes` (`projectDb.ts`, `projectNotes.ts`) reads it
+  read-only, as reference only, and writes only its own `facts` / `folders` rows (`tool = 'civil3d'`). The table layout
+  is Project Analyzer's `schema/project-db.sql`, copied byte for byte to `src/tools/project-db.sql`; the contract is its
+  `docs/suite-knowledge.md`. A job is matched to a drawing by folder, and job names are made into slugs the same way
+  in every suite tool.
+- **TBC MCP** (Trimble Business Center) reads the same job databases and shares `practices.json`; each tool changes
+  only its own entries (`source: "civil3d"` here). Both refuse the same job data in know-how (`generalKnowledge.ts`
+  follows TBC MCP's check) and use the same lock-file behaviour (`atomicFiles.ts`).
+- **Outlook Classic Reader** has no direct link to this repository: Project Analyzer brings a job's mail into the job
+  database, where `civil3d_project_notes` shows those emails as files under `<outlook>\` (no file on disk).
+- The know-how on driving Civil 3D (preferences, lessons, skills, scripts) stays in the `civil3d\` subfolder and is
+  this tool's alone.

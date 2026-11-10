@@ -1,3 +1,10 @@
+// ScriptLibrary.cs - the library of saved .csx scripts behind civil3d_script (src/tools/domains/scriptingDomain.ts;
+// plugin methods scriptSave, scriptList, scriptGet, scriptRun, scriptDelete) and MCPRUN / MCPSCRIPTS. ScriptCommands.cs
+// is the only caller: it saves, lists, shows, retires and runs scripts through this class, and ScriptEngine compiles
+// the code. Everything here is file work in the scripts folder, under the suite's shared folder (SharedFolder) by
+// default, written and deleted only through FileBoundary; nothing touches a drawing. Add, never delete: a replaced or
+// retired script is first copied to _archive. Keeping scripts free of job data is checked by the MCP server
+// (generalKnowledge.ts) before a save reaches the plugin.
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -5,10 +12,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace Civil3DMcpPlugin;
-
-// The library of saved .csx scripts behind civil3d_script (src/tools/domains/scriptingDomain.ts). ScriptCommands.cs
-// is the only caller: it saves, lists, shows, retires and runs scripts through this class, and ScriptEngine compiles
-// the code. Everything here is file work in the scripts folder (through FileBoundary); nothing touches a drawing.
 
 /// <summary>
 /// One argument a saved script declares in its header: a C#-style <c>Name</c>, a <c>Type</c> (one of string,
@@ -145,6 +148,8 @@ internal static class ScriptLibrary
     }
   }
 
+  /// <summary>The per-item checks of <see cref="ParseParameters"/>; a wrongly typed field (GetValue on a non-string or
+  /// non-bool) surfaces as InvalidOperationException, which the caller turns into CIVIL3D.INVALID_INPUT.</summary>
   private static IReadOnlyList<ScriptParameter> ParseParameterArray(JsonArray array)
   {
     var parameters = new List<ScriptParameter>();

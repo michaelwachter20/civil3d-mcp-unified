@@ -1,3 +1,6 @@
+// Guards src/utils/requestContext.ts: the request id and the caller's abort signal reach nested async work.
+// Pure unit test.
+
 import { describe, expect, it } from "vitest";
 import {
   createRpcRequestId,

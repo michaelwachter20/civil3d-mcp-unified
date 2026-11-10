@@ -1,3 +1,11 @@
+# Registers this repository's MCP server with Claude Code: `claude mcp add --transport stdio <ServerName>` pointing at
+# scripts/claude-bootstrap-and-run.ps1. Installs npm dependencies and builds first when they are missing.
+#
+#   npm run claude:add         -Scope project (writes the project's .mcp.json through the claude CLI)
+#   npm run claude:add:user    -Scope user
+#   npm run claude:print-add   -PrintOnly: prints the command and changes nothing
+#
+# Run by hand. It changes Claude Code's MCP configuration, nothing in Civil 3D.
 param(
   [ValidateSet("project", "user", "local")]
   [string]$Scope = "project",

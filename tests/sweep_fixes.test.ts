@@ -1,3 +1,6 @@
+// Regression tests for input-shape bugs found by a full sweep of every action in a live Civil 3D (geometry, survey,
+// section, plan production domains and manifest action lookup). Imports the real definitions from src/; no Civil 3D.
+
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { GEOMETRY_DOMAIN_DEFINITION } from "../src/tools/domains/geometryDomain.js";

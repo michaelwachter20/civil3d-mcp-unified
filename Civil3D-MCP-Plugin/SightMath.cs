@@ -1,3 +1,6 @@
+// SightMath.cs - pure AASHTO sight-distance formulas (stopping and passing) used by SightDistanceCommands
+// (calculateSightDistance, checkStoppingDistance; civil3d_sight_distance, src/tools/domains/sightDistanceDomain.ts).
+// No Civil 3D types and no drawing access, so tests/FileBoundaryHarness compiles this file and checks the numbers.
 namespace Civil3DMcpPlugin;
 
 /// <summary>
@@ -9,6 +12,7 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class SightMath
 {
+  /// <summary>AASHTO's design deceleration (11.2 ft/s²) over gravity, used when the caller gives no friction.</summary>
   public const double DesignFriction = 0.348;
 
   private static readonly double[] PassingSpeeds = [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80];
@@ -38,6 +42,7 @@ public static class SightMath
     return PassingFeet[upper - 1] + ratio * (PassingFeet[upper] - PassingFeet[upper - 1]);
   }
 
+  /// <summary>Rounds up to the next 5 only on level ground with the design friction (the published table's case).</summary>
   private static double RoundedForDesign(double distance, double gradePercent, double? friction) =>
     Math.Abs(gradePercent) < 1e-9 && friction == null ? Math.Ceiling(distance / 5.0) * 5.0 : distance;
 }

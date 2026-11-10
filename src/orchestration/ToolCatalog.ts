@@ -1,13 +1,10 @@
-import { TOOL_CATALOG as TOOL_METADATA_CATALOG } from "../tools/tool_catalog.js";
-import type {
-  ToolCatalogEntry as ToolMetadataCatalogEntry,
-  ToolDomain,
-} from "../tools/toolMetadata.js";
-
 /**
  * The routes civil3d_orchestrate can pick from (see IntentRouter.ts). A route names one tool and action, the words
  * that point to it, the fields it can't run without, and how to build the tool's arguments from the parameters the
- * router extracted.
+ * router extracted. Imported by IntentRouter.ts (TOOL_CATALOG) and src/tools/civil3d_orchestrate.ts
+ * (findToolCatalogEntry). Pure data and functions: no drawing access, no I/O. The keywords, titles and descriptions
+ * below are routing data: changing them changes which tool a request goes to (tests/orchestration.test.ts checks
+ * typical requests).
  *
  * Two kinds, both in TOOL_CATALOG:
  *   - explicit routes (EXPLICIT_TOOL_CATALOG): written by hand for the common requests, with good keywords and the
@@ -18,7 +15,13 @@ import type {
  *     guesses in inferDerivedRequiredFields.
  * An explicit route replaces the derived one for the same tool and action.
  */
+import { TOOL_CATALOG as TOOL_METADATA_CATALOG } from "../tools/tool_catalog.js";
+import type {
+  ToolCatalogEntry as ToolMetadataCatalogEntry,
+  ToolDomain,
+} from "../tools/toolMetadata.js";
 
+/** A route's id, e.g. "drawing_info" for an explicit route or "tool:<toolName>:<action>" for a derived one. */
 export type OrchestratorIntent = string;
 
 /** One route; `intent` is unique ("tool:<toolName>:<action>" for derived routes). */
@@ -551,6 +554,7 @@ function humanizeToken(token: string): string {
     .trim();
 }
 
+/** Capitalizes the first letter of each word. */
 function titleCase(text: string): string {
   return text
     .split(/\s+/)

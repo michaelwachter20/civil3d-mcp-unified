@@ -1,3 +1,8 @@
+// ScriptResultSerializer.cs - turns whatever a Roslyn script returns into the JSON "result" of executeCode,
+// queryCode and scriptRun. ScriptEngine.RunInDocumentAsync calls ToJson before it commits or aborts the run's
+// transaction, so DBObjects in the result can still be read. AutoCAD types get compact shapes (ObjectId -> handle,
+// type, erased; points and vectors -> x/y/z; any RXObject -> type, handle, name, layer); a result over 4 MB is cut to a
+// preview; anything that can't be serialized comes back as its type and ToString with a warning. Reads only.
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -18,6 +23,12 @@ internal static class ScriptResultSerializer
 
   private static readonly JsonSerializerOptions Options = CreateOptions();
 
+  /// <summary>
+  /// The value as JSON: null stays null, a JsonNode is copied, anything else goes through System.Text.Json with the
+  /// converters below (cycles ignored, depth 32, fields included, enums as names, NaN/Infinity allowed). Never throws
+  /// for an unserializable value (except cancellation): it returns {type, text, serializationWarning}. Over 4 MB of
+  /// JSON returns {truncated, originalCharacters, preview (first 100,000 characters), hint}.
+  /// </summary>
   public static JsonNode? ToJson(object? value)
   {
     if (value == null)
@@ -96,6 +107,10 @@ internal static class ScriptResultSerializer
     return options;
   }
 
+  // The converters below only write; reading a script result back is never needed.
+
+  /// <summary>ObjectId as {handle, type (its RX class name, e.g. AcDbLine; null if unreadable), erased}; a null id as
+  /// null.</summary>
   private sealed class ObjectIdConverter : JsonConverter<ObjectId>
   {
     public override ObjectId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
@@ -280,6 +295,7 @@ internal static class ScriptResultSerializer
     }
   }
 
+  /// <summary>Writes a coordinate; NaN or Infinity (invalid JSON numbers) are written as strings.</summary>
   private static void WriteNumber(Utf8JsonWriter writer, string name, double value)
   {
     if (double.IsFinite(value))

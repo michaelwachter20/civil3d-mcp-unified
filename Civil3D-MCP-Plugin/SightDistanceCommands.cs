@@ -1,3 +1,8 @@
+// SightDistanceCommands.cs - read-only sight distance checks. Methods (CommandDispatcher.cs): calculateSightDistance,
+// checkStoppingDistance. Caller: src/tools/domains/sightDistanceDomain.ts (civil3d_sight_distance). The formulas are in
+// SightMath (pure, tested in tests/FileBoundaryHarness); minimum K values come from ProfileEditCommands.MinimumK.
+// Both handlers run in CivilExecution.ReadAsync (main thread, no undo step) and never change the drawing. Alignments
+// are found through CivilObjectUtils (late-bound members go through Civil3DCompatibility).
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -21,6 +26,15 @@ public static class SightDistanceCommands
 
   // ─── calculateSightDistance ──────────────────────────────────────────────────
 
+  /// <summary>
+  /// <c>calculateSightDistance</c>: required sight distance for a design speed. Reads <c>designSpeed</c> (required),
+  /// <c>speedUnits</c> ("mph", else km/h; default follows the drawing), <c>sightDistanceType</c> (stopping/ssd default,
+  /// passing/psd, decision/dsd), <c>grade</c> (percent, negative downhill), <c>perceptionReactionTime</c> (default
+  /// 2.5 s), <c>frictionCoefficient</c>, and optionally <c>alignmentName</c> + <c>profileName</c> + <c>checkStation</c>
+  /// to check the K of the vertical curve at that station. Returns the distance in feet and metres and the minimum K
+  /// values. Decision distance is a rough 3.5 x stopping, labelled so. Read-only; a failed station check is reported
+  /// as <c>stationCheckError</c>, not thrown.
+  /// </summary>
   public static Task<object?> CalculateSightDistanceAsync(JsonObject? parameters)
   {
     var designSpeed = PluginRuntime.GetRequiredDouble(parameters, "designSpeed");
@@ -115,6 +129,13 @@ public static class SightDistanceCommands
 
   // ─── checkStoppingDistance ───────────────────────────────────────────────────
 
+  /// <summary>
+  /// <c>checkStoppingDistance</c>: walks a profile every <c>stationInterval</c> (default 25) from <c>stationStart</c>
+  /// to <c>stationEnd</c> (default: the whole alignment) and lists stations on a vertical curve whose K is below the
+  /// AASHTO minimum for <c>designSpeed</c> (FAIL under 75% of it, else WARN). Reads <c>alignmentName</c>,
+  /// <c>profileName</c>, <c>designSpeed</c> (required) and <c>speedUnits</c>. Read-only. CIVIL3D.OBJECT_NOT_FOUND for an
+  /// unknown alignment; an unknown profile name gives no curves (so no violations), not an error.
+  /// </summary>
   public static Task<object?> CheckStoppingDistanceAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -188,6 +209,7 @@ public static class SightDistanceCommands
       ? !metricDrawing
       : string.Equals(speedUnits, "mph", StringComparison.OrdinalIgnoreCase);
 
+  /// <summary>The alignment's profile with this name (case-insensitive), or ObjectId.Null.</summary>
   private static ObjectId FindProfileId(Autodesk.AutoCAD.DatabaseServices.DBObject alignment, Transaction transaction, string profileName)
   {
     var profileIds = CivilObjectUtils.InvokeMethod(alignment, "GetProfileIds") as IEnumerable;

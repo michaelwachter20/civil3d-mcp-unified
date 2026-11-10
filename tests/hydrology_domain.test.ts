@@ -1,3 +1,6 @@
+// Guards src/tools/domains/hydrologyDomain.ts: each hydrology workflow action sends the right native plugin methods
+// with the right parameters. ConnectionManager is mocked, so no plugin or Civil 3D is involved.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { sendCommandMock } = vi.hoisted(() => ({

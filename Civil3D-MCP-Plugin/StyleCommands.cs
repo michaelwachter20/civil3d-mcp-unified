@@ -1,3 +1,8 @@
+// StyleCommands.cs - read-only handlers for Civil 3D object styles. Methods (CommandDispatcher.cs): listStyles,
+// getStyle. Caller: src/tools/domains/standardsDomain.ts (civil3d_standards actions style_list / style_get, alias
+// civil3d_style). Both run in CivilExecution.ReadAsync (main thread, no undo step) and never change the drawing.
+// Property reads by name go through CivilObjectUtils and Civil3DCompatibility (the one place for reflection).
+// Label styles are not here: they are a tree of collections (LabelCommands, civil3d_label).
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 
@@ -18,6 +23,9 @@ public static class StyleCommands
   // listStyles
   // -------------------------------------------------------------------------
 
+  /// <summary><c>listStyles</c>: reads <c>objectType</c> (required: surface, alignment, profile, corridor, pipe,
+  /// structure, point, section, assembly). Returns each style's name, handle and isDefault. Read-only.
+  /// CIVIL3D.INVALID_INPUT for "label" or an unknown type.</summary>
   public static Task<object?> ListStylesAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -49,6 +57,9 @@ public static class StyleCommands
   // getStyle
   // -------------------------------------------------------------------------
 
+  /// <summary><c>getStyle</c>: reads <c>objectType</c> and <c>styleName</c> (both required; name case-insensitive).
+  /// Returns name, handle, isDefault, description and every readable scalar property (camelCase keys). Read-only.
+  /// CIVIL3D.INVALID_INPUT for a bad type, CIVIL3D.OBJECT_NOT_FOUND when no style has that name.</summary>
   public static Task<object?> GetStyleAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -94,6 +105,8 @@ public static class StyleCommands
   // Helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The style ids for an object type from <c>civilDoc.Styles</c>; CIVIL3D.INVALID_INPUT for "label" or an
+  /// unsupported type.</summary>
   private static IEnumerable<ObjectId> GetStyleCollection(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, string objectType)
   {

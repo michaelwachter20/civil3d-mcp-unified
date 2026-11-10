@@ -1,3 +1,7 @@
+// The civil3d_help search index: used by src/tools/helpTool.ts (Civil3DHelpManager, selectRenderableImages). Uses
+// helpDiscovery.ts (installations), helpParser.ts (pages), MiniSearch, and utils/atomicFiles.ts to write its cache.
+// Reads the installed help folder only; the one thing it writes is its own gzipped cache under %LOCALAPPDATA%
+// (or CIVIL3D_HELP_CACHE_ROOT). Never calls the plugin. Details in the block below.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -58,6 +62,7 @@ export interface Civil3DHelpManagerOptions {
   cacheRoot?: string;
 }
 
+/** What MiniSearch indexes per topic: the index entry plus its tags as one string. */
 interface SearchDocument extends HelpTopicIndexEntry {
   tagsText: string;
 }
@@ -191,11 +196,13 @@ export class OfflineHelpIndex {
     );
   }
 
+  /** An image any topic of this installation references, by its id (for the civil3d://help/images resource). */
   async getImage(id: string): Promise<HelpImageRef | undefined> {
     await this.ensureReady();
     return this.images.get(id);
   }
 
+  /** The index status (building or loading the index first, as any call does). */
   async getStatus(): Promise<HelpIndexStatus> {
     return this.ensureReady();
   }
@@ -228,6 +235,7 @@ export class OfflineHelpIndex {
     writeAtomically(this.cachePath, gzipSync(JSON.stringify(cache)));
   }
 
+  /** Replaces the in-memory lookups and builds a new MiniSearch index from `topics`. */
   private loadTopics(topics: HelpTopicIndexEntry[]): void {
     this.topics = topics;
     this.byId = new Map(topics.map((topic) => [topic.id, topic]));
@@ -276,6 +284,7 @@ export class Civil3DHelpManager {
       ?? path.join(process.env.LOCALAPPDATA ?? os.homedir(), "Civil3DMcp", "help-index");
   }
 
+  /** The installations found, without their folders unless CIVIL3D_DEBUG_PATHS=true. */
   listInstallations(): Array<Omit<HelpInstallation, "root"> & { root?: string }> {
     const debugPaths = process.env.CIVIL3D_DEBUG_PATHS === "true";
     return this.installations.map((installation) => ({
@@ -299,6 +308,7 @@ export class Civil3DHelpManager {
     return this.indexFor(version).getImage(id);
   }
 
+  /** civil3d_help action=status: the installations, and the active index's status when help is installed (may build it). */
   async status(version?: string): Promise<{
     installations: ReturnType<Civil3DHelpManager["listInstallations"]>;
     active?: Omit<HelpIndexStatus, "root" | "cachePath"> & { root?: string; cachePath?: string };
@@ -317,10 +327,12 @@ export class Civil3DHelpManager {
     };
   }
 
+  /** Rebuilds the index from the help files and rewrites the cache (helpTool.ts allows it only when enabled). */
   async reindex(version?: string, progress?: HelpIndexProgress): Promise<HelpIndexStatus> {
     return this.indexFor(version).ensureReady(true, progress);
   }
 
+  /** The index for a version, made on first use. Throws when no help is installed or the version asked for isn't. */
   private indexFor(version?: string): OfflineHelpIndex {
     const installation = selectHelpInstallation(this.installations, version);
     if (!installation) {
@@ -356,10 +368,12 @@ export function selectRenderableImages(topic: HelpTopic, limit: number): HelpIma
     .slice(0, boundedLimit);
 }
 
+/** Pixel area when known, else 0. */
 function imagePriority(image: HelpImageRef): number {
   return (image.width ?? 0) * (image.height ?? 0);
 }
 
+/** A search hit for the AI: the topic's summary fields, an excerpt and the score rounded to 4 places. */
 function toSearchResult(
   topic: HelpTopicIndexEntry,
   score: number,
@@ -403,6 +417,7 @@ function expandEngineerTerms(query: string): string {
   return expansions.join(" ");
 }
 
+/** Distinct lower-case words of 2+ characters, common words (and "civil", "3d") left out; used for excerpts. */
 function tokenize(value: string): string[] {
   return [...new Set(value.toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) ?? [])]
     .filter((token) => !["the", "and", "for", "with", "how", "what", "why", "civil", "3d"].includes(token));

@@ -1,3 +1,10 @@
+// Console test harness for the PLUGIN's file, JSON-RPC and host-guard rules (run: npm run test:p2-boundaries).
+// It compiles the plugin's real FileBoundary, SharedFolder, JsonRpcProtocol, JobRegistry, RpcTcpServer, PointText,
+// PipeMath, StationMath, SightMath, HostGuard, PointCreationRules and ScriptLoopGuard sources (see the .csproj), so it
+// needs no Civil 3D. Checks run top to bottom with Assert(); the first failure throws and the run exits non-zero.
+// Everything happens in a temporary folder and on a loopback TCP port; it deletes its folder at the end (finally).
+// Windows paths are assumed (the shared folder and import/export roots are Windows paths).
+
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Net;

@@ -1,8 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-import { JobLaunchResponseSchema } from "./sharedSchemas.js";
-
 /**
  * The corridor domain: `civil3d_corridor` and its aliases (`civil3d_corridor_summary`,
  * `civil3d_corridor_target_mapping_get/set`, `civil3d_corridor_region_add/delete`). The reads, the rebuild and the
@@ -12,8 +7,17 @@ import { JobLaunchResponseSchema } from "./sharedSchemas.js";
  * Every action forwards to one plugin method except `summary`, which runs in Node (see the definition's comment).
  * `rebuild` comes back at once with a job id (the plugin rebuilds in the background); the region and target-mapping
  * edits rebuild the corridor themselves, inside their own write, before they answer. The aliases name the corridor
- * `corridorName` and rename it to `name`; the plugin's editing methods take `corridorName` again.
+ * `corridorName` (except `civil3d_corridor_summary`, which takes `name`) and rename it to `name`; the plugin's editing
+ * methods take `corridorName` again.
+ *
+ * Approval (approvalPolicy.ts): list, get, get_surfaces, get_feature_lines, compute_volumes, summary and
+ * target_mapping_get are reads. rebuild, target_mapping_set, region_add and region_delete change the drawing and
+ * need an approvalToken.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
+import { JobLaunchResponseSchema } from "./sharedSchemas.js";
 
 // ─── Shared schemas ───────────────────────────────────────────────────────────
 
@@ -337,9 +341,9 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
     // `corridorSurface` is the name of one of the corridor's own surfaces (get_surfaces), `referenceSurface` any
     // surface in the drawing (usually existing ground).
-    // NOTE: the plugin creates its temporary TIN volume surface inside a read (CivilExecution.ReadAsync: no document
-    // lock, transaction never committed). It relies on the uncommitted transaction to discard the surface; creating an
-    // object without a lock may also fail on some setups.
+    // The plugin makes a temporary TIN volume surface inside CivilExecution.MeasureAsync: under a document lock (Civil 3D
+    // refuses to create a surface without one) with a transaction that is never committed, so nothing is kept; the lock
+    // leaves one blank undo step. Declared as a read, so no approval.
     compute_volumes: {
       action: "compute_volumes",
       inputSchema: CorridorComputeVolumesArgsSchema,
@@ -494,7 +498,7 @@ export const CORRIDOR_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
   },
   // The canonical tool first; the aliases (listed only with CIVIL3D_ENABLE_TOOL_ALIASES=true) take `corridorName`
-  // and pass it on as `name`.
+  // and pass it on as `name` (the summary alias takes `name` directly).
   exposures: [
     {
       toolName: "civil3d_corridor",

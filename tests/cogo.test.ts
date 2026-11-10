@@ -1,3 +1,8 @@
+// Guards the intended input shapes (zod) for point groups, point export/transform, COGO inverse/direction/traverse/
+// curve solving and survey database/figure actions.
+// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// Pure schema tests: no Civil 3D, no plugin, no files.
+
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 

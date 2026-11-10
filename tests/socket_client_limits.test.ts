@@ -1,3 +1,6 @@
+// Guards the response limits and text decoding of src/utils/SocketClient.ts: an oversized plugin reply is rejected, and a
+// character split across two TCP chunks is kept whole. Uses a fake plugin server; no Civil 3D.
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as net from "node:net";
 

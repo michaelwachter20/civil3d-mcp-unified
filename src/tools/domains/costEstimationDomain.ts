@@ -1,3 +1,9 @@
+// Cost estimation domain: the `civil3d_cost_estimation` tool plus the aliases `civil3d_pay_items_export` and
+// `civil3d_material_cost_estimate`. Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts).
+// Both actions forward to CostEstimationCommands.cs, which gathers the quantities (earthwork, corridor materials,
+// pipe lengths, structure counts) in the drawing; Node only fills defaults (mobilization 5 %, contingency 0 %).
+// Neither changes the drawing. pay_items_export writes a file (export capability, so it needs an approvalToken);
+// the path goes through the plugin's FileBoundary (CIVIL3D_EXPORT_ROOTS, no overwrite without overwrite=true).
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -11,6 +17,9 @@ const MaterialCostEstimateArgs = z.object({ action: z.literal("material_cost_est
 export const COST_ESTIMATION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "cost_estimation",
   actions: {
+    // pay_items_export -> exportPayItems: writes the pay-item schedule to outputPath (needs approval: export).
+    // material_cost_estimate -> calculateMaterialCostEstimate: read-only pricing of the drawing's quantities; it also
+    // writes outputPath when one is given, yet its capabilities carry no export, so no approval is asked for that.
     pay_items_export: { action: "pay_items_export", inputSchema: PayItemsExportArgs, responseSchema: GenericResponseSchema, capabilities: ["export", "generate"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["exportPayItems"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("exportPayItems", { outputPath: args.outputPath, overwrite: args.overwrite ?? false, corridorName: args.corridorName ?? null, baseSurface: args.baseSurface ?? null, designSurface: args.designSurface ?? null, alignmentName: args.alignmentName ?? null, payItems: args.payItems ?? [], includeEarthwork: args.includeEarthwork ?? true, includeCorridorMaterials: args.includeCorridorMaterials ?? true, includePipeLengths: args.includePipeLengths ?? true, includeStructureCounts: args.includeStructureCounts ?? true })) },
     material_cost_estimate: { action: "material_cost_estimate", inputSchema: MaterialCostEstimateArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze", "generate"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["calculateMaterialCostEstimate"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("calculateMaterialCostEstimate", { corridorName: args.corridorName ?? null, baseSurface: args.baseSurface ?? null, designSurface: args.designSurface ?? null, alignmentName: args.alignmentName ?? null, contingencyPercent: args.contingencyPercent ?? 0, mobilizationPercent: args.mobilizationPercent ?? 5, payItems: args.payItems, outputPath: args.outputPath ?? null, overwrite: args.overwrite ?? false })) },
   },

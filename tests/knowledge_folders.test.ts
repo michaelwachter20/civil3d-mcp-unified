@@ -1,3 +1,7 @@
+// Guards which folder the know-how lives in (src/tools/knowledgeBase.ts, projectDb.ts, practices.ts, skillsLibrary.ts):
+// the shared folder choice by environment variable and default, and the one-time move of preferences, memory, skills
+// and scripts into civil3d\ inside it. Each test starts with every folder variable unset and uses temp folders.
+
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +29,7 @@ const tree = (root: string): string[] =>
 let base = "";
 
 /** The know-how Civil 3D MCP kept at the top of the shared folder before 2.4.0. */
+/** Makes the old flat layout of know-how (files directly in the shared folder) for the move tests. */
 function oldKnowHow(shared: string) {
   mkdirSync(path.join(shared, "memory"), { recursive: true });
   mkdirSync(path.join(shared, "skills", "mine"), { recursive: true });

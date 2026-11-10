@@ -1,3 +1,11 @@
+// Keeps the version in one place (package.json, CLAUDE.md rule 7): writes Civil3D-MCP-Plugin/GeneratedVersion.props
+// (plugin assembly version) and the version field of packaging/claude-desktop/manifest.json.
+//
+//   npm run version:sync    write both files
+//   npm run version:check   --check: exit 1 if either is stale (CI: ci.yml and release.yml)
+//
+// GeneratedVersion.props is plugin source for scripts/plugin-source-hash.mjs, so a version bump also needs
+// `npm run plugin:prebuild` before the next release.
 import { readFile, writeFile } from "node:fs/promises";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));

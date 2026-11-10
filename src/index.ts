@@ -1,3 +1,9 @@
+// Entry point of the Civil 3D MCP server (build/index.js, started by the AI client over stdio).
+// Builds the McpServer with the instructions from serverInstructions.ts, sweeps temp files a killed write left in the
+// knowledge folders, registers every tool (tools/register.ts), starts the local HTTP bridge (httpBridge.ts,
+// 127.0.0.1:3000) and connects the stdio transport. Nothing here touches a drawing: tools reach Civil 3D only through
+// the plugin over JSON-RPC (utils/ConnectionManager.ts). stdout belongs to the MCP protocol, so all logging goes to
+// stderr (utils/logger.ts). SIGINT/SIGTERM close the bridge (at most 2 s) and the server, then exit.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerTools } from "./tools/register.js";
@@ -17,6 +23,7 @@ const server = new McpServer(
   { instructions: buildServerInstructions() },
 );
 
+/** Starts the server: cleanup, tool registration, HTTP bridge, stdio transport, then installs the shutdown handlers. */
 async function main() {
   // Temp files a crashed or killed write left in the knowledge folders (older than an hour).
   sweepKnowledgeTemporaryFiles();

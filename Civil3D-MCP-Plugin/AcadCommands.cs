@@ -1,3 +1,9 @@
+// Plain AutoCAD entities in model space: 2D/3D polylines, lines, DBText and MText.
+// JSON-RPC methods (CommandDispatcher): createPolyline, create3dPolyline, createLineSegment, createText, createMText.
+// Called by src/tools/domains/geometryDomain.ts (civil3d_geometry and its acad_create_* aliases).
+// Every method is a CivilExecution.WriteAsync: command context, document lock, one transaction, one undo step, and
+// the view follows the new entity. Layers are looked up with LookupUtils.GetLayerId (unknown layer ->
+// CIVIL3D.OBJECT_NOT_FOUND listing the layers; no layer -> current layer). No file access, no reflection.
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.ApplicationServices;
@@ -11,6 +17,12 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class AcadCommands
 {
+  /// <summary>
+  /// createPolyline: adds a 2D lightweight polyline to model space (changes the drawing). Reads <c>points</c>
+  /// (required, array of at least two <c>{x, y}</c>), <c>closed</c> (optional int, 1 = closed) and <c>layer</c>
+  /// (optional). Returns <c>handle</c>, <c>vertexCount</c>, <c>closed</c>, <c>layer</c>. Throws CIVIL3D.INVALID_INPUT
+  /// for fewer than two points or a point missing x/y, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> CreatePolylineAsync(JsonObject? parameters)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
@@ -63,6 +75,12 @@ public static class AcadCommands
     });
   }
 
+  /// <summary>
+  /// createText: adds single-line text (DBText) to model space (changes the drawing). Reads <c>text</c>, <c>x</c>,
+  /// <c>y</c> (required), <c>z</c> (default 0), <c>height</c> (default 2.5), <c>rotation</c> (radians, default 0) and
+  /// <c>layer</c> (optional). Returns the handle and the stored text, position, height, rotation and layer. Throws
+  /// CIVIL3D.INVALID_INPUT for a missing required value, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> CreateTextAsync(JsonObject? parameters)
   {
     var text = PluginRuntime.GetRequiredString(parameters, "text");
@@ -111,6 +129,12 @@ public static class AcadCommands
     });
   }
 
+  /// <summary>
+  /// create3dPolyline: adds a simple 3D polyline to model space (changes the drawing). Reads <c>points</c> (required,
+  /// at least two <c>{x, y, z}</c>, z required), <c>closed</c> (optional int, 1 = closed) and <c>layer</c> (optional).
+  /// Returns <c>handle</c>, <c>vertexCount</c>, <c>closed</c>, <c>layer</c>. Throws CIVIL3D.INVALID_INPUT for fewer
+  /// than two (valid) points or a missing coordinate, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> Create3dPolylineAsync(JsonObject? parameters)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
@@ -175,6 +199,12 @@ public static class AcadCommands
     });
   }
 
+  /// <summary>
+  /// createLineSegment: adds a Line to model space (changes the drawing). Reads <c>startX</c>, <c>startY</c>,
+  /// <c>endX</c>, <c>endY</c> (required), <c>startZ</c>/<c>endZ</c> (default 0) and <c>layer</c> (optional). Returns
+  /// the handle as <c>lineId</c>, both end points, <c>length</c> and <c>layer</c>. Throws CIVIL3D.INVALID_INPUT for a
+  /// missing coordinate, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> CreateLineSegmentAsync(JsonObject? parameters)
   {
     var startX = PluginRuntime.GetRequiredDouble(parameters, "startX");
@@ -218,6 +248,13 @@ public static class AcadCommands
     });
   }
 
+  /// <summary>
+  /// createMText: adds multiline text to model space (changes the drawing). Reads <c>text</c>, <c>x</c>, <c>y</c>
+  /// (required), <c>z</c> (default 0), <c>width</c> (0 = no wrapping), <c>textHeight</c> (default 2.5),
+  /// <c>rotation</c> (radians, default 0) and <c>layer</c> (optional). Returns the handle and the stored contents,
+  /// location, height, rotation, width and layer. Throws CIVIL3D.INVALID_INPUT for a missing required value,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> CreateMTextAsync(JsonObject? parameters)
   {
     var text = PluginRuntime.GetRequiredString(parameters, "text");

@@ -1,3 +1,6 @@
+// Parses one Autodesk Offline Help page into a civil3d_help topic. Used by helpIndex.ts (and tests). Uses cheerio for
+// HTML and helpDiscovery.ts's path guard. Read-only: it reads pages and image headers inside the help root, never
+// runs the wrapped pages' JavaScript, and writes nothing. Details in the block below.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -297,6 +300,7 @@ function renderMarkdown(
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** Appends one element's Markdown lines to `lines` (recursing into elements it doesn't render itself). */
 function renderNode(
   $: cheerio.CheerioAPI,
   node: AnyNode,
@@ -348,6 +352,7 @@ function renderNode(
   element.children().each((_, child) => renderNode($, child, lines, imageByPath, sourcePath));
 }
 
+/** A Markdown image link for an <img> that extractImages accepted; other images are left out. */
 function renderImage(
   $: cheerio.CheerioAPI,
   node: AnyNode,
@@ -381,6 +386,7 @@ function readImageDimensions(filePath: string): { width: number; height: number 
   return undefined;
 }
 
+/** The image MIME type from the file extension (application/octet-stream when unknown). */
 function mimeTypeFor(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".png") return "image/png";
@@ -390,16 +396,19 @@ function mimeTypeFor(filePath: string): string {
   return "application/octet-stream";
 }
 
+/** The content of <meta name="..."> with whitespace collapsed, or undefined when missing or empty. */
 function meta($: cheerio.CheerioAPI, name: string): string | undefined {
   const value = $(`meta[name="${name}"]`).first().attr("content");
   const cleaned = cleanText(value ?? "");
   return cleaned || undefined;
 }
 
+/** Autodesk's topic GUID from the page's file name (GUID-....htm), upper case. */
 function guidFromPath(filePath: string): string | undefined {
   return path.basename(filePath).match(/(GUID-[A-F0-9-]+)/i)?.[1]?.toUpperCase();
 }
 
+/** The release year written in the page ("Civil 3D 2027", or a release meta tag), when there is one. */
 function detectVersion(html: string): string | undefined {
   return html.match(/Civil 3D\s+(\d{4})/i)?.[1]
     ?? html.match(/name=["']release["'][^>]+content=["'](\d{4})/i)?.[1];
@@ -484,14 +493,17 @@ function extractRelatedTopicIds($: cheerio.CheerioAPI): string[] {
   return [...ids].slice(0, 80);
 }
 
+/** The first sentence of 30-280 characters, else the first 240 characters (the summary when there is no description). */
 function firstSentence(text: string): string | undefined {
   return cleanText(text.match(/^(.{30,280}?[.!?])(?:\s|$)/)?.[1] ?? text.slice(0, 240)) || undefined;
 }
 
+/** The first `length` hex characters of the SHA-1 of `value`: short ids that stay the same across rebuilds. */
 function stableHash(value: string, length: number): string {
   return crypto.createHash("sha1").update(value).digest("hex").slice(0, length);
 }
 
+/** "Pipe Networks" -> "pipe_networks", for tag values. */
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }

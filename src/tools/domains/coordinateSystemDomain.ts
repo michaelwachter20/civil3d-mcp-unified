@@ -1,3 +1,8 @@
+// Coordinate system domain: the `civil3d_coordinate_system` tool (no aliases). Listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts) and turned into an MCP tool by domainRuntime.ts.
+// Both actions are read-only forwarders to CoordinateSystemCommands.cs in the plugin (getCoordinateSystemInfo,
+// transformCoordinates): they never change the drawing, so approvalPolicy.ts never asks for a token.
+// No logic runs in Node.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -10,6 +15,7 @@ const TransformResponseSchema = z.object({ x: z.number(), y: z.number(), z: z.nu
 export const COORDINATE_SYSTEM_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "coordinate_system",
   actions: {
+    // info -> getCoordinateSystemInfo; transform -> transformCoordinates ('drawing', 'geographic' or a CS code).
     info: { action: "info", inputSchema: InfoArgs, responseSchema: InfoResponseSchema, capabilities: ["query", "inspect"], requiresActiveDrawing: false, safeForRetry: true, pluginMethods: ["getCoordinateSystemInfo"], execute: async () => await withApplicationConnection(async (appClient) => await appClient.sendCommand("getCoordinateSystemInfo", {})) },
     transform: { action: "transform", inputSchema: TransformArgs, responseSchema: TransformResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: false, safeForRetry: true, pluginMethods: ["transformCoordinates"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("transformCoordinates", { fromSystem: args.fromSystem, toSystem: args.toSystem, x: args.x, y: args.y, z: args.z })) },
   },

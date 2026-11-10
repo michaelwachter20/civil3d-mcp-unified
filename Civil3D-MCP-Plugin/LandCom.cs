@@ -1,3 +1,10 @@
+// Late-bound access to Civil 3D's COM (ActiveX) API, for the few things the .NET API can't do.
+// Callers: ParcelEditingCommands.CreateParcelAsync (createParcel: a site's ParcelSegments forms parcels from closed
+// lines), SurfaceCommands (watershed analysis through a COM surface's SurfaceAnalysis) and SurveyCom (the survey COM
+// application, by its own ProgID prefix). Serves no JSON-RPC method itself.
+// The COM objects are `dynamic`; the application is found through AutoCAD's AcadApplication.GetInterfaceObject with a
+// ProgID read from the registry (HKCR, read only). Must be called on the main thread inside the caller's
+// CivilExecution read/write, which owns the drawing access and the undo step.
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using AcadApplication = Autodesk.AutoCAD.ApplicationServices.Application;
@@ -13,12 +20,15 @@ internal static class LandCom
 {
   private const string LandProgIdPrefix = "AeccXUiLand.AeccApplication.";
 
-  /// <summary>The COM site of this name in the active drawing, which has been checked to exist.</summary>
+  /// <summary>The COM site of this name (ignoring case) in the active drawing, which the caller has checked exists
+  /// through .NET; throws CIVIL3D.OBJECT_NOT_FOUND if COM can't find it, CIVIL3D.API_ERROR without COM.</summary>
   public static dynamic FindSite(string siteName) => FindByName(Application(LandProgIdPrefix).ActiveDocument.Sites, siteName, "Site");
 
-  /// <summary>The COM surface of this name in the active drawing, which has been checked to exist.</summary>
+  /// <summary>The COM surface of this name (ignoring case) in the active drawing, which the caller has checked exists
+  /// through .NET; same errors as <see cref="FindSite"/>.</summary>
   public static dynamic FindSurface(string surfaceName) => FindByName(Application(LandProgIdPrefix).ActiveDocument.Surfaces, surfaceName, "Surface");
 
+  /// <summary>The item of a COM collection whose Name matches (ignoring case); CIVIL3D.OBJECT_NOT_FOUND otherwise.</summary>
   private static dynamic FindByName(dynamic collection, string name, string kind)
   {
     for (var index = 0; index < collection.Count; index++)
@@ -33,6 +43,8 @@ internal static class LandCom
   /// <summary>
   /// One of Civil 3D's COM applications. The name carries a version (13.9 for Civil 3D 2027) that has no published rule, so it
   /// comes from the registry, newest first: with two releases installed, the running one is the one that answers.
+  /// <paramref name="progIdPrefix"/> is e.g. "AeccXUiLand.AeccApplication.". Throws CIVIL3D.API_ERROR when no
+  /// registered version answers.
   /// </summary>
   public static dynamic Application(string progIdPrefix)
   {

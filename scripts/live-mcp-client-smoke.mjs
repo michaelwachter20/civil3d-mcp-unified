@@ -1,3 +1,12 @@
+// Live smoke test as a real MCP client: starts build/index.js over stdio (its HTTP bridge on a free port), checks that
+// civil3d_health carries an output schema and readOnlyHint, that civil3d_docs sends progress notifications and a
+// readable report resource link, then calls civil3d_health and civil3d_drawing action=info against Civil 3D.
+//
+//   npm run test:live-mcp-client   (builds first; also in test:live-all and the opt-in step of
+//                                   .github/workflows/civil3d-plugin-ci.yml on a self-hosted runner)
+//
+// Read-only: changes nothing in the drawing. Needs Civil 3D 2027 open with the AI connection on and a person at the
+// machine; automated sessions must not run it.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 

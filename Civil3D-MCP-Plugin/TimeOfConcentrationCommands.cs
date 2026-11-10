@@ -1,3 +1,8 @@
+// TimeOfConcentrationCommands.cs - pure hydrology math: time of concentration and SCS unit hydrographs. Methods
+// (CommandDispatcher.cs): calculateTimeOfConcentration, generateHydrograph, listTcMethods. Caller:
+// src/tools/domains/hydrologyDomain.ts (civil3d_hydrology). No Civil 3D API and no CivilExecution: the handlers compute
+// on the request thread from the numbers given and never read or change a drawing. US
+// customary units throughout (ft, in, mi², cfs, minutes/hours), as the parameter names say.
 using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;
@@ -13,6 +18,10 @@ public static class TimeOfConcentrationCommands
   // ──────────────────────────────────────────────
   //  Calculate Time of Concentration
   // ──────────────────────────────────────────────
+  /// <summary><c>calculateTimeOfConcentration</c>: reads <c>method</c> (required: kirpich, tr55_sheet, tr55_shallow,
+  /// tr55_channel, faa, nrcs_lag) and that method's parameters (see <see cref="ListTcMethodsAsync"/>). Returns the time
+  /// in minutes and hours with the inputs echoed. CIVIL3D.INVALID_INPUT for an unknown method or an out-of-range
+  /// value. Pure calculation.</summary>
   public static Task<object?> CalculateTimeOfConcentrationAsync(JsonObject? parameters)
   {
     var method = PluginRuntime.GetRequiredString(parameters, "method");
@@ -33,6 +42,10 @@ public static class TimeOfConcentrationCommands
   // ──────────────────────────────────────────────
   //  Generate SCS Unit Hydrograph
   // ──────────────────────────────────────────────
+  /// <summary><c>generateHydrograph</c>: reads <c>method</c> (scs_triangular default, or scs_curvilinear),
+  /// <c>drainageArea_mi2</c>, <c>runoffDepth_in</c>, <c>timeOfConcentration_hr</c> (required, positive) and
+  /// <c>stormDuration_hr</c> (default 0.133 x Tc). Returns peak flow, time to peak and the ordinates.
+  /// CIVIL3D.INVALID_INPUT for an unknown method or a non-positive input. Pure calculation.</summary>
   public static Task<object?> GenerateHydrographAsync(JsonObject? parameters)
   {
     var method = PluginRuntime.GetOptionalString(parameters, "method") ?? "scs_triangular";
@@ -49,6 +62,7 @@ public static class TimeOfConcentrationCommands
   // ──────────────────────────────────────────────
   //  List Supported Tc Methods
   // ──────────────────────────────────────────────
+  /// <summary><c>listTcMethods</c>: the supported methods with their formula and required parameter names. Fixed data.</summary>
   public static Task<object?> ListTcMethodsAsync()
   {
     return Task.FromResult<object?>(new Dictionary<string, object?>

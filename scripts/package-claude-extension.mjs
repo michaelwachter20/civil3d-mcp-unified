@@ -1,3 +1,12 @@
+// Packs the compiled MCP server (build/) as a Claude Desktop extension: dist/claude-desktop/<name>-<version>.mcpb,
+// a byte-identical legacy .dxt copy, and SHA256SUMS.txt. Stages build/, LICENSE, the extension README and
+// packaging/claude-desktop/manifest.json (version set from package.json), installs production dependencies with
+// `npm ci --omit=dev --ignore-scripts`, then validates and packs with the @anthropic-ai/mcpb CLI.
+//
+//   npm run package:claude                    (builds first; also called by scripts/package-release.mjs)
+//   npm run package:claude:validate           (--validate-only: re-checks existing artifacts, builds nothing)
+//
+// Must run through npm (it needs npm_execpath). Writes only under dist/claude-desktop; no Civil 3D needed.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
@@ -37,10 +46,12 @@ if (!npmCliPath) {
   throw new Error("Run this script through an npm command so npm_execpath is available.");
 }
 
+/** Runs the npm CLI that launched this script (node + npm_execpath, no shell); throws on a non-zero exit. */
 function runNpm(args, cwd = repositoryRoot) {
   run(process.execPath, [npmCliPath, ...args], cwd);
 }
 
+/** Runs a command with inherited output; throws if it can't start or exits non-zero. */
 function run(command, args, cwd = repositoryRoot) {
   const result = spawnSync(command, args, {
     cwd,
@@ -56,11 +67,13 @@ function run(command, args, cwd = repositoryRoot) {
   }
 }
 
+/** Hex SHA-256 of a file's bytes. */
 async function sha256(filePath) {
   const contents = await readFile(filePath);
   return createHash("sha256").update(contents).digest("hex");
 }
 
+/** Throws `message: filePath` when the file is missing. */
 async function requireFile(filePath, message) {
   try {
     await access(filePath);
@@ -121,6 +134,8 @@ runNpm(
   stagingDirectory,
 );
 
+// After the install, swap in a minimal package.json (runtime dependencies only, no scripts) and drop the lock file,
+// so the packed extension carries no dev tooling.
 const runtimePackageJson = {
   name: packageJson.name,
   version: packageJson.version,

@@ -1,6 +1,3 @@
-import { RouteParams, RouteResult } from "./IntentRouter.js";
-import { ProjectContext } from "./ProjectContextService.js";
-
 /**
  * The planning step of civil3d_orchestrate (src/tools/civil3d_orchestrate.ts): after IntentRouter has picked a route
  * and SelectionResolver has filled what it could from the user's selection, this turns the route into a plan the AI
@@ -10,7 +7,11 @@ import { ProjectContext } from "./ProjectContextService.js";
  * It only plans; nothing here calls a tool or the plugin. The drawing's object counts come from the project context
  * the orchestrator already fetched. A few intents (startup, audits, surface/profile work, sight distance, detention,
  * slope, cost) have hand-written plans, most of them several steps; every other route gets a one-step plan.
+ * The titles, summaries, notes and questions are returned to the AI as-is; the intent names must match the explicit
+ * routes in ToolCatalog.ts, or the hand-written plan is silently replaced by the one-step fallback.
  */
+import { RouteParams, RouteResult } from "./IntentRouter.js";
+import { ProjectContext } from "./ProjectContextService.js";
 
 /** One step of a plan; `status` is "blocked" when the drawing lacks what the step needs (e.g. no surfaces). */
 export interface WorkflowStep {

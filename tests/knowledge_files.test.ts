@@ -1,3 +1,8 @@
+// Guards how the know-how files shared by several programs are written (src/utils/atomicFiles.ts, knowledgeBase.ts,
+// practices.ts): lock files, backups (newest 3 kept), atomic writes, no lost entries under concurrent adds, files that
+// do not parse are never rewritten, and long Windows paths. Uses temporary folders only.
+// Windows-specific (long paths, process liveness for lock takeover).
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

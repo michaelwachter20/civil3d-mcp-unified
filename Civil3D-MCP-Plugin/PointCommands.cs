@@ -1,3 +1,11 @@
+// COGO point handlers for civil3d_point (src/tools/domains/pointDomain.ts).
+// JSON-RPC methods: listCogoPoints, getCogoPoint, listPointGroups, listPointFileFormats (reads, CivilExecution.ReadAsync:
+// main thread, no undo step); createCogoPoints, importCogoPoints, importPointFile, deleteCogoPoints (writes,
+// CivilExecution.WriteAsync: command context, document lock, one transaction, one undo step).
+// Rules: points are often survey data; the AI must not change them unless the user asks. createCogoPoints and the
+// typed-in importCogoPoints first ask the user in a Civil 3D window (PointCreationGate) and change nothing on "no";
+// importPointFile is Civil 3D's own importer and asks nothing. The point file path goes through
+// FileBoundary.ResolveImportPath. Point group create/update/delete/export/transform live in PointGroupCommands.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.DatabaseServices;
@@ -12,6 +20,12 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class PointCommands
 {
+  /// <summary>
+  /// listCogoPoints (read-only): the drawing's points sorted by number, optionally only those in point group
+  /// <c>groupName</c>, paged with <c>offset</c> (default 0) and <c>limit</c> (default all). Returns totalCount,
+  /// returnedCount, points (CivilObjectUtils.ToPointData) and units. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// group (names compared ignoring case).
+  /// </summary>
   public static Task<object?> ListCogoPointsAsync(JsonObject? parameters)
   {
     var groupName = PluginRuntime.GetOptionalString(parameters, "groupName");
@@ -43,6 +57,8 @@ public static class PointCommands
     });
   }
 
+  /// <summary>getCogoPoint (read-only): one point by its required <c>pointNumber</c>, as CivilObjectUtils.ToPointData.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND when no point has that number.</summary>
   public static Task<object?> GetCogoPointAsync(JsonObject? parameters)
   {
     var pointNumber = (uint)PluginRuntime.GetRequiredInt(parameters, "pointNumber");
@@ -53,8 +69,11 @@ public static class PointCommands
     });
   }
 
-  /// <summary>Creates a point for each of <c>points</c> ({x, y, z, description}); numbers come from the drawing's next
-  /// point number unless <c>startNumber</c> is given, then they run startNumber, startNumber + 1, ...</summary>
+  /// <summary>createCogoPoints (changes the drawing, one undo step): creates a point for each of the required
+  /// <c>points</c> ({x, y, z, description?}); numbers come from the drawing's next point number unless the optional
+  /// <c>startNumber</c> is given, then they run startNumber, startNumber + 1, ... Asks the user first
+  /// (PointCreationGate). Returns created and pointNumbers. Throws CIVIL3D.INVALID_INPUT for an empty array or a point
+  /// without x, y or z (nothing is committed then), CIVIL3D.USER_DECLINED / POINT_CREATION_OFF from the gate.</summary>
   public static async Task<object?> CreateCogoPointsAsync(JsonObject? parameters)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, "points") as JsonArray;
@@ -113,6 +132,9 @@ public static class PointCommands
   /// free in the drawing (<c>keepPointNumbers</c>, default true); one already taken, or a format without numbers, gets
   /// the drawing's next number, and the answer lists each one renumbered. <c>targetSurface</c> is refused (not
   /// implemented). The whole file is read before anything is created, so a bad line creates no points.
+  /// Changes the drawing (one undo step) after asking the user (PointCreationGate). <c>format</c> and <c>data</c> are
+  /// required. Returns imported, pointNumbers and renumbered. Throws CIVIL3D.API_ERROR for targetSurface,
+  /// CIVIL3D.INVALID_INPUT for no points or a bad line (PointText.Parse), CIVIL3D.USER_DECLINED / POINT_CREATION_OFF.
   /// </summary>
   public static async Task<object?> ImportCogoPointsAsync(JsonObject? parameters)
   {
@@ -186,6 +208,10 @@ public static class PointCommands
   /// every request until someone answers it, so such a point takes the next free number and existing points stay as
   /// they are. A line Civil 3D can't read refuses the whole file, and nothing comes in.
   /// </para>
+  /// Changes the drawing in one undo step; the drawing's duplicate-number setting is put back afterwards. Returns path,
+  /// format, imported, pointsBefore/After, pointGroup, ifNumberExists and a note when characters were lost. Throws
+  /// CIVIL3D.INVALID_INPUT for an unknown format, a bad ifNumberExists or a file Civil 3D can't read, and the
+  /// FileBoundary errors (CIVIL3D.PATH_NOT_ALLOWED ...) for a path outside the import roots or with another extension.
   /// </summary>
   public static Task<object?> ImportPointFileAsync(JsonObject? parameters)
   {
@@ -267,6 +293,7 @@ public static class PointCommands
     });
   }
 
+  /// <summary>A temporary code-page copy of a point file; <c>Lost</c> is true when some characters became '?'.</summary>
   private sealed record PointFileCopy(string Path, bool Lost);
 
   /// <summary>
@@ -301,13 +328,15 @@ public static class PointCommands
     return new PointFileCopy(copy, ansi.GetString(encoded) != text);
   }
 
-  /// <summary>The drawing's point file format names, for importPointFile's <c>format</c>.</summary>
+  /// <summary>listPointFileFormats (read-only, no parameters): the drawing's point file format names, for
+  /// importPointFile's <c>format</c>. Returns { formats: [...] }.</summary>
   public static Task<object?> ListPointFileFormatsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
       new Dictionary<string, object?> { ["formats"] = FormatNames(PointFileFormatCollection.GetPointFileFormats(database)) });
   }
 
+  /// <summary>The names of the formats in <paramref name="formats"/>, in the drawing's order.</summary>
   private static List<string> FormatNames(PointFileFormatCollection formats)
   {
     var names = new List<string>();
@@ -319,8 +348,11 @@ public static class PointCommands
     return names;
   }
 
-  /// <summary>Erases the points with the given <c>pointNumbers</c>; one missing number fails the whole call, so
-  /// nothing is erased (the write isn't committed).</summary>
+  /// <summary>deleteCogoPoints (changes the drawing, one undo step): erases the points with the given required
+  /// <c>pointNumbers</c> (numbers of 0 or less are skipped); one missing number fails the whole call with
+  /// CIVIL3D.OBJECT_NOT_FOUND, so nothing is erased (the write isn't committed). An empty or missing array is
+  /// CIVIL3D.INVALID_INPUT. No user window: the TS side requires an approval token for this delete. Returns deleted
+  /// and pointNumbers.</summary>
   public static Task<object?> DeleteCogoPointsAsync(JsonObject? parameters)
   {
     var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
@@ -349,6 +381,8 @@ public static class PointCommands
     });
   }
 
+  /// <summary>listPointGroups (read-only, no parameters): every point group with name, description, pointCount and the
+  /// include/exclude number patterns of a standard query (null for other query types).</summary>
   public static Task<object?> ListPointGroupsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -375,6 +409,7 @@ public static class PointCommands
     });
   }
 
+  /// <summary>Opens every COGO point of the drawing for read, lazily.</summary>
   private static IEnumerable<CogoPoint> EnumeratePoints(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Autodesk.AutoCAD.DatabaseServices.Transaction transaction)
   {
     foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.CogoPoints)
@@ -383,6 +418,8 @@ public static class PointCommands
     }
   }
 
+  /// <summary>The point with <paramref name="pointNumber"/>, opened in <paramref name="openMode"/> (a linear scan of
+  /// all points). Throws CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static CogoPoint FindPointByNumber(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Autodesk.AutoCAD.DatabaseServices.Transaction transaction, uint pointNumber, Autodesk.AutoCAD.DatabaseServices.OpenMode openMode)
   {
     foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.CogoPoints)
@@ -397,6 +434,8 @@ public static class PointCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"COGO point '{pointNumber}' was not found.");
   }
 
+  /// <summary>The point numbers in the group named <paramref name="groupName"/> (ignoring case). Despite the name it
+  /// never returns null: an unknown group throws CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static HashSet<uint>? TryGetPointNumbersForGroup(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Autodesk.AutoCAD.DatabaseServices.Transaction transaction, string groupName)
   {
     foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.PointGroups)

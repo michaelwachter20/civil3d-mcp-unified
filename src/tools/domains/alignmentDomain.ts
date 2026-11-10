@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The alignment domain: `civil3d_alignment` (list, inspect, station/offset conversions, create and delete, and
  * geometry editing) and its aliases (`civil3d_alignment_report`, `civil3d_alignment_add_tangent`, ...). The plugin
@@ -10,7 +6,15 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * canonical argument is `name`; the actions below rename it.
  *
  * Every action forwards to one plugin method except `report`, which samples stations and summarizes them here.
+ *
+ * Approval (approvalPolicy.ts): list, get, station_to_point, point_to_station, get_station_offset and report are
+ * reads. create, delete, add_tangent, add_curve, add_spiral, delete_entity, set_station_equation, offset_create and
+ * widen_transition change the drawing (one undo step each) and need an approvalToken.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
+
 const Point2DSchema = z.object({
   x: z.number(),
   y: z.number(),
@@ -320,6 +324,9 @@ function buildStationSequence(startStation: number, endStation: number, interval
 export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "alignment",
   actions: {
+    // Reads (AlignmentCommands.cs): list -> listAlignments, get -> getAlignment, station_to_point ->
+    // alignmentStationToPoint, point_to_station -> alignmentPointToStation. create -> createAlignment (from a list of
+    // points) and delete -> deleteAlignment write and need approval.
     list: {
       action: "list",
       inputSchema: AlignmentListArgsSchema,
@@ -473,6 +480,9 @@ export const ALIGNMENT_DOMAIN_DEFINITION: DomainToolDefinition = {
         };
       }),
     },
+    // Geometry editing (AlignmentEditCommands.cs, each takes `alignmentName`): add_tangent, add_curve, add_spiral,
+    // delete_entity, set_station_equation, offset_create and widen_transition write and need approval;
+    // get_station_offset is a read.
     add_tangent: {
       action: "add_tangent",
       inputSchema: AlignmentAddTangentArgsSchema,

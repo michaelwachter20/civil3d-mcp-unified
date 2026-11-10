@@ -1,3 +1,12 @@
+// Data shortcuts: list, publish, reference (by published name or by source drawing path), synchronize, promote.
+// JSON-RPC methods (CommandDispatcher): listDataShortcuts, createDataShortcut, referenceDataShortcut,
+// createDataShortcutReference, syncDataShortcuts, promoteDataShortcut. Called by src/tools/domains/projectDomain.ts
+// (civil3d_project) and reused by WorkflowCommands' data shortcut workflows.
+// listDataShortcuts is a CivilExecution.ReadAsync, but it reloads the current shortcut project (sets the working
+// folder) as a side effect outside the drawing. Publish and reference are CivilExecution.WriteAsync (one undo step);
+// publishing writes Civil 3D's shortcut files into the project folder through DataShortcutManager. Sync only queues
+// SynchronizeReferences, which runs after the request. Source drawing paths go through FileBoundary.ResolveReferencePath.
+// Reference-state properties that differ between releases are read late-bound through CivilObjectUtils.
 using System.Collections;
 using System.Linq;
 using System.Text.Json.Nodes;
@@ -16,13 +25,15 @@ namespace Civil3DMcpPlugin;
 /// Plugin methods behind civil3d_project (data shortcuts; src/tools/domains/projectDomain.ts) and the data shortcut
 /// workflows. Publishing and referencing go through Civil 3D's DataShortcutManager, so they finish here with no window:
 /// a drawing's objects are selected and saved into the current project, and a published item becomes a reference with
-/// CreateReference. Sync launches the SynchronizeReferences command. Create-reference and promote answer
-/// "manual_step_required" with what the user must do in Toolspace; pass that on instead of reporting them as done.
+/// CreateReference. Sync launches the SynchronizeReferences command. Promote answers "manual_step_required" (or
+/// "unsupported" for corridors) with what the user must do in Toolspace; pass that on instead of reporting it as done.
 /// </summary>
 public static class DataShortcutCommands
 {
   /// <summary>Surfaces, alignments and other shortcut-able objects split into incoming references (data shortcuts
-  /// already in this drawing) and exportable objects (this drawing's own, which could be published).</summary>
+  /// already in this drawing) and exportable objects (this drawing's own, which could be published), plus the working
+  /// folder, current project and what that project has published. listDataShortcuts; no parameters. Doesn't change
+  /// the drawing (it does reload the current shortcut project).</summary>
   public static Task<object?> ListDataShortcutsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -90,6 +101,7 @@ public static class DataShortcutCommands
   /// <summary>
   /// Makes a project current: <paramref name="project"/> is a name in the working folder, or a full path, which also
   /// moves the working folder to the project's parent. <paramref name="create"/> makes one that isn't there.
+  /// Without <paramref name="create"/>, an unknown project is CIVIL3D.OBJECT_NOT_FOUND listing the ones there are.
   /// </summary>
   private static void UseProject(string? project, bool create)
   {
@@ -126,7 +138,8 @@ public static class DataShortcutCommands
     }
   }
 
-  /// <summary>Refuses when no project is current. Civil 3D's own commands answer that with a window that stops every request.</summary>
+  /// <summary>Refuses when no project is current (CIVIL3D.INVALID_INPUT), otherwise loads it. Civil 3D's own commands
+  /// answer a missing project with a window that stops every request.</summary>
   internal static void RequireShortcutFolder()
   {
     var (current, others) = Projects();
@@ -180,6 +193,7 @@ public static class DataShortcutCommands
     return items;
   }
 
+  /// <summary>The manager's published item count, 0 when it throws because the project has none yet.</summary>
   private static int PublishedCount(Shortcuts.DataShortcutManager manager)
   {
     try
@@ -207,6 +221,10 @@ public static class DataShortcutCommands
   /// <summary>
   /// Publishes object <c>objectName</c> to the current project, or to <c>projectFolder</c>, which is made if it's new.
   /// Civil 3D also publishes what the object depends on: an alignment brings its profiles and sample lines.
+  /// createDataShortcut; reads <c>objectType</c>, <c>objectName</c> (required) and <c>projectFolder</c> (optional).
+  /// Writes shortcut files to the project; status "published" or "already_published". Throws CIVIL3D.INVALID_INPUT
+  /// for an unsaved drawing or no current project, CIVIL3D.OBJECT_NOT_FOUND when the drawing has no such exportable
+  /// object (message lists what it has).
   /// </summary>
   public static Task<object?> CreateDataShortcutAsync(JsonObject? parameters)
   {
@@ -269,7 +287,12 @@ public static class DataShortcutCommands
     });
   }
 
-  /// <summary>Makes published item <c>shortcutName</c> of project <c>projectFolder</c> a reference in the active drawing.</summary>
+  /// <summary>
+  /// referenceDataShortcut: makes published item <c>shortcutName</c> of type <c>shortcutType</c> in project
+  /// <c>projectFolder</c> (all required) a reference in the active drawing, optionally on <c>layer</c>. Changes the
+  /// drawing; returns the new objects' handles. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown project or item,
+  /// CIVIL3D.CONFLICT for a broken shortcut, CIVIL3D.INVALID_INPUT when no project is current.
+  /// </summary>
   public static Task<object?> ReferenceDataShortcutAsync(JsonObject? parameters)
   {
     var projectFolder = PluginRuntime.GetRequiredString(parameters, "projectFolder");
@@ -341,6 +364,8 @@ public static class DataShortcutCommands
   /// Lists the references that look out of date and, unless <c>dryRun</c>, launches SynchronizeReferences. The command
   /// is queued with SendStringToExecute, so it runs after this request returns (status "initiated"), and it covers
   /// every reference in the drawing: <c>shortcutNames</c> and <c>projectFolder</c> only filter what is reported.
+  /// Nothing stale answers "up_to_date" without sending anything. The command itself runs outside the host queue and
+  /// changes the drawing on its own. CIVIL3D.COMMAND_FAILED when the command can't be sent.
   /// </summary>
   public static async Task<object?> SyncDataShortcutsAsync(JsonObject? parameters)
   {
@@ -416,6 +441,9 @@ public static class DataShortcutCommands
   /// <summary>
   /// References an object of a saved drawing by that file's path. The object must already be published to the current
   /// project, because Civil 3D looks it up there. A second call changes nothing and answers with the same reference.
+  /// createDataShortcutReference; reads <c>sourceFilePath</c> (.dwg, through FileBoundary.ResolveReferencePath),
+  /// <c>objectName</c> and <c>objectType</c> (all required). Changes the drawing. Throws CIVIL3D.INVALID_INPUT for the
+  /// drawing itself, an unknown type, no current project or an unpublished object, and FileBoundary's path errors.
   /// </summary>
   public static Task<object?> CreateDataShortcutReferenceAsync(JsonObject? parameters)
   {
@@ -455,7 +483,8 @@ public static class DataShortcutCommands
   }
 
   /// <summary>Civil 3D has no call for this: corridors can't be promoted at all, and other types answer
-  /// "manual_step_required" (promote from Toolspace).</summary>
+  /// "manual_step_required" (promote from Toolspace). promoteDataShortcut reads <c>shortcutName</c>,
+  /// <c>shortcutType</c> (required) and <c>newName</c>, and never touches the drawing.</summary>
   public static Task<object?> PromoteDataShortcutAsync(JsonObject? parameters)
   {
     var shortcutName = PluginRuntime.GetRequiredString(parameters, "shortcutName");
@@ -492,6 +521,11 @@ public static class DataShortcutCommands
     });
   }
 
+  /// <summary>
+  /// Files an object as incoming (a data shortcut reference of a supported type, with source path, sync and validity
+  /// state) or exportable (with whether it is already published). Reference state is read late-bound under several
+  /// release-dependent property names; an unreadable one counts as synced and valid.
+  /// </summary>
   private static void RegisterShortcutCandidate(AcDbObject dbObject, string objectType, List<Dictionary<string, object?>> incoming, List<Dictionary<string, object?>> exportable)
   {
     var isReference = GetAnyBool(dbObject, "IsReferenceObject", "IsReference", "IsDrefObject") ?? false;
@@ -550,6 +584,7 @@ public static class DataShortcutCommands
     }
   }
 
+  /// <summary>The first of <paramref name="propertyNames"/> that reads as a bool (late-bound), else null.</summary>
   private static bool? GetAnyBool(object value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -564,6 +599,7 @@ public static class DataShortcutCommands
     return null;
   }
 
+  /// <summary>The first of <paramref name="propertyNames"/> that reads as non-empty text (late-bound), else null.</summary>
   private static string? GetAnyString(object value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -592,6 +628,10 @@ public static class DataShortcutCommands
       .ToList();
   }
 
+  /// <summary>
+  /// Queues <paramref name="commandName"/> on the document's command line (SendStringToExecute); it runs after the
+  /// current request. CIVIL3D.COMMAND_FAILED when queuing throws.
+  /// </summary>
   private static void SendCommand(Document doc, string commandName)
   {
     try
@@ -604,6 +644,7 @@ public static class DataShortcutCommands
     }
   }
 
+  /// <summary>Awaits a handler's result and requires it to be a dictionary (CIVIL3D.TRANSACTION_FAILED otherwise).</summary>
   private static async Task<Dictionary<string, object?>> RequireDictionary(Task<object?> task, string context)
   {
     var value = await task;

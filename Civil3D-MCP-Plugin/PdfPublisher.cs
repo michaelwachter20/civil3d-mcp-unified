@@ -1,3 +1,11 @@
+// Plots layouts of the active drawing to one multi-page PDF with AutoCAD's publish engine ("DWG To PDF.pc3").
+// Callers: PlanProductionCommands.PublishSheetPdfAsync (publishSheetPdf) and ExportSheetSetAsync (exportSheetSet),
+// civil3d_plan_production (src/tools/domains/planProductionDomain.ts); also reached through the publish_sheet_pdf
+// background job (JobCommands) and a WorkflowCommands workflow.
+// Serves no JSON-RPC method itself. Runs inside the caller's CivilExecution.WriteAsync (main thread, command context,
+// document lock), because a layout must be made current to plot it. The output path is resolved by the caller through
+// FileBoundary; the plot engine writes the file. Changes no drawing objects: the current layout and BACKGROUNDPLOT
+// are restored afterwards, even after a failure.
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.PlottingServices;
@@ -18,6 +26,13 @@ internal static class PdfPublisher
 {
   private const string PdfDevice = "DWG To PDF.pc3";
 
+  /// <summary>
+  /// Plots <paramref name="layoutNames"/> (in that order, one page each) to <paramref name="outputPath"/> and returns
+  /// the PDF's size in bytes. <paramref name="paperSize"/> is part of a media name ("ANSI_D"); <paramref
+  /// name="plotStyleTable"/> a .ctb/.stb name. Throws CIVIL3D.HOST_BUSY when AutoCAD is already plotting,
+  /// CIVIL3D.INVALID_INPUT for Model, CIVIL3D.OBJECT_NOT_FOUND for an unknown layout or paper size, and
+  /// CIVIL3D.API_ERROR when the engine finishes but no file (or an empty one) exists.
+  /// </summary>
   public static long Publish(Document document, Transaction transaction, IReadOnlyList<string> layoutNames, string outputPath, string? paperSize, string? plotStyleTable)
   {
     if (PlotFactory.ProcessPlotState != ProcessPlotState.NotPlotting)
@@ -66,6 +81,10 @@ internal static class PdfPublisher
     return written.Length;
   }
 
+  /// <summary>Makes the layout current and builds its validated plot info: the layout's own settings with the PDF
+  /// device, the chosen paper, plot type Layout and the optional plot style table. The layout itself is not changed
+  /// (the settings are an override). Throws CIVIL3D.INVALID_INPUT for Model, CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// layout.</summary>
   private static PlotInfo PlotInfoFor(LayoutManager manager, Transaction transaction, string layoutName, string? paperSize, string? plotStyleTable)
   {
     if (string.Equals(layoutName, "Model", StringComparison.OrdinalIgnoreCase))
@@ -99,7 +118,9 @@ internal static class PdfPublisher
     return info;
   }
 
-  /// <summary>The paper asked for (part of its name, "ANSI_D"), else the layout's own if the PDF device has it, else 11x17 landscape.</summary>
+  /// <summary>The paper asked for (part of its name, "ANSI_D"), else the layout's own if the PDF device has it, else
+  /// 11x17 landscape, else the device's first. An unmatched <paramref name="paperSize"/> throws
+  /// CIVIL3D.OBJECT_NOT_FOUND listing the device's media (LookupUtils.NotFound).</summary>
   private static string ChooseMedia(PlotSettingsValidator validator, PlotSettings settings, string layoutMedia, string? paperSize)
   {
     var media = validator.GetCanonicalMediaNameList(settings).Cast<string>().ToList();

@@ -1,3 +1,8 @@
+// ScriptSymbolCheck.cs - second half of the script sandbox for the Roslyn code-execution engine. ScriptEngine.Compile
+// calls Validate with the compiled script on every call (cached or not), because the same code can be allowed in a
+// write run and refused in a read run. It refuses names that resolve to blocked types or members, with the same
+// reasons and CIVIL3D.SANDBOX_VIOLATION code as ScriptSandbox. Some type names are split ("System." + ...) on purpose
+// so the repository's reflection boundary test doesn't flag this file; keep them that way. No drawing, no files.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -11,6 +16,8 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 internal static class ScriptSymbolCheck
 {
+  /// <summary>A blocked type (or namespace, ending with '.'), optionally only members whose names start with one of
+  /// <c>Members</c>, and the reason shown to the AI.</summary>
   private sealed record Rule(string Type, string[]? Members, string Reason)
   {
     /// <summary>A type by its full name, or every type in a namespace when the name ends with a dot.</summary>
@@ -46,7 +53,9 @@ internal static class ScriptSymbolCheck
     new("System.IO.StreamWriter", null, "writing files"),
   };
 
-  /// <summary>Refuses a script with a name that resolves to something the sandbox blocks.</summary>
+  /// <summary>Refuses a script with a name that resolves to something the sandbox blocks: host-protection rules while
+  /// host protection is on, read-only rules when <paramref name="writeMode"/> is false. Throws
+  /// CIVIL3D.SANDBOX_VIOLATION naming the script line and the name.</summary>
   public static void Validate(Compilation compilation, bool writeMode)
   {
     foreach (var tree in compilation.SyntaxTrees)
@@ -72,6 +81,7 @@ internal static class ScriptSymbolCheck
     }
   }
 
+  /// <summary>Throws CIVIL3D.SANDBOX_VIOLATION when the first matching rule is found.</summary>
   private static void Refuse(Rule[] rules, string typeName, string member, SimpleNameSyntax name, string verdict)
   {
     var rule = rules.FirstOrDefault(candidate => candidate.Matches(typeName, member));

@@ -1,3 +1,12 @@
+// Gravity pipe network hydraulics. JSON-RPC methods (CommandDispatcher.cs): calculatePipeNetworkHgl,
+// analyzePipeNetworkHydraulics, getPipeStructureProperties.
+// Callers: civil3d_pipe (src/tools/domains/pipeDomain.ts: calculate_hgl, hydraulic_analysis,
+// get_structure_properties) and workflowDomain.ts's pipe_network_design (analyzePipeNetworkHydraulics). In-process,
+// HydrologyCommands.RunoffPipeWorkflowAsync (runoffPipeWorkflow) calls the first two, and PipeNetworkCommands uses
+// InvertIn/InvertOut for its pipe data.
+// All three are read only: they run in CivilExecution.ReadAsync (main thread, no undo step) and never change the
+// drawing. Formulas (Manning's, part-full flow, units) are in PipeMath. Networks, pipes and structures are read
+// late-bound by member name; that reflection goes through Civil3DCompatibility only. No file access.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -10,11 +19,22 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Hydraulic analysis commands for gravity pipe networks.
 /// Implements Manning's equation, HGL backwater analysis, and structure property queries.
+/// Results are in the drawing's units (feet: cfs and ft/s; otherwise cms and m/s), whatever the key names say.
+/// Slopes are in percent. An unknown network or structure is CIVIL3D.OBJECT_NOT_FOUND; a missing required argument
+/// is CIVIL3D.INVALID_INPUT.
 /// </summary>
 public static class PipeHydraulicsCommands
 {
   // ─── calculatePipeNetworkHgl ────────────────────────────────────────────────
 
+  /// <summary>
+  /// A simple hydraulic grade line for network <c>networkName</c> (required). Optional: <c>tailwaterElevation</c>
+  /// (default the outlet pipe's invert out), <c>designFlow</c> (default each pipe's full-flow capacity) and
+  /// <c>manningsN</c> (default 0.013). Pipes are sorted by start invert, highest first, and walked as one chain up
+  /// from the lowest, each adding its full-pipe Manning friction loss; a pipe is surcharged when the HGL at its upper
+  /// end is above its crown. Returns one node per pipe, from the outlet up. A network with no pipes gives an empty
+  /// node list with a warning. Read only.
+  /// </summary>
   public static Task<object?> CalculatePipeNetworkHglAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -104,6 +124,14 @@ public static class PipeHydraulicsCommands
 
   // ─── analyzePipeNetworkHydraulics ──────────────────────────────────────────
 
+  /// <summary>
+  /// Checks every pipe of network <c>networkName</c> (required) against design limits. Optional: <c>designFlow</c>
+  /// (default each pipe's full-flow capacity), <c>manningsN</c> (0.013), <c>minSlope</c> (percent, 0.5),
+  /// <c>minCoverDepth</c> (2 ft), <c>minVelocity</c> (2 ft/s) and <c>maxVelocity</c> (10 ft/s); the three feet
+  /// defaults are converted when the drawing is in meters. Per pipe: full-flow capacity, part-full velocity, depth
+  /// ratio, Froude number, cover, and the limits it breaks (status OK or FAIL). Cover is checked only for pipes with a
+  /// reference surface. Also lists each structure's rim, sump and depth. Read only.
+  /// </summary>
   public static Task<object?> AnalyzePipeNetworkHydraulicsAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -209,6 +237,12 @@ public static class PipeHydraulicsCommands
 
   // ─── getPipeStructureProperties ─────────────────────────────────────────────
 
+  /// <summary>
+  /// Structure <c>structureName</c> in network <c>networkName</c> (both required): type, x and y, rim and sump
+  /// elevations, depth (rim less sump, given as both sumpDepth and totalDepth), barrel count, and each connected
+  /// pipe's inverts and inner diameter. Values a release doesn't expose fall back to 0 (rim, x, y), the rim (sump)
+  /// or 1 (barrels). Read only.
+  /// </summary>
   public static Task<object?> GetPipeStructurePropertiesAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -263,6 +297,8 @@ public static class PipeHydraulicsCommands
   private sealed record PipeInfo(string Name, double Diameter, double Length, double Slope, double InvertIn, double InvertOut, double? Cover = null);
   private sealed record StructureInfo(string Name, double RimElevation, double SumpElevation, List<string> ConnectedPipes);
 
+  /// <summary>The network named <paramref name="name"/> (case-insensitive), found through whichever of several
+  /// network collection members exist, or CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static DBObject FindPipeNetworkByName(object civilDoc, Transaction transaction, string name)
   {
     var candidates = new[]
@@ -287,6 +323,8 @@ public static class PipeHydraulicsCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pipe network '{name}' was not found.");
   }
 
+  /// <summary>The structure of this network named <paramref name="structureName"/> (case-insensitive), or
+  /// CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static DBObject FindStructureByName(DBObject network, Transaction transaction, string structureName)
   {
     foreach (var objectId in GetChildObjectIds(network, "GetStructureIds", "StructureIds", "Structures", "StructureCollection"))
@@ -316,8 +354,10 @@ public static class PipeHydraulicsCommands
   /// <summary>A pipe's start invert: its end points are on the centerline, half the inner height above the invert.</summary>
   internal static double InvertIn(Pipe pipe) => pipe.StartPoint.Z - pipe.InnerHeight / 2;
 
+  /// <summary>A pipe's end invert, the same way as <see cref="InvertIn"/>.</summary>
   internal static double InvertOut(Pipe pipe) => pipe.EndPoint.Z - pipe.InnerHeight / 2;
 
+  /// <summary>The ids of the pipes connected to a structure; none when the object isn't a Civil 3D structure.</summary>
   private static IEnumerable<ObjectId> ConnectedPipeIds(DBObject structure)
   {
     if (structure is Structure civilStructure)
@@ -329,6 +369,8 @@ public static class PipeHydraulicsCommands
     }
   }
 
+  /// <summary>Each pipe's name, inner diameter (default 1.0 when unreadable), 3D length, percent slope, inverts and
+  /// least cover, read late-bound with fallbacks.</summary>
   private static List<PipeInfo> GetPipeData(DBObject network, Transaction transaction)
   {
     var results = new List<PipeInfo>();
@@ -350,6 +392,8 @@ public static class PipeHydraulicsCommands
     return results;
   }
 
+  /// <summary>Each structure's name, rim and sump elevations and connected pipe names, read late-bound with fallbacks.
+  /// </summary>
   private static List<StructureInfo> GetStructureData(DBObject network, Transaction transaction)
   {
     var results = new List<StructureInfo>();
@@ -366,6 +410,8 @@ public static class PipeHydraulicsCommands
     return results;
   }
 
+  /// <summary>Child ids from the first of <paramref name="memberNames"/> that the object has (a property, or a method
+  /// with no arguments); later names are not tried once one answers.</summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(DBObject parent, params string[] memberNames)
   {
     foreach (var name in memberNames)
@@ -380,6 +426,7 @@ public static class PipeHydraulicsCommands
     }
   }
 
+  /// <summary>The ids in a collection: items that are ids, or items with an ObjectId/Id member.</summary>
   private static IEnumerable<ObjectId> ToObjectIds(object? value)
   {
     if (value == null) yield break;
@@ -399,6 +446,8 @@ public static class PipeHydraulicsCommands
     }
   }
 
+  /// <summary>A property, else the result of a method, of that name, through Civil3DCompatibility; null when neither
+  /// exists.</summary>
   private static object? GetNamedMember(object? obj, string name)
   {
     if (obj == null) return null;

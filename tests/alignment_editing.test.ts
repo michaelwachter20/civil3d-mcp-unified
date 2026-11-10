@@ -1,3 +1,8 @@
+// Guards the intended input shapes (zod) of the alignment-editing and profile-editing tool actions: required fields,
+// positive radius/length, integer entity index, enum values and defaults.
+// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// Pure schema tests: no Civil 3D, no plugin, no files.
+
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 

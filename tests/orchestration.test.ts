@@ -1,9 +1,14 @@
+// Guards the plain-language router and planner in src/orchestration/ (IntentRouter, WorkflowPlanner, SelectionResolver):
+// which tool/action a request maps to, which inputs are extracted, which clarifying question is asked when an input
+// is missing, and how names are filled from the current selection. Pure unit test with a fake project context.
+
 import { describe, expect, it } from "vitest";
 import { routeIntent } from "../src/orchestration/IntentRouter.js";
 import { buildWorkflowPlan } from "../src/orchestration/WorkflowPlanner.js";
 import { resolveParamsFromSelection } from "../src/orchestration/SelectionResolver.js";
 import type { ProjectContext } from "../src/orchestration/ProjectContextService.js";
 
+/** Builds a fake project context (one surface, alignment, profile, corridor) that a test can override. */
 function createProjectContext(overrides?: Partial<ProjectContext>): ProjectContext {
   return {
     drawingInfo: {

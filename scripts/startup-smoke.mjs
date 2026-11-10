@@ -1,3 +1,8 @@
+// Offline startup check: launches build/index.js with its HTTP bridge on 127.0.0.1:MCP_HTTP_PORT (default 31999), polls
+// GET /health for up to about 3 s, requires bridge "ok" and at least one registered tool, then kills the server.
+// Doesn't need Civil 3D (the liveness endpoint doesn't call the plugin).
+//
+//   npm run test:startup   (builds first)    CI: node ./scripts/startup-smoke.mjs in .github/workflows/ci.yml
 import { spawn } from "node:child_process";
 
 const port = process.env.MCP_HTTP_PORT ?? "31999";

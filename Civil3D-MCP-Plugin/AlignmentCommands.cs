@@ -1,3 +1,10 @@
+// Alignment reads, station/point conversion, create and delete.
+// JSON-RPC methods (CommandDispatcher): listAlignments, getAlignment, alignmentStationToPoint, alignmentSampleStations,
+// alignmentPointToStation, createAlignment, deleteAlignment. Called by src/tools/domains/alignmentDomain.ts
+// (civil3d_alignment; its report action samples stations through these in TypeScript).
+// Reads use CivilExecution.ReadAsync (no undo step); createAlignment and deleteAlignment use WriteAsync (one undo
+// step each; delete is approval-gated in TypeScript). RequireStation and StationOffsetOf are shared with
+// AlignmentEditCommands and others. Late-bound reads go through CivilObjectUtils/Civil3DCompatibility; no file access.
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.DatabaseServices;
@@ -12,8 +19,13 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class AlignmentCommands
 {
+  /// <summary>How far past either end a station may be and still count as on the alignment (drawing units).</summary>
   private const double StationTolerance = 0.001;
 
+  /// <summary>
+  /// listAlignments: every alignment in the drawing as a summary (name, handle, type, length, start/end station, site,
+  /// profile count, isReference) under <c>alignments</c>. Read only; takes no parameters.
+  /// </summary>
   public static Task<object?> ListAlignmentsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -32,6 +44,11 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>
+  /// getAlignment: one alignment in detail. Reads <c>name</c> (required). Returns name, handle, type, style, layer,
+  /// length, stations, its entities (index, type line/arc/spiral, stations, length) sorted by start station, the
+  /// profiles and corridors that depend on it, and isReference. Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown name.
+  /// </summary>
   public static Task<object?> GetAlignmentAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -84,6 +101,11 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>
+  /// alignmentStationToPoint: the x/y at <c>station</c> and <c>offset</c> (default 0, right positive) on alignment
+  /// <c>name</c> (both required except offset), with the drawing's linear units. Read only. CIVIL3D.OBJECT_NOT_FOUND for
+  /// an unknown alignment, CIVIL3D.INVALID_INPUT for a station off the alignment.
+  /// </summary>
   public static Task<object?> StationToPointAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -109,6 +131,12 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>
+  /// alignmentSampleStations: x/y for each of <c>stations</c> (required, 1 to 200 numbers) at one <c>offset</c>
+  /// (default 0) on alignment <c>name</c> (required), as <c>samples</c>. Read only. CIVIL3D.INVALID_INPUT for an empty,
+  /// too long or non-numeric list or any station off the alignment (the whole call fails), CIVIL3D.OBJECT_NOT_FOUND
+  /// for an unknown alignment.
+  /// </summary>
   public static Task<object?> SampleStationsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -154,6 +182,11 @@ public static class AlignmentCommands
     });
   }
 
+  /// <summary>
+  /// alignmentPointToStation: the station and signed offset of point <c>x</c>, <c>y</c> on alignment <c>name</c> (all
+  /// required), plus <c>distanceFromAlignment</c> and units. Read only. CIVIL3D.INVALID_INPUT for a point beyond the
+  /// alignment's ends, CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.
+  /// </summary>
   public static Task<object?> PointToStationAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -178,7 +211,10 @@ public static class AlignmentCommands
   /// <summary>
   /// Creates alignment <c>name</c> through <c>points</c> (at least two): a temporary polyline is drawn and converted
   /// with curves added between tangents, and the polyline is erased. Optional <c>style</c>, <c>layer</c>,
-  /// <c>labelSet</c> and <c>site</c> fall back to the drawing's defaults (LookupUtils).
+  /// <c>labelSet</c> and <c>site</c> fall back to the drawing's defaults (LookupUtils). A write (one undo step).
+  /// Returns name, handle, <c>created</c> and a note when curves were added. Throws CIVIL3D.INVALID_INPUT for fewer
+  /// than two points or <c>type</c> = offset (use alignmentOffsetCreate), CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// style, layer, label set or site.
   /// </summary>
   public static Task<object?> CreateAlignmentAsync(JsonObject? parameters)
   {
@@ -243,7 +279,7 @@ public static class AlignmentCommands
   /// <summary>
   /// Erases alignment <c>name</c> and the profiles on it (the answer names them); approval-gated on the TypeScript
   /// side. A corridor built on it is refused with CIVIL3D.CONFLICT: Civil 3D would erase the alignment and leave the
-  /// corridor broken.
+  /// corridor broken. A write (one undo step). CIVIL3D.OBJECT_NOT_FOUND for an unknown name.
   /// </summary>
   public static Task<object?> DeleteAlignmentAsync(JsonObject? parameters)
   {
@@ -316,6 +352,7 @@ public static class AlignmentCommands
     return (station, offset);
   }
 
+  /// <summary>The short form of an alignment used by listAlignments.</summary>
   private static Dictionary<string, object?> ToAlignmentSummary(Alignment alignment)
   {
     return new Dictionary<string, object?>
@@ -332,6 +369,7 @@ public static class AlignmentCommands
     };
   }
 
+  /// <summary>Civil 3D's alignment type text as the tool's word: offset, rail, curb_return or centerline (default).</summary>
   private static string MapAlignmentType(string? value)
   {
     var text = value?.ToLowerInvariant() ?? string.Empty;
@@ -353,6 +391,7 @@ public static class AlignmentCommands
     return "centerline";
   }
 
+  /// <summary>An alignment entity's type text as spiral, arc (curves) or line (default).</summary>
   private static string MapAlignmentEntityType(string? value)
   {
     var text = value?.ToLowerInvariant() ?? string.Empty;

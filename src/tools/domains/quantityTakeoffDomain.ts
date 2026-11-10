@@ -1,3 +1,8 @@
+// Quantity takeoff domain: canonical tool `civil3d_quantity_takeoff`, aliases `civil3d_qty_*` (one per action). Listed
+// in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts) and run by domainRuntime.ts. Every action is one call to
+// QuantityCommands.cs (`qty*` methods). All are read-only queries except `export_to_csv`, which writes a CSV file
+// through the plugin's FileBoundary (export capability, so approvalPolicy requires an approvalToken). Node only
+// validates input (a region polygon needs at least 3 points) and fills defaults.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -46,6 +51,10 @@ const canonicalQuantityTakeoffInputShape = {
 export const QUANTITY_TAKEOFF_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "quantity_takeoff",
   actions: {
+    // Read-only quantity queries, one plugin method each: surface_volume (qtySurfaceVolume), pipe_network_lengths
+    // (qtyPipeNetworkLengths), pressure_network_lengths (qtyPressureNetworkLengths), parcel_areas (qtyParcelAreas),
+    // alignment_lengths (qtyAlignmentLengths), point_count_by_group (qtyPointCountByGroup) and earthwork_summary
+    // (qtyEarthworkSummary). export_to_csv (qtyExportToCsv) writes a file and needs approval.
     surface_volume: { action: "surface_volume", inputSchema: QtySurfaceVolumeArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["qtySurfaceVolume"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("qtySurfaceVolume", { baseSurface: args.baseSurface, comparisonSurface: args.comparisonSurface, corridorName: args.corridorName ?? null, region: args.region ?? null })) },
     pipe_network_lengths: { action: "pipe_network_lengths", inputSchema: QtyPipeNetworkLengthsArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["qtyPipeNetworkLengths"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("qtyPipeNetworkLengths", { name: args.name, groupBySize: args.groupBySize ?? false, groupByMaterial: args.groupByMaterial ?? false })) },
     pressure_network_lengths: { action: "pressure_network_lengths", inputSchema: QtyPressureNetworkLengthsArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["qtyPressureNetworkLengths"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("qtyPressureNetworkLengths", { name: args.name, groupBySize: args.groupBySize ?? false, groupByMaterial: args.groupByMaterial ?? false })) },

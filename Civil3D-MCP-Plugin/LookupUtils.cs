@@ -1,3 +1,9 @@
+// Shared name -> ObjectId lookups for layers, sites and styles, and the standard "not found, available: ..." error.
+// Called by the *Commands handlers (profiles, alignments, surfaces, sections, parcels, labels, plan production,
+// workflows, ...) inside their own CivilExecution.ReadAsync/WriteAsync transaction; serves no JSON-RPC method.
+// Rules: only reads (never creates a layer or style); a named item that isn't in the drawing is refused with
+// CIVIL3D.OBJECT_NOT_FOUND rather than replaced by a default. The one late-bound read (ProfileViewStyles) goes
+// through CivilObjectUtils.GetPropertyValue.
 using System.Collections;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.ApplicationServices;
@@ -22,7 +28,8 @@ public static class LookupUtils
   /// <summary>How many of the existing names a "not found" message lists.</summary>
   private const int NamesListed = 25;
 
-  /// <summary>The layer named <paramref name="layerName"/>, or the current layer (CLAYER) when none is named.</summary>
+  /// <summary>The layer named <paramref name="layerName"/>, or the current layer (CLAYER) when none is named. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND, listing the layers, for a name that isn't there.</summary>
   public static ObjectId GetLayerId(Database database, Transaction transaction, string? layerName)
   {
     if (string.IsNullOrWhiteSpace(layerName))
@@ -45,7 +52,8 @@ public static class LookupUtils
     throw NotFound("Layer", layerName, names);
   }
 
-  /// <summary>The site named <paramref name="siteName"/>, or <c>ObjectId.Null</c> (no site, i.e. siteless) when none is named.</summary>
+  /// <summary>The site named <paramref name="siteName"/> (ignoring case), or <c>ObjectId.Null</c> (no site, i.e.
+  /// siteless) when none is named. Throws CIVIL3D.OBJECT_NOT_FOUND, listing the sites, for a name that isn't there.</summary>
   public static ObjectId GetSiteId(CivilDocument civilDoc, Transaction transaction, string? siteName)
   {
     if (string.IsNullOrWhiteSpace(siteName))
@@ -84,32 +92,38 @@ public static class LookupUtils
   // The style lookups below return the named style (a name that isn't there is refused), else with no name the
   // collection's first style (see GetStyleId), unless their own comment says otherwise.
 
+  /// <summary>An alignment style by name, else the first.</summary>
   public static ObjectId GetAlignmentStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.AlignmentStyles, transaction, styleName);
   }
 
+  /// <summary>A profile style by name, else the first.</summary>
   public static ObjectId GetProfileStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.ProfileStyles, transaction, styleName);
   }
 
+  /// <summary>A surface style by name, else the first.</summary>
   public static ObjectId GetSurfaceStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.SurfaceStyles, transaction, styleName);
   }
 
+  /// <summary>An alignment label set style by name, else the first.</summary>
   public static ObjectId GetAlignmentLabelSetId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.LabelSetStyles.AlignmentLabelSetStyles, transaction, styleName);
   }
 
+  /// <summary>A profile label set style by name, else the first.</summary>
   public static ObjectId GetProfileLabelSetId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.LabelSetStyles.ProfileLabelSetStyles, transaction, styleName);
   }
 
-  /// <summary>A profile view style; the collection is read by property name, and <c>ObjectId.Null</c> when it isn't there.</summary>
+  /// <summary>A profile view style by name, else the first; the collection is read by property name, and the result
+  /// is <c>ObjectId.Null</c> when the collection isn't there.</summary>
   public static ObjectId GetProfileViewStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     var styles = CivilObjectUtils.GetPropertyValue<object>(civilDoc.Styles, "ProfileViewStyles");
@@ -129,16 +143,19 @@ public static class LookupUtils
     return GetStyleId(civilDoc.Styles.ProfileViewBandSetStyles, transaction, bandSetName);
   }
 
+  /// <summary>A parcel style by name, else the first.</summary>
   public static ObjectId GetParcelStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.ParcelStyles, transaction, styleName);
   }
 
+  /// <summary>A parcel area label style by name, else the first.</summary>
   public static ObjectId GetParcelAreaLabelStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.LabelStyles.ParcelLabelStyles.AreaLabelStyles, transaction, styleName);
   }
 
+  /// <summary>A section view style by name, else the first.</summary>
   public static ObjectId GetSectionViewStyleId(CivilDocument civilDoc, Transaction transaction, string? styleName)
   {
     return GetStyleId(civilDoc.Styles.SectionViewStyles, transaction, styleName);

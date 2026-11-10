@@ -1,3 +1,10 @@
+// Workflow domain: `civil3d_workflow` and its `civil3d_workflow_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts); civil3d_orchestrate's explicit workflow routes call the aliases. Native workflows are one call
+// each to a `*Workflow` method in WorkflowCommands.cs; composed ones import pipeDomain, surfaceDomain and surveyDomain
+// and call those actions' `execute` directly (no second approval or schema check). Approval comes from each workflow
+// action's own capabilities (approvalPolicy.ts): the read-only ones (grading_surface_volume,
+// surface_comparison_report, drawing_readiness_audit, corridor_qc_report) run without a token; the rest create, edit,
+// export or match a name rule (sync, publish, fix) and need an approvalToken. Details per action are below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -337,7 +344,8 @@ const SurveyImportAdjustFiguresArgsSchema = z.object({
 export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "workflow",
   actions: {
-    // Native: one plugin call. Declared non-retryable because it can write a report file (outputPath).
+    // Native: one plugin call. Declared non-retryable because it can write a report file (outputPath). It has no
+    // mutating or export capability, so approvalPolicy does not ask for a token even when it writes that file.
     corridor_qc_report: {
       action: "corridor_qc_report",
       inputSchema: CorridorQcReportArgsSchema,
@@ -391,6 +399,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         );
       },
     },
+    // Native (surfaceComparisonReportWorkflow): comparison plus volume report; read-only, no approval.
     surface_comparison_report: {
       action: "surface_comparison_report",
       inputSchema: SurfaceComparisonReportArgsSchema,
@@ -407,6 +416,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (dataShortcutPublishSyncWorkflow): publishes an object as a data shortcut, then syncs; needs approval
+    // ("sync" in the name, and a non-retryable create).
     data_shortcut_publish_sync: {
       action: "data_shortcut_publish_sync",
       inputSchema: DataShortcutPublishSyncArgsSchema,
@@ -426,6 +437,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (dataShortcutReferenceSyncWorkflow): references a shortcut into this drawing, then syncs; needs approval.
     data_shortcut_reference_sync: {
       action: "data_shortcut_reference_sync",
       inputSchema: DataShortcutReferenceSyncArgsSchema,
@@ -444,6 +456,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (projectStartupWorkflow): health check, optional new drawing from templatePath, readiness, shortcuts,
+    // optional save to saveAs. The only workflow that runs without an active drawing; needs approval.
     project_startup: {
       action: "project_startup",
       inputSchema: ProjectStartupArgsSchema,
@@ -460,6 +474,7 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (projectReferenceSetupWorkflow): references several shortcuts, syncs, reviews, optionally saves; needs approval.
     project_reference_setup: {
       action: "project_reference_setup",
       inputSchema: ProjectReferenceSetupArgsSchema,
@@ -477,6 +492,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (drawingReadinessAuditWorkflow): health, drawing info, settings, object types, selection, layer standards;
+    // read-only, no approval.
     drawing_readiness_audit: {
       action: "drawing_readiness_audit",
       inputSchema: DrawingReadinessAuditArgsSchema,
@@ -494,6 +511,9 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (featureLineToGradingWorkflow): optional grading group, grading from a feature line, optional grading
+    // surface; writes the drawing, needs approval. Note: surfaceName is in this schema but not in the canonical input
+    // shape above, so only the alias advertises it.
     feature_line_to_grading: {
       action: "feature_line_to_grading",
       inputSchema: FeatureLineToGradingArgsSchema,
@@ -516,7 +536,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
       ),
     },
     // Composed: sizes the network (pipe.size_network, which resizes only with applyChanges), then runs the hydraulic
-    // analysis unless runHydraulicAnalysis is false; a skipped analysis is reported as a warning.
+    // analysis unless runHydraulicAnalysis is false; a skipped analysis is reported as a warning. Declared "edit" and
+    // non-retryable, so it needs approval even when applyChanges is false.
     pipe_network_design: {
       action: "pipe_network_design",
       inputSchema: PipeNetworkDesignArgsSchema,
@@ -593,6 +614,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         );
       },
     },
+    // Native (planProductionPublishWorkflow): publishes a sheet set or listed layouts to PDF at outputPath (a file
+    // write through FileBoundary); export capability and "publish" in the name, so it needs approval.
     plan_production_publish: {
       action: "plan_production_publish",
       inputSchema: PlanProductionPublishArgsSchema,
@@ -611,6 +634,8 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
+    // Native (qcFixAndVerifyWorkflow): layer standards audit, fix, re-audit; "fix" in the name, so it needs approval
+    // (dryRun included).
     qc_fix_and_verify: {
       action: "qc_fix_and_verify",
       inputSchema: QcFixAndVerifyArgsSchema,
@@ -634,7 +659,9 @@ export const WORKFLOW_DOMAIN_DEFINITION: DomainToolDefinition = {
     },
     // Composed: imports a survey LandXML file, then (with networkName) lists observations and adjusts the network, then
     // (with figureName and pointNumbers) creates a figure, and finally lists the figures. Skipped steps become warnings.
-    // Note: no exposure lists this action in its supportedActions, so no tool reaches it at the moment.
+    // Note: no exposure lists this action in its supportedActions, so no tool reaches it at the moment. Its first step,
+    // survey.landxml_import, is always refused by the plugin (CIVIL3D.API_ERROR, see surveyDomain.ts), so it could not
+    // complete anyway.
     survey_import_adjust_figures: {
       action: "survey_import_adjust_figures",
       inputSchema: SurveyImportAdjustFiguresArgsSchema,

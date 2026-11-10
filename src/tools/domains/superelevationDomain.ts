@@ -1,3 +1,10 @@
+// Superelevation tools: canonical tool `civil3d_superelevation`, aliases `civil3d_superelevation_get`, `_set`,
+// `_design_check` and `_report`. Its catalog domain is "alignment" (superelevation belongs to an alignment), but it is
+// its own DomainToolDefinition in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Every action is one call to
+// SuperelevationCommands.cs. `set` and `set_station` change the alignment's superelevation data (not retry-safe, so
+// approvalPolicy asks for an approvalToken); `report` has the export capability (writes a file through the plugin's
+// FileBoundary) and also needs approval; `get` and `design_check` are read-only. The Superelevation wizard can't be
+// driven through the API, so the plugin's `set` explains that instead of changing anything.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -13,6 +20,12 @@ const SuperelevationReportArgs = z.object({ action: z.literal("report"), alignme
 export const SUPERELEVATION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "alignment",
   actions: {
+    // get: the alignment's critical stations and slopes (getSuperelevation); read-only.
+    // set: wizard settings (setSuperelevation); declared as an edit so it needs approval, though the plugin answers with a capability error.
+    // set_station: writes one critical station's lane/shoulder slopes (setSuperelevationStation); edit, needs approval.
+    // design_check: lane slopes against an explicit maximum (checkSuperelevationDesign); read-only.
+    // report: critical-station data, optionally written to outputPath (generateSuperelevationReport); export, needs approval.
+    // Note: design_check is reachable only through its alias, it is not in the canonical tool's supportedActions.
     get: { action: "get", inputSchema: SuperelevationGetArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "inspect"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["getSuperelevation"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("getSuperelevation", { alignmentName: args.alignmentName, includeRawData: args.includeRawData ?? false })) },
     set: { action: "set", inputSchema: SuperelevationSetArgs, responseSchema: GenericResponseSchema, capabilities: ["edit"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["setSuperelevation"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("setSuperelevation", { alignmentName: args.alignmentName, designSpeed: args.designSpeed, normalCrownSlope: args.normalCrownSlope, attainmentMethod: args.attainmentMethod ?? "AASHTO_2011", pivotPoint: args.pivotPoint ?? "centerline" })) },
     set_station: { action: "set_station", inputSchema: SuperelevationSetStationArgs, responseSchema: GenericResponseSchema, capabilities: ["edit"], requiresActiveDrawing: true, safeForRetry: false, pluginMethods: ["setSuperelevationStation"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("setSuperelevationStation", { alignmentName: args.alignmentName, station: args.station, stationType: args.stationType ?? null, leftLaneSlope: args.leftLaneSlope ?? null, rightLaneSlope: args.rightLaneSlope ?? null, leftShoulderSlope: args.leftShoulderSlope ?? null, rightShoulderSlope: args.rightShoulderSlope ?? null })) },

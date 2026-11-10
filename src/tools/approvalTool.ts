@@ -1,9 +1,3 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { approvalPolicy, isApprovalRequired } from "./approvalPolicy.js";
-import { captureToolHandler } from "./toolHandlerRegistry.js";
-import { findManifestAction, findManifestActionByCall } from "./toolManifest.js";
-
 /**
  * The two approval tools, `civil3d_preview_action` and `civil3d_request_approval`, registered directly by
  * register.ts (not through the domain manifest). The rules themselves live in approvalPolicy.ts; domainRuntime.ts
@@ -13,8 +7,14 @@ import { findManifestAction, findManifestActionByCall } from "./toolManifest.js"
  * token is needed, requests a token with the exact tool, action and parameters it will send, then repeats the call
  * with `approvalToken`. The token is single use, lasts `ttlSeconds` (30-600, default 300) and is bound to a hash of
  * those parameters and to the active drawing's fingerprint, so a token for "delete alignment Elm St" can't delete
- * anything else, or anything after the drawing changed.
+ * anything else, or anything after the drawing changed. Tool descriptions here are client-visible; change on purpose.
  */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { approvalPolicy, isApprovalRequired } from "./approvalPolicy.js";
+import { captureToolHandler } from "./toolHandlerRegistry.js";
+import { findManifestAction, findManifestActionByCall } from "./toolManifest.js";
+
 type JsonObject = Record<string, unknown>;
 
 /** Arguments of both tools; `parameters` must be the full argument object of the later call, `action` included. */
@@ -67,6 +67,7 @@ function resolveApprovalTarget(args: { toolName: string; action: string; paramet
   return target;
 }
 
+/** An MCP result carrying `structuredContent` both as pretty JSON text and as structured content. */
 function successResult(structuredContent: JsonObject) {
   return {
     content: [{
@@ -77,6 +78,7 @@ function successResult(structuredContent: JsonObject) {
   };
 }
 
+/** An `isError` MCP result ("<tool> failed: <message>"); unlike domainRuntime's, it carries no errorCode. */
 function errorResult(toolName: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return {

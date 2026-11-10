@@ -1,3 +1,12 @@
+// Drawing domain: the `civil3d_drawing` tool plus the aliases `get_drawing_info`, `get_selected_civil_objects_info`
+// and `list_civil_object_types`. Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts).
+// Mostly one call each to DrawingCommands.cs (getDrawingInfo, getDrawingSettings, getSelectedCivilObjectsInfo,
+// listCivilObjectTypes, listOpenDrawings, activateDrawing, newDrawing, saveDrawing, undoDrawing, redoDrawing) and
+// CommandLineMonitor.cs (getCommandLine). `open` runs in Node (openDrawing.ts): it looks the name up among the open
+// drawings and in the job's project database, then asks the plugin to switch or open.
+// Approval: new, save, undo and redo match the always-approve names in approvalPolicy.ts and need an approvalToken;
+// switch and open are "manage" but safe to retry, so they don't (they change no drawing data). The rest are reads.
+// getDrawingInfo is also what approvalPolicy.ts hashes for the drawing fingerprint bound to every token.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -27,6 +36,9 @@ const CommandLineArgs = z.object({ action: z.literal("command_line"), lines: z.n
 export const DRAWING_RUNTIME_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "drawing",
   actions: {
+    // Reads: info, settings, selected_objects_info, list_open, command_line, list_object_types.
+    // Writes needing approval: new (newDrawing), save (saveDrawing, saveAs path checked by the plugin's FileBoundary),
+    // undo (undoDrawing; refuses when the user worked since the AI's last change unless force=true), redo.
     info: { action: "info", inputSchema: DrawingInfoArgs, responseSchema: DrawingInfoResponseSchema, capabilities: ["query", "inspect"], requiresActiveDrawing: false, safeForRetry: true, pluginMethods: ["getDrawingInfo"], execute: async () => await withApplicationConnection(async (appClient) => await appClient.sendCommand("getDrawingInfo", {})) },
     new: { action: "new", inputSchema: DrawingNewArgs, responseSchema: GenericResponseSchema, capabilities: ["create", "manage"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["newDrawing"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("newDrawing", { templatePath: args.templatePath })) },
     save: { action: "save", inputSchema: DrawingSaveArgs, responseSchema: GenericResponseSchema, capabilities: ["edit", "manage"], requiresActiveDrawing: false, safeForRetry: false, pluginMethods: ["saveDrawing"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("saveDrawing", { saveAs: args.saveAs, overwrite: args.overwrite ?? false })) },

@@ -1,3 +1,11 @@
+// Site and parcel handlers for civil3d_parcel (src/tools/domains/parcelDomain.ts).
+// JSON-RPC methods: listParcelSites, listParcels, getParcel, reportParcels (reads, CivilExecution.ReadAsync: main
+// thread, no undo step); editParcel (CivilExecution.WriteAsync: command context, document lock, one transaction, one
+// undo step); createParcel (CivilExecution.WithDocumentLockAsync plus a COM undo mark: the .NET API can't create a
+// parcel, so parcel lines are added to the site through COM (LandCom) and the result is one undo step);
+// adjustParcelLotLine (always refused: there is no API for it).
+// reportParcels' optional CSV goes through FileBoundary.WriteAllTextAtomic. Late-bound reads go through
+// CivilObjectUtils / Civil3DCompatibility.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -9,8 +17,9 @@ namespace Civil3DMcpPlugin;
 /// Handlers for civil3d_parcel_* editing tools.
 ///
 /// Civil 3D API notes:
-///   Parcel/site collection members vary by Civil 3D version, so this implementation
-///   relies on reflection for site/parcel enumeration and creation fallbacks.
+///   Sites and parcels are read through the typed API (GetSiteIds, Site.GetParcelIds); a few late-bound member
+///   names are still tried as a fallback when listing a site's parcels, and the perimeter and boundary are read by
+///   property name. Creating a parcel needs COM (LandCom), since .NET has no call for it.
 /// </summary>
 public static class ParcelEditingCommands
 {
@@ -18,6 +27,7 @@ public static class ParcelEditingCommands
   // listParcelSites
   // -------------------------------------------------------------------------
 
+  /// <summary>listParcelSites (read-only, no parameters): every site with name, handle and parcelCount.</summary>
   public static Task<object?> ListParcelSitesAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -45,6 +55,9 @@ public static class ParcelEditingCommands
   // listParcels
   // -------------------------------------------------------------------------
 
+  /// <summary>listParcels (read-only): the parcels of site <c>siteName</c> (required, ignoring case) with name,
+  /// handle, number, area, perimeter and style, plus the drawing's area and length units. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown site.</summary>
   public static Task<object?> ListParcelsAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
@@ -84,6 +97,9 @@ public static class ParcelEditingCommands
   // getParcel
   // -------------------------------------------------------------------------
 
+  /// <summary>getParcel (read-only): one parcel by <c>siteName</c> and <c>parcelName</c> (both required, ignoring
+  /// case), with handle, number, area, perimeter and style. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown site or
+  /// parcel.</summary>
   public static Task<object?> GetParcelAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
@@ -112,9 +128,17 @@ public static class ParcelEditingCommands
   // -------------------------------------------------------------------------
 
   /// <summary>
-  /// Makes parcels from an entity or a list of corners. It adds parcel lines to the site (ParcelCom), and Civil 3D forms
+  /// Makes parcels from an entity or a list of corners. It adds parcel lines to the site (LandCom), and Civil 3D forms
   /// a parcel wherever they close a loop, so a line across an existing parcel splits it in two. The new parcels are the
   /// ones that weren't there before. All of it is one undo step, and lines that formed no parcel are taken out again.
+  /// <para>
+  /// createParcel (changes the drawing). Reads <c>siteName</c> (required), then either <c>sourceHandle</c> (a closed
+  /// entity's hex handle) or <c>points</c> ([[x, y], ...], at least 3 corners), and optionally <c>name</c> (used only
+  /// when exactly one parcel forms), <c>style</c> and <c>areaLabelStyle</c>. Returns siteName, created, parcelCount
+  /// and parcels (name, handle, area, perimeter). Throws CIVIL3D.INVALID_INPUT with neither source,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown site, handle or style, and CIVIL3D.API_ERROR when the lines close no
+  /// area; on any failure the added lines are deleted again.
+  /// </para>
   /// </summary>
   public static Task<object?> CreateParcelAsync(JsonObject? parameters)
   {
@@ -150,6 +174,8 @@ public static class ParcelEditingCommands
         }
       }
 
+      // The read transaction above is closed before COM runs: COM opens the objects itself and fails on ones a
+      // transaction still holds open (CivilExecution.WithDocumentLockAsync).
       var segments = LandCom.FindSite(siteName).ParcelSegments;
       var added = new List<dynamic>();
       dynamic document = Autodesk.AutoCAD.ApplicationServices.DocumentExtension.GetAcadDocument(doc);
@@ -238,6 +264,10 @@ public static class ParcelEditingCommands
   // editParcel
   // -------------------------------------------------------------------------
 
+  /// <summary>editParcel (changes the drawing, one undo step): finds <c>parcelName</c> in <c>siteName</c> (both
+  /// required) and sets whichever of <c>newName</c>, <c>style</c>, <c>areaLabelStyle</c>, <c>description</c> are given.
+  /// Returns siteName, name, handle, area and updated. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown site, parcel or
+  /// style. A rename Civil 3D refuses is skipped silently (CivilObjectUtils.TrySetName).</summary>
   public static Task<object?> EditParcelAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
@@ -278,6 +308,8 @@ public static class ParcelEditingCommands
   /// <summary>
   /// Neither Civil 3D's .NET API nor COM can slide a lot line to an area: it called methods that don't exist and said
   /// "attempted" with nothing changed. The arguments stay so a caller learns this rather than a schema error.
+  /// adjustParcelLotLine: reads <c>parcelName</c> (required; CIVIL3D.INVALID_INPUT without it) and always throws
+  /// CIVIL3D.API_ERROR pointing the user to Parcel Layout Tools. Never touches the drawing.
   /// </summary>
   public static Task<object?> AdjustParcelLotLineAsync(JsonObject? parameters)
   {
@@ -291,6 +323,14 @@ public static class ParcelEditingCommands
   // reportParcels
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// reportParcels (read-only on the drawing): the parcels of <c>siteName</c> (required), optionally only those in
+  /// <c>parcelNames</c>, with area in <c>units</c> (sqft default, acres, sqm, ha; converted assuming the drawing is in
+  /// feet), perimeter, style and, with <c>includeCoordinates</c>, the boundary vertices. With <c>outputPath</c> it also
+  /// writes a .csv (name, area, units, perimeter, style; no vertices) through FileBoundary, refusing to replace a file
+  /// unless <c>overwrite</c> is true. Returns siteName, parcelCount, parcels and the written outputPath. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown site and FileBoundary's errors for the path.
+  /// </summary>
   public static Task<object?> ReportParcelsAsync(JsonObject? parameters)
   {
     var siteName = PluginRuntime.GetRequiredString(parameters, "siteName");
@@ -357,6 +397,8 @@ public static class ParcelEditingCommands
   // Helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The site named <paramref name="siteName"/> (ignoring case), open for read; CIVIL3D.OBJECT_NOT_FOUND
+  /// otherwise.</summary>
   private static Site FindSiteByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction, string siteName)
@@ -369,6 +411,8 @@ public static class ParcelEditingCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Site '{siteName}' was not found.");
   }
 
+  /// <summary>The parcel named <paramref name="parcelName"/> (ignoring case) in the site, opened in
+  /// <paramref name="mode"/>; CIVIL3D.OBJECT_NOT_FOUND otherwise.</summary>
   private static Parcel FindParcelByName(Site site, Transaction transaction, string parcelName, OpenMode mode)
   {
     foreach (ObjectId pid in EnumerateParcelIds(site, transaction))
@@ -379,7 +423,8 @@ public static class ParcelEditingCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Parcel '{parcelName}' was not found in site '{site.Name}'.");
   }
 
-  /// <summary>A parcel's corners: its boundary is a curve, with one parameter per segment.</summary>
+  /// <summary>A parcel's corners: its boundary is a curve, with one parameter per segment. Read late-bound from
+  /// BaseCurve; an empty list when there is none. Arc segments give only their end points.</summary>
   private static List<Point2d> ParcelVertices(object parcel)
   {
     var points = new List<Point2d>();
@@ -395,12 +440,15 @@ public static class ParcelEditingCommands
     return points;
   }
 
+  /// <summary>Sets the parcel's style by name (LookupUtils; CIVIL3D.OBJECT_NOT_FOUND for an unknown style).</summary>
   private static void ApplyStyleToParcel(Parcel parcel, string styleName,
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction)
   {
     parcel.StyleId = LookupUtils.GetParcelStyleId(civilDoc, transaction, styleName);
   }
 
+  /// <summary>Sets the parcel's area label style by name (LookupUtils; CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// style).</summary>
   private static void ApplyLabelStyleToParcel(Parcel parcel, string labelStyleName,
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction)
   {
@@ -416,6 +464,8 @@ public static class ParcelEditingCommands
     }
   }
 
+  /// <summary>The site's parcel ids from Site.GetParcelIds, plus any more found through the late-bound members
+  /// Parcels, ParcelCollection or ParcelIds, without duplicates.</summary>
   private static IEnumerable<ObjectId> EnumerateParcelIds(Site site, Transaction transaction)
   {
     var documentedIds = new HashSet<ObjectId>();
@@ -454,6 +504,7 @@ public static class ParcelEditingCommands
     }
   }
 
+  /// <summary>A property or field read by name through Civil3DCompatibility; null when there is neither.</summary>
   private static object? GetNamedMember(object? value, string memberName)
   {
     if (value == null) return null;
@@ -462,6 +513,8 @@ public static class ParcelEditingCommands
       ?? Civil3DCompatibility.GetFieldValue(value, memberName);
   }
 
+  /// <summary>The parcel's Perimeter property when it has one, else the length of the polygon through its corners
+  /// (straight segments), or null with fewer than two corners.</summary>
   internal static double? GetParcelPerimeter(Parcel parcel)
   {
     var perimeter = CivilObjectUtils.GetDoubleProperty(parcel, "Perimeter");
@@ -490,6 +543,8 @@ public static class ParcelEditingCommands
     return parcel.Number;
   }
 
+  /// <summary>Converts an area in square feet to acres, sqm or ha; anything else is returned unchanged. It assumes a
+  /// drawing in feet: a metric drawing's square meters are converted as if they were square feet.</summary>
   private static double ConvertArea(double areaInDrawingUnits, string units)
   {
     return units.ToLowerInvariant() switch
@@ -501,6 +556,9 @@ public static class ParcelEditingCommands
     };
   }
 
+  /// <summary>Writes the report rows as UTF-8 CSV through FileBoundary.WriteAllTextAtomic (.csv only, export roots,
+  /// no overwrite unless asked) and returns the full path written. Values are not quoted, and
+  /// <paramref name="includeCoordinates"/> is not used: the CSV never has vertices.</summary>
   private static string WriteCsv(
     string outputPath,
     List<Dictionary<string, object?>> rows,

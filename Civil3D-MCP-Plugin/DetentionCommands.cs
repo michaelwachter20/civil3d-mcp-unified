@@ -1,3 +1,9 @@
+// Detention basin sizing (pure math) and a stage-storage table measured from a TIN surface.
+// JSON-RPC methods (CommandDispatcher): calculateDetentionBasinSize, calculateDetentionStageStorage. Called by
+// src/tools/domains/detentionDomain.ts (civil3d_detention), and by HydrologyCommands' runoffDetentionWorkflow.
+// calculateDetentionBasinSize never touches the drawing. calculateDetentionStageStorage runs in
+// CivilExecution.MeasureAsync: it extracts contours into the drawing to measure them, inside a transaction that is never
+// committed, so nothing is left behind (one blank undo step from the lock). No file access, no reflection.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -14,6 +20,14 @@ public static class DetentionCommands
 {
   // ─── calculateDetentionBasinSize ─────────────────────────────────────────────
 
+  /// <summary>
+  /// calculateDetentionBasinSize: required storage for peak <c>inflow</c> and allowed <c>outflow</c> (cfs, required)
+  /// over <c>stormDuration</c> minutes (default 60) by <c>method</c> modified_rational (default) or
+  /// triangular_hydrograph (half of it), a trapezoidal basin with <c>bottomWidth</c> (default 10), length twice that,
+  /// <c>sideSlope</c> z:1 (default 3) and <c>freeboardDepth</c> (default 1), and an orifice for the outflow at
+  /// full-depth head. Units are US customary (ft, cfs) whatever the drawing. Outflow >= inflow answers an
+  /// <c>error</c> field instead of throwing. Doesn't touch the drawing.
+  /// </summary>
   public static Task<object?> CalculateDetentionBasinSizeAsync(JsonObject? parameters)
   {
     var inflow = PluginRuntime.GetRequiredDouble(parameters, "inflow");
@@ -113,6 +127,15 @@ public static class DetentionCommands
 
   // ─── calculateDetentionStageStorage ──────────────────────────────────────────
 
+  /// <summary>
+  /// calculateDetentionStageStorage: for TIN surface <c>surfaceName</c> from <c>bottomElevation</c> to
+  /// <c>topElevation</c> (all required) every <c>elevationIncrement</c> (default 0.5), the area inside the contours and
+  /// the cumulative volume (conic formula) at each stage, stopping where a contour runs off the surface or the basin
+  /// spills. In a feet drawing each stage also gets the outlet discharge (<c>outletType</c> orifice with
+  /// <c>outletDiameter</c> in inches, or weir with <c>weirLength</c>; <c>dischargeCoefficient</c> default 0.6 / 3.33).
+  /// Leaves the drawing unchanged. CIVIL3D.INVALID_INPUT for top &lt;= bottom, a non-positive increment or a surface that
+  /// isn't TIN; CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
+  /// </summary>
   public static Task<object?> CalculateDetentionStageStorageAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -235,6 +258,10 @@ public static class DetentionCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
+  /// <summary>
+  /// The depth at which a trapezoidal basin (bottom W x 2W, side slope z:1) holds <paramref name="targetVolumeCf"/>,
+  /// by proportional iteration clamped to 0.5-50; never less than 1.
+  /// </summary>
   private static double EstimateBasinDepth(double targetVolumeCf, double bottomWidth, double sideSlope)
   {
     double basinLength = 2.0 * bottomWidth;
@@ -249,6 +276,7 @@ public static class DetentionCommands
     return Math.Max(1.0, depth);
   }
 
+  /// <summary>Volume of a rectangular basin with sloped sides to <paramref name="depth"/> (prismoidal formula).</summary>
   private static double TrapezoidalVolume(double depth, double bottomWidth, double bottomLength, double sideSlope)
   {
     double topWidth = bottomWidth + 2 * sideSlope * depth;

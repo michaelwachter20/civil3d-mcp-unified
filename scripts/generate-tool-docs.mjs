@@ -1,3 +1,10 @@
+// Writes docs/tools.generated.md, one table row per catalog tool (domain, operations, plugin methods, safe retry),
+// from the compiled manifest in build/tools/tool_catalog.js, so it needs `npm run build` first.
+//
+//   npm run docs:generate   (build, then write the file; commit the result)
+//   npm run docs:check      (build, then --check: exit 1 if the file is stale; CI runs the same in ci.yml)
+//
+// The generated file is never edited by hand (CLAUDE.md rule 6).
 import { readFile, writeFile } from "node:fs/promises";
 import { TOOL_CATALOG } from "../build/tools/tool_catalog.js";
 

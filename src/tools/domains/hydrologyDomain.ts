@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The hydrology domain: `civil3d_hydrology` and its aliases `civil3d_catchment`, `civil3d_time_of_concentration`,
  * `civil3d_stm` and the three `civil3d_hydrology_*_workflow` tools. Every action is one plugin call, so there is no
@@ -12,7 +8,15 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  *   - TimeOfConcentrationCommands.cs: Tc and SCS hydrographs, pure formulas that need no drawing;
  *   - StmCommands.cs: Storm and Sanitary Analysis export/import, which open Civil 3D's own dialogs.
  * The surface-sampling results are approximations; their response schemas below are checked on every answer.
+ *
+ * Approval (approvalPolicy.ts): almost everything is a read. set_catchment_properties and copy_catchment_to_group
+ * change the drawing, export_stm (export) and import_stm (import) open Civil 3D's dialogs; those four need an
+ * approvalToken. The three workflows only calculate and need none.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
+
 const AreaUnitsSchema = z.enum(["acres", "hectares"]);
 const IntensityUnitsSchema = z.enum(["in_per_hr", "mm_per_hr"]);
 const DetentionMethodSchema = z.enum(["modified_rational", "triangular_hydrograph"]);
@@ -454,6 +458,10 @@ const RunoffPipeWorkflowArgsSchema = z.object({
 export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "hydrology",
   actions: {
+    // Surface analysis and Rational runoff (HydrologyCommands.cs), all reads: list_capabilities ->
+    // listHydrologyCapabilities, trace_flow_path -> traceHydrologyFlowPath, find_low_point -> findHydrologyLowPoint,
+    // estimate_runoff -> estimateHydrologyRunoff, delineate_watershed -> delineateWatershed,
+    // calculate_catchment_area -> calculateCatchmentArea.
     list_capabilities: {
       action: "list_capabilities",
       inputSchema: HydrologyListCapabilitiesArgsSchema,
@@ -553,7 +561,8 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // Catchment objects (CatchmentCommands.cs).
+    // Catchment objects (CatchmentCommands.cs). Reads, except set_catchment_properties and copy_catchment_to_group,
+    // which write and need approval.
     list_catchment_groups: {
       action: "list_catchment_groups",
       inputSchema: ListCatchmentGroupsArgsSchema,
@@ -753,6 +762,8 @@ export const HYDROLOGY_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("importStm", {}),
       ),
     },
+    // Opens Storm and Sanitary Analysis. The schema accepts `filePath`, but execute sends no arguments, so it is
+    // ignored. No mutating capability, so no approval.
     open_storm_sanitary_analysis: {
       action: "open_storm_sanitary_analysis",
       inputSchema: OpenStormSanitaryAnalysisArgsSchema,

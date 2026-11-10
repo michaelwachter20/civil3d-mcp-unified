@@ -1,3 +1,8 @@
+<!--
+  Project file of the .NET file-boundary harness (tests/FileBoundaryHarness/Program.cs). It links selected plugin
+  source files that do not depend on Civil 3D, so the plugin's rules can be run and tested without Civil 3D.
+  Add a Compile Include line here when the harness needs another plugin file. Run with npm run test:p2-boundaries.
+-->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>

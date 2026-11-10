@@ -1,3 +1,8 @@
+// ScriptLoopGuard.cs - part of the Roslyn code-execution engine. ScriptEngine.CompileCore calls AddChecks on a script's
+// source before compiling it, so every loop checks ScriptContext.CancellationToken and the script timeout
+// (CIVIL3D_SCRIPT_TIMEOUT_SECONDS) or a client disconnect can stop it. Pure text work on the source: no drawing, no
+// files. The original code (not the guarded copy) is what the sandbox checks and what the hash and cache use; if the
+// guarded copy doesn't compile, ScriptEngine compiles the original instead.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -59,6 +64,7 @@ public static class ScriptLoopGuard
     return text;
   }
 
+  /// <summary>The body of a while, do, for or foreach loop; null for any other node.</summary>
   private static StatementSyntax? LoopBody(SyntaxNode node) => node switch
   {
     WhileStatementSyntax loop => loop.Statement,

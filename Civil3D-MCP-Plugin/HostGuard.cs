@@ -1,3 +1,8 @@
+// Admission checks for new requests: refuse while a long call (60 s+) holds Civil 3D's main thread, or while the PC's
+// commit charge stays under 300 MB. Serves no JSON-RPC method. PluginRuntime.QueueHostOperation calls BusyRefusal and
+// CheckMemory before a request joins the host queue (tests/long_call_guard.test.ts checks that), and getCivil3DHealth
+// reports FreeCommitMb. Refusals become CIVIL3D.HOST_BUSY there. Pure checks: no drawing, no files; the only native
+// call is kernel32 GlobalMemoryStatusEx.
 using System.Runtime.InteropServices;
 
 namespace Civil3DMcpPlugin;

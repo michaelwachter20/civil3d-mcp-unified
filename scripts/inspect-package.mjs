@@ -1,3 +1,8 @@
+// Offline check of the npm package: package.json main/bin must point at build/index.js, and `npm pack --dry-run`
+// must include the runtime files the server loads (version, standards data, built-in skills, project-db.sql) and no
+// DLL/PDB, bin/, obj/ or C_References/ (Autodesk binaries are never redistributed). Writes nothing.
+//
+//   npm run package:inspect   (builds first)    CI: node ./scripts/inspect-package.mjs in .github/workflows/ci.yml
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 

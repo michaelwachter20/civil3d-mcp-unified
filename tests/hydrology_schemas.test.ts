@@ -1,3 +1,8 @@
+// Guards the intended input and response shapes (zod) of the hydrology tool: trace flow path, runoff, watershed and
+// catchment actions, value ranges and the action enum.
+// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// Pure schema tests: no Civil 3D, no plugin.
+
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 

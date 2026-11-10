@@ -53,6 +53,7 @@ interface WorkflowFixture {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Reads every fixtures/*.json scenario next to this test (made-up scenarios, not job data). */
 function loadFixtures(): WorkflowFixture[] {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
@@ -66,6 +67,7 @@ function loadFixtures(): WorkflowFixture[] {
     });
 }
 
+/** Every value that `field` has in the commands' params (commands without it are skipped). */
 function collectAllParamValues(
   commands: CommandStep[],
   field: string
@@ -75,6 +77,7 @@ function collectAllParamValues(
     .filter((v) => v !== undefined);
 }
 
+/** Positions of the commands that run `action`, either as the command's action or as params.action. */
 function getActionIndices(commands: CommandStep[], action: string): number[] {
   return commands
     .map((cmd, i) => ({ cmd, i }))

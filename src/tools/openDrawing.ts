@@ -1,3 +1,8 @@
+// civil3d_drawing action=open: find the drawing a person means by name and ask the plugin to open or switch to it.
+// Used by drawingRuntimeDomain.ts. Asks the plugin (listOpenDrawings, activateDrawing, openDrawing) and the job's
+// project database through projectNotes.ts projectLatest (read-only); stats files on the drive to compare dates. It
+// writes nothing itself: opening is the plugin's job (read-only when asked or when the file is in use). The database is
+// used only to locate the file, never as drawing data. The order of the search is in the block below.
 import { statSync } from "node:fs";
 import path from "node:path";
 import { withApplicationConnection } from "../utils/ConnectionManager.js";
@@ -27,11 +32,13 @@ export function setOpenDrawingHooksForTesting(hooks: { open?: () => Promise<Open
   pluginForTesting = hooks?.plugin;
 }
 
+/** One plugin call (or the test hook). Throws when Civil 3D isn't reachable. */
 async function plugin(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (pluginForTesting) return pluginForTesting(method, params);
   return withApplicationConnection(async (client) => await client.sendCommand(method, params));
 }
 
+/** The drawings open in this Civil 3D window (plugin listOpenDrawings). */
 async function openDrawings(): Promise<OpenDrawing[]> {
   if (openDrawingsForTesting) return openDrawingsForTesting();
   const result = await plugin("listOpenDrawings", {}) as { drawings?: OpenDrawing[] } | undefined;
@@ -40,6 +47,10 @@ async function openDrawings(): Promise<OpenDrawing[]> {
 
 const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
 
+/**
+ * True when an open drawing is the one asked for: same file name, same name without extension, or same series
+ * (seriesKey), and its path holds every `near` word.
+ */
 function matchesOpen(drawing: OpenDrawing, wanted: string, near: string[]): boolean {
   const file = path.win32.basename(drawing.path || drawing.name);
   const stem = path.win32.parse(file).name.toLowerCase();
@@ -51,6 +62,7 @@ function matchesOpen(drawing: OpenDrawing, wanted: string, near: string[]): bool
   return near.every((word) => have.has(word));
 }
 
+/** civil3d_drawing action=open arguments: `near` = words about the folder; `project` = a job name to search in. */
 export interface OpenArgs { name?: string; path?: string; near?: string; project?: string; readOnly?: boolean }
 
 // A folder named for a date or revision: 'Packages\2026-02', '25-10\10-29 grading', 'Rev 3', '20260214 delivery'.
@@ -74,6 +86,13 @@ function savedLater(file: string, open: string): boolean {
   }
 }
 
+/**
+ * Opens or switches to the drawing meant by `args` (see the file's block comment for the order). When the choice is
+ * not clear (several matches, the same name in different folders, the file not on this PC) it opens nothing and
+ * returns `opened: null` with the choices and a hint to ask the user. Changes Civil 3D's active document (and opens a
+ * file) through the plugin; throws INVALID_INPUT without a name or path, and lets projectLatest's errors through when
+ * the drawing isn't open and no job database matches.
+ */
 export async function openDrawingByName(args: OpenArgs) {
   const wanted = (args.path ?? args.name ?? "").trim().replace(/^"|"$/g, "");
   if (!wanted) throw knowledgeError("CIVIL3D.INVALID_INPUT", "Give name (e.g. C-101) or path (a full .dwg path).");

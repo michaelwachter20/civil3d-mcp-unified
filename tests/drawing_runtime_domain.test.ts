@@ -1,3 +1,6 @@
+// Guards the response schemas of src/tools/domains/drawingRuntimeDomain.ts against what a real drawing can return
+// (no project, unnamed selected objects). Pure schema test: no Civil 3D.
+
 import { describe, expect, it } from "vitest";
 import { DRAWING_RUNTIME_DOMAIN_DEFINITION } from "../src/tools/domains/drawingRuntimeDomain.js";
 

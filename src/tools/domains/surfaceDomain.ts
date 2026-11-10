@@ -1,3 +1,10 @@
+// Surface domain: `civil3d_surface` and its `civil3d_surface_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts). Plugin side: SurfaceCommands.cs, plus HydrologyCommands.cs (traceHydrologyFlowPath,
+// estimateHydrologyRunoff) for drainage_workflow. Reads (list, get*, statistics, volumes, analyze_*, sampling, the two
+// workflows) need no approval. Writes (create, delete, add_points/breakline/boundary, extract_contours, watershed_add,
+// contour_interval_set, create_from_dem) are non-retryable, delete or import, so approvalPolicy asks for an
+// approvalToken. comparison_workflow and drainage_workflow combine several plugin calls here; everything else is a
+// one-call forwarder. Details per action are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -456,6 +463,16 @@ const SurfaceDrainageWorkflowArgsSchema = z.object({
  */
 export const SURFACE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "surface",
+  // Action -> plugin method. Read-only: list (listSurfaces), get (getSurface), get_elevation (getSurfaceElevation),
+  // get_elevation_along (getSurfaceElevationsAlong), get_statistics (getSurfaceStatistics), statistics_get
+  // (getSurfaceStatisticsDetailed), compute_volume / volume_calculate / volume_report / volume_by_region
+  // (computeSurfaceVolume / calculateSurfaceVolume / getSurfaceVolumeReport / calculateSurfaceVolumeByRegion),
+  // analyze_slope / analyze_elevation / analyze_directions (analyzeSurface*), sample_elevations
+  // (sampleSurfaceElevations), comparison_workflow and drainage_workflow (several calls, below). Writes needing
+  // approval: create (createSurface), delete (deleteSurface), add_points / add_breakline / add_boundary
+  // (addSurfacePoints / addSurfaceBreakline / addSurfaceBoundary), extract_contours (extractSurfaceContours),
+  // watershed_add (addSurfaceWatershed), contour_interval_set (setSurfaceContourInterval), create_from_dem
+  // (createSurfaceFromDem, an import).
   actions: {
     list: {
       action: "list",

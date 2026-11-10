@@ -1,18 +1,27 @@
+// The plugin's log: one text file, %LOCALAPPDATA%\Civil3DMcpPlugin\plugin.log (or CIVIL3D_MCP_LOG_DIR), rotated at
+// 5 MiB with three old copies (plugin.log.1 .. .3). Every part of the plugin writes to it: PluginEntry (load, start,
+// stop), PluginRuntime (one line per request "-> method", errors with stack traces), CivilExecution, the handlers.
+// civil3d_health reports its path and whether writing works (DrawingCommands.GetCivil3DHealthAsync), and
+// CIVIL3D.INTERNAL_ERROR answers point the AI at it for the stack trace.
+// The level comes from CIVIL3D_MCP_LOG_LEVEL (debug, info, warn, error; default info).
+// Rules: logging never throws into plugin code and never calls AutoCAD, so it is safe from any thread and before
+// PluginEntry.Initialize. It writes only its own file, which is why it doesn't go through FileBoundary.
 using System.Text;
 
 namespace Civil3DMcpPlugin;
 
 /// <summary>
-/// Lightweight plugin-side logger that writes timestamped entries to a rotating
-/// log file under <c>%LOCALAPPDATA%\Civil3DMcpPlugin\plugin.log</c> and
-  /// mirrors entries to the debugger without calling host APIs from worker threads.
+/// Plugin-side logger that appends timestamped lines ("[time] [level] [component] message | ExceptionType: message",
+/// then the stack trace) to a rotating log file under <c>%LOCALAPPDATA%\Civil3DMcpPlugin\plugin.log</c>.
 ///
-/// The logger is deliberately dependency-free: a single background writer
-/// serializes file writes without blocking Civil 3D. All methods are safe to
-/// call before <c>PluginEntry.Initialize</c> runs.
+/// Writes are synchronous on the calling thread, serialized by a lock; there is no background writer. It is
+/// dependency-free and never calls host APIs, so all methods are safe from worker threads and before
+/// <c>PluginEntry.Initialize</c> runs. Only when writing fails does a line go to the debugger output, and the failure
+/// is kept in <see cref="LastFileError"/>.
 /// </summary>
 public static class PluginLog
 {
+  /// <summary>Log levels, lowest first; lines below <see cref="MinimumLevel"/> are dropped.</summary>
   public enum Level
   {
     Debug = 0,
@@ -29,27 +38,37 @@ public static class PluginLog
   private static Level _minimumLevel = ReadLevelFromEnvironment();
   private static string? _lastFileError;
 
+  /// <summary>Full path of the current log file; creates its folder on first use (falls back to %TEMP%).</summary>
   public static string LogFilePath => LogFilePathLazy.Value;
 
+  /// <summary>The last file-write failure ("IOException: ..."), or null once a write succeeds again.</summary>
   public static string? LastFileError => Volatile.Read(ref _lastFileError);
 
+  /// <summary>True when the last write worked and the file exists; reported by civil3d_health.</summary>
   public static bool IsFileLoggingHealthy => LastFileError == null && File.Exists(LogFilePath);
 
+  /// <summary>Lowest level written; starts from CIVIL3D_MCP_LOG_LEVEL (default Info).</summary>
   public static Level MinimumLevel
   {
     get => _minimumLevel;
     set => _minimumLevel = value;
   }
 
+  /// <summary>Writes a Debug line (dropped at the default Info level). The Info, Warn and Error methods below work the
+  /// same way at their level; <paramref name="component"/> is a short tag such as "Dispatch" or "PluginEntry", and an
+  /// exception adds its type, message and stack trace.</summary>
   public static void Debug(string component, string message, Exception? exception = null)
     => Write(Level.Debug, component, message, exception);
 
+  /// <summary>Writes an Info line (the default level; every request's start is logged at Info).</summary>
   public static void Info(string component, string message, Exception? exception = null)
     => Write(Level.Info, component, message, exception);
 
+  /// <summary>Writes a Warn line.</summary>
   public static void Warn(string component, string message, Exception? exception = null)
     => Write(Level.Warn, component, message, exception);
 
+  /// <summary>Writes an Error line, with the exception's stack trace when one is given.</summary>
   public static void Error(string component, string message, Exception? exception = null)
     => Write(Level.Error, component, message, exception);
 
@@ -63,6 +82,7 @@ public static class PluginLog
     Write(Level.Debug, component, $"Ignored error during {operation}: {exception.Message}", exception);
   }
 
+  /// <summary>Formats one line and appends it, unless its level is below <see cref="MinimumLevel"/>.</summary>
   private static void Write(Level level, string component, string message, Exception? exception)
   {
     if (level < _minimumLevel)
@@ -88,6 +108,8 @@ public static class PluginLog
 
   }
 
+  /// <summary>Appends the line (and the stack trace, if any) under the file lock, rotating first when the file is
+  /// full. Never throws: a failure is kept in <see cref="LastFileError"/> and written to the debugger output.</summary>
   private static void TryAppendToFile(string text, Exception? exception)
   {
     try
@@ -120,6 +142,8 @@ public static class PluginLog
     }
   }
 
+  /// <summary>When the file has reached 5 MiB, shifts plugin.log -> .1 -> .2 -> .3 (the oldest is deleted). Best
+  /// effort: a failure is ignored and the file just keeps growing.</summary>
   private static void RotateIfNeeded(string path)
   {
     try
@@ -152,6 +176,8 @@ public static class PluginLog
     }
   }
 
+  /// <summary>Picks the log folder (CIVIL3D_MCP_LOG_DIR, else %LOCALAPPDATA%\Civil3DMcpPlugin, else
+  /// %TEMP%\Civil3DMcpPlugin when the first can't be created), creates it and returns the plugin.log path.</summary>
   private static string BuildLogFilePath()
   {
     var root = Environment.GetEnvironmentVariable("CIVIL3D_MCP_LOG_DIR")
@@ -171,6 +197,7 @@ public static class PluginLog
     return Path.Combine(root, "plugin.log");
   }
 
+  /// <summary>Reads CIVIL3D_MCP_LOG_LEVEL; empty or unknown values mean Info.</summary>
   private static Level ReadLevelFromEnvironment()
   {
     var raw = Environment.GetEnvironmentVariable("CIVIL3D_MCP_LOG_LEVEL");

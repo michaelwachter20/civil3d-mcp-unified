@@ -1,3 +1,10 @@
+// Know-how on driving Civil 3D: where the suite's shared folder is, preferences.json and memory\lessons.jsonl
+// (civil3d_preferences, civil3d_memory), the running Civil 3D release, and knowledgeError, the error every knowledge
+// tool throws. Used by scriptingDomain.ts (the tools), serverInstructions.ts (preferences and lessons in every AI's
+// instructions), pluginDomain.ts (civil3d_health), index.ts (temp-file sweep) and the other knowledge modules
+// (projectDb, practices, skillsLibrary, projectNotes, openDrawing). Writes only under the shared folder on this PC,
+// under a lock with a backup and an atomic rename (utils/atomicFiles.ts); every saved text passes the job-data check
+// (generalKnowledge.ts). Asks the plugin only for the release (getCivil3DHealth). Details in the block below.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -138,14 +145,17 @@ export function knowledgeStatus() {
   return { sharedFolder: shared, civil3dFolder: own, ...(notes.length ? { notes } : {}) };
 }
 
+/** Path of preferences.json (civil3d\ or, while not moved yet, the top of the shared folder). May not exist yet. */
 export function preferencesFile(): string {
   return knowHowPath("preferences.json");
 }
 
+/** Path of the learned lessons file, memory\lessons.jsonl. May not exist yet. */
 export function lessonsFile(): string {
   return path.join(knowHowPath("memory"), "lessons.jsonl");
 }
 
+/** The built-in seed lessons: build\skills (copied by scripts/copy-static-assets.mjs) or the repository's skills\. */
 function seedLessonsFile(): string | undefined {
   return [
     path.resolve(moduleDirectory, "..", "skills", "lessons.seed.jsonl"),
@@ -167,7 +177,11 @@ export function sweepKnowledgeTemporaryFiles(): string[] {
   }
 }
 
-export function knowledgeError(code: "CIVIL3D.INVALID_INPUT" | "CIVIL3D.OBJECT_NOT_FOUND" | "CIVIL3D.CONFLICT", message: string) {
+/**
+ * An Error carrying a CIVIL3D.* code, thrown by every knowledge tool (they never reach the plugin); domainRuntime.ts
+ * reports the code as the result's errorCode, like a plugin error.
+ */
+export function knowledgeError(code:"CIVIL3D.INVALID_INPUT" | "CIVIL3D.OBJECT_NOT_FOUND" | "CIVIL3D.CONFLICT", message: string) {
   const error = new Error(message) as Error & { code: string };
   error.code = code;
   return error;
@@ -216,6 +230,7 @@ export function setReleaseForTesting(release: string | undefined) {
 
 // ---------------------------------------------------------------- preferences
 
+/** One standing rule from the user, stored in preferences.json as { preferences: Preference[] }. id is "pref-<n>". */
 export interface Preference {
   id: string;
   rule: string;
@@ -223,6 +238,10 @@ export interface Preference {
   updated?: string;
 }
 
+/**
+ * The well-formed entries of a preferences file (none when it doesn't exist). Throws CIVIL3D.CONFLICT when the file
+ * isn't JSON, so a broken file is never treated as empty and overwritten.
+ */
 function readPreferences(file: string): Preference[] {
   if (!existsSync(file)) return [];
   let parsed: { preferences?: unknown } | null;
@@ -236,6 +255,7 @@ function readPreferences(file: string): Preference[] {
     && typeof (entry as Preference).id === "string" && typeof (entry as Preference).rule === "string");
 }
 
+/** The user's preferences (civil3d_preferences action=list, and the server instructions). Throws if the file is broken. */
 export function listPreferences(): Preference[] {
   return readPreferences(preferencesFile());
 }
@@ -276,6 +296,10 @@ const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
 
 type PreferenceResult = { success: boolean; action: string; preference: Preference; note?: string; path?: string };
 
+/**
+ * Adds a preference as "pref-<next>" (newlines folded to one line). Same rule again (any case) is "unchanged".
+ * Throws INVALID_INPUT when empty or not general (job data). Writes preferences.json.
+ */
 export async function addPreference(rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
@@ -289,6 +313,7 @@ export async function addPreference(rule: string) {
   });
 }
 
+/** Rewrites one preference's rule and stamps `updated`. Throws INVALID_INPUT (empty, job data) or OBJECT_NOT_FOUND. */
 export async function updatePreference(id: string, rule: string) {
   const text = oneLine(rule);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The preference is empty.");
@@ -302,6 +327,10 @@ export async function updatePreference(id: string, rule: string) {
   });
 }
 
+/**
+ * Removes one preference from preferences.json (the version before is kept in preferences.backups\). Preferences are
+ * the user's own rules, so unlike lessons they can be removed (the AI is told to ask the user first).
+ */
 export async function removePreference(id: string) {
   return changePreferences<PreferenceResult>((preferences) => {
     const preference = preferences.find((candidate) => candidate.id === id);
@@ -312,6 +341,7 @@ export async function removePreference(id: string) {
 
 // ---------------------------------------------------------------- lessons
 
+/** One lesson: a line of lessons.jsonl ("lesson-<n>") or of the seed file shipped in skills\ (source "seed"). */
 export interface Lesson {
   id: string;
   lesson: string;
@@ -344,6 +374,7 @@ function readLessonLines(file: string | undefined, source: Lesson["source"]): Le
 const readJsonl = (file: string | undefined, source: Lesson["source"]): Lesson[] =>
   readLessonLines(file, source).flatMap((line) => (line.lesson ? [line.lesson] : []));
 
+/** Seed lessons first, then the learned ones; lines that aren't lessons are skipped. */
 export function allLessons(): Lesson[] {
   return [...readJsonl(seedLessonsFile(), "seed"), ...readJsonl(lessonsFile(), "learned")];
 }
@@ -361,6 +392,7 @@ const badLinesNote = (count: number) => (count
   ? { note: `${count} line${count === 1 ? "" : "s"} of ${lessonsFile()} ${count === 1 ? "isn't a lesson" : "aren't lessons"} (not JSON); skipped, and kept in the file.` }
   : {});
 
+/** A warning for a lesson learned on another Civil 3D release (kept, but it may no longer apply). */
 function versionNote(release: string, current: string) {
   return release === current ? undefined : `Learned on Civil 3D ${release}; you're running ${current}. Check it still applies.`;
 }
@@ -370,6 +402,11 @@ function present(lesson: Lesson, current: string) {
   return { ...lesson, ...(note ? { version_note: note } : {}) };
 }
 
+/**
+ * Appends a lesson (civil3d_memory action=record) stamped with `release`. Needs at least one topic so it can surface
+ * when relevant; the same text again (any case) is "unchanged". Throws INVALID_INPUT when empty, without topics or not
+ * general. Rewrites lessons.jsonl whole (previous text + the new line) under its lock, after a backup.
+ */
 export async function recordLesson(lesson: string, topics: string[], release: string) {
   const text = oneLine(lesson);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The lesson is empty.");
@@ -394,6 +431,10 @@ export async function recordLesson(lesson: string, topics: string[], release: st
   });
 }
 
+/**
+ * civil3d_memory action=search: scores each lesson by query words found in its topics (3 points) and its text (1),
+ * best first, at most 50; no query returns every lesson. Each comes with a version note when from another release.
+ */
 export function searchLessons(query: string | undefined, current: string) {
   const terms = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const lessons = allLessons()

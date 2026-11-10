@@ -1,18 +1,21 @@
-import { Civil3DRpcError } from "../utils/SocketClient.js";
-
 /**
  * Global registry that captures MCP tool handlers during registerTool() registration.
  * The HTTP bridge uses this registry to invoke any registered tool without going
- * through the MCP stdio protocol, enabling the AI Copilot (which connects via HTTP)
- * to call all 180+ tools.
+ * through the MCP stdio protocol, so HTTP clients reach every tool, and
+ * civil3d_orchestrate uses it to run the tool it picked.
  *
  * How it works:
- *   1. Domain and approval registration capture the same handlers passed to registerTool()
+ *   1. Domain (domainRuntime.ts), approval (approvalTool.ts) and help (helpTool.ts) registration capture the same
+ *      handlers passed to registerTool(); every manifest alias is captured, even when compact mode doesn't list it
  *   2. Each handler is stored here by tool name
- *   3. httpBridge.ts looks up handlers from this registry
- *   4. The handler is called with the same params the MCP protocol would provide
+ *   3. httpBridge.ts and civil3d_orchestrate.ts look up handlers from this registry
+ *   4. The handler is called with the same params the MCP protocol would provide (with an empty `extra`: no progress;
+ *      cancellation and the request id come from the caller's requestContext, e.g. the HTTP request's)
  *   5. The MCP CallToolResult is unwrapped to extract the JSON payload
+ *
+ * Because the same handler runs, schema validation and approval apply exactly as for an MCP call.
  */
+import { Civil3DRpcError } from "../utils/SocketClient.js";
 
 /** MCP CallToolResult shape returned by every registerTool() handler */
 interface McpCallToolResult {
@@ -29,6 +32,7 @@ interface McpCallToolResult {
   rpcCode?: number;
 }
 
+/** A registered tool's handler: (arguments, MCP request extra) -> CallToolResult. */
 type ToolHandler = (
   args: Record<string, unknown>,
   extra?: unknown
@@ -69,7 +73,9 @@ export function listRegisteredToolNames(): string[] {
  * Execute a registered tool and unwrap the MCP CallToolResult into a plain
  * JSON-serialisable object suitable for HTTP responses.
  *
- * Throws if the tool is not registered or if the handler signals an error.
+ * Throws if the tool is not registered (a plain Error) or if the handler signals an error: a Civil3DRpcError when the
+ * result carries an errorCode (manifest and help tools), else a plain Error with the result text (the approval
+ * tools), which the HTTP bridge classifies by message.
  */
 export async function executeRegisteredTool(
   toolName: string,

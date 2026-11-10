@@ -1,3 +1,9 @@
+// Guards civil3d_project_notes (src/tools/projectNotes.ts, projectDb.ts) against the suite contract in Project Analyzer's
+// docs/suite-knowledge.md: job matching by folder, notes written as facts with tool = 'civil3d' only, supersedes, read
+// actions, path translation, and import of old JSON notes. The last describe checks that the shipped copies of the
+// contract (src/tools/project-db.sql, tests/fixtures/*) match their recorded SHA-256 and, when ../project-analyzer is
+// checked out next to this repo, match its schema/ folder (repo rule 2). Windows paths on purpose; node:sqlite needed.
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

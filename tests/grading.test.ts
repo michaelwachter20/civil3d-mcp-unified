@@ -1,3 +1,7 @@
+// Guards the intended input shapes (zod) of the grading-group, grading and feature-line tool actions.
+// NOTE: the schemas below are COPIES declared in this file, not imported from src/, so this file does not notice if the real schema in src/ changes. It documents the intended input shape only.
+// Pure schema tests: no Civil 3D, no plugin.
+
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 

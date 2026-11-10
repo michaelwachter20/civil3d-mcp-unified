@@ -1,3 +1,10 @@
+// Read-only access, for AI-written C# scripts, to drawings other than the active one (a "go-by" to copy styles or
+// settings from). ScriptContext exposes it as Reference(name) and OpenDrawings (civil3d_execute / civil3d_query,
+// src/tools/domains/scriptingDomain.ts); DrawingCommands uses ListOpen for the list of open drawings. Serves no
+// JSON-RPC method itself.
+// Rules: never changes the other drawing: its transaction is always aborted when the script ends (ScriptContext calls
+// Close). A drawing that isn't open is read from disk with ReadDwgFile in a side database (not opened in the editor);
+// its path must pass FileBoundary.ResolveReferencePath. Runs on the main thread inside the script's host-gate call.
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.ApplicationServices;
@@ -20,6 +27,8 @@ public sealed class ReferenceDrawing
   private readonly Transaction _transaction;
   private readonly bool _ownsDatabase;
 
+  /// <summary>Wraps <paramref name="database"/> and starts the read transaction that <see cref="Close"/> aborts.
+  /// <paramref name="ownsDatabase"/> is true for a side database read from disk, which Close then disposes.</summary>
   internal ReferenceDrawing(string name, string path, bool isOpenInEditor, Database database, bool ownsDatabase)
   {
     Name = name;
@@ -46,7 +55,8 @@ public sealed class ReferenceDrawing
   /// <summary>The drawing's Civil 3D document: styles, point groups, surfaces, alignments, settings.</summary>
   public CivilDocument CivilDoc { get; }
 
-  /// <summary>Opens an object of this drawing for read.</summary>
+  /// <summary>Opens an object of this drawing for read; throws InvalidOperationException when it isn't a
+  /// <typeparamref name="T"/>.</summary>
   public T Get<T>(ObjectId id) where T : DBObject
   {
     return _transaction.GetObject(id, OpenMode.ForRead) as T
@@ -62,8 +72,11 @@ public sealed class ReferenceDrawing
     return Database.GetObjectId(false, new Handle(Convert.ToInt64(handle, 16)), 0);
   }
 
+  /// <summary>"Site-GoBy.dwg (open drawing, read only)", for script output.</summary>
   public override string ToString() => $"{Name} ({(IsOpenInEditor ? "open drawing" : "file")}, read only)";
 
+  /// <summary>Aborts the read transaction (so nothing the script did to this drawing is kept) and disposes a side
+  /// database read from disk. Never throws; a failure is logged.</summary>
   internal void Close()
   {
     try
@@ -99,6 +112,9 @@ public sealed class ReferenceDrawing
   /// <summary>
   /// Opens a reference by open-drawing name ("Site-GoBy" or "Site-GoBy.dwg") or by .dwg path.
   /// Open drawings are matched first; a path that isn't open is read from disk.
+  /// Throws ArgumentException (shown to the script) for an empty name, a name matching several open drawings, the
+  /// active drawing itself, or a bare name that isn't open; FileBoundary's errors for a path outside the allowed
+  /// roots or not a .dwg.
   /// </summary>
   internal static ReferenceDrawing Open(string nameOrPath, Document activeDocument)
   {
@@ -164,6 +180,7 @@ public sealed class ReferenceDrawing
     }
   }
 
+  /// <summary>The full path, or the text unchanged when it isn't a valid path.</summary>
   private static string SafeFullPath(string path)
   {
     try

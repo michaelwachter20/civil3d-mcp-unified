@@ -1,3 +1,6 @@
+// Where the Autodesk Offline Help for Civil 3D is installed, and the path guard for reading it. Used by helpIndex.ts
+// (installations) and helpParser.ts (assertPathInsideHelpRoot). Read-only: it lists Program Files folders and never
+// writes. Details in the block below.
 import fs from "node:fs";
 import path from "node:path";
 import type { HelpInstallation } from "./types.js";
@@ -112,6 +115,7 @@ export function assertPathInsideHelpRoot(root: string, candidate: string): strin
   throw new Error("Requested Civil 3D help asset is outside the configured help root.");
 }
 
+/** True for a folder that looks like an offline-help root: index.html plus a files* or wrapped-files* folder. */
 function isHelpRoot(root: string): boolean {
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return false;
   if (!fs.existsSync(path.join(root, "index.html"))) return false;
@@ -120,6 +124,7 @@ function isHelpRoot(root: string): boolean {
   );
 }
 
+// The year and language from a configured root's path, when it follows the installer's folder name.
 function detectVersion(root: string): string | undefined {
   return root.match(/Civil 3D (\d{4})/i)?.[1];
 }

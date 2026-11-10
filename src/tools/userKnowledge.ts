@@ -1,3 +1,9 @@
+// A job's User Knowledge folder (<shared folder>\projects\<slug>\User Knowledge): listing it, telling which documents
+// Project Analyzer already read into the job database, and reading plain text and .docx/.xlsx/.pptx documents
+// directly. Used by projectNotes.ts (civil3d_project_notes files, read, search, overview). Reads the folder and the
+// `files` rows of the job database (read-only, through the caller's connection). Rules: the folder is only ever
+// created, never written into, moved or deleted from; a path outside it (also through a link) is refused
+// (insideFolder); documents are size-capped before they are read. Never calls the plugin. Details in the block below.
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -16,6 +22,7 @@ import zlib from "node:zlib";
  * Uses Node built-ins only.
  */
 
+/** The folder's name inside the job's <slug>\ folder (the suite contract's name). */
 export const USER_KNOWLEDGE = "User Knowledge";
 /** How Project Analyzer writes a user-knowledge document's path in `files.path`. */
 export const USER_KNOWLEDGE_PREFIX = "<user knowledge>\\";
@@ -24,6 +31,7 @@ export const USER_KNOWLEDGE_RANGE = [USER_KNOWLEDGE_PREFIX, `${USER_KNOWLEDGE_PR
 
 /** <shared folder>\projects\<slug> for a job database <slug>.db. */
 export const jobDirectoryOf = (databaseFile: string) => databaseFile.replace(/\.db$/i, "");
+/** <shared folder>\projects\<slug>\User Knowledge for a job database <slug>.db (not created here). */
 export const userKnowledgeDirectoryOf = (databaseFile: string) => path.join(jobDirectoryOf(databaseFile), USER_KNOWLEDGE);
 
 /** Creates the (empty) User Knowledge folder when it doesn't exist; the only thing this tool ever writes there. */
@@ -47,6 +55,7 @@ const plainPath = (file: string) => file.replace(/^\\\\\?\\UNC\\/i, "\\\\").repl
 
 // ---------------------------------------------------------------- listing
 
+/** One document found in the folder. */
 export interface FolderEntry {
   /** Relative to the folder, with backslashes like the database: "Guidelines\Proposal guide.pdf". */
   path: string;
@@ -108,6 +117,7 @@ export const legacyFiles = (databaseFile: string) => listFolder(jobDirectoryOf(d
 
 // ---------------------------------------------------------------- what Project Analyzer read
 
+/** A user-knowledge row of the job database's `files` table (what Project Analyzer stored when it read the document). */
 export interface AnalyzerDocument { id: string; path: string; size: number | null; mtime: string | null; status: string; error: string | null }
 
 /** The database's user-knowledge rows by lower-case relative path (empty when there are none or no files table). */
@@ -136,6 +146,7 @@ export function readByAnalyzer(entry: FolderEntry, row: AnalyzerDocument | undef
 
 // ---------------------------------------------------------------- reading directly
 
+/** Largest document this tool reads itself (50 MB); larger ones are left to Project Analyzer. */
 export const MAX_DIRECT_BYTES = 50 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 
@@ -151,9 +162,13 @@ const extensionOf = (name: string) => path.extname(name).toLowerCase();
 export const readableHere = (name: string, size: number) =>
   size <= MAX_DIRECT_BYTES && (PLAIN_TEXT.has(extensionOf(name)) || OFFICE.has(extensionOf(name)));
 
+/** A piece of a document's text: a sheet or slide (labelled), or the whole document (label null). */
 export interface TextPart { label: string | null; text: string }
 
-/** The document's text in parts (sheets, slides), or undefined for a format this tool can't read. */
+/**
+ * The document's text in parts (sheets, slides), or undefined for a format this tool can't read. Reads the whole file
+ * into memory (callers check readableHere's size limit first); throws for a damaged or unexpected Office file.
+ */
 export function extractText(file: string): TextPart[] | undefined {
   const extension = extensionOf(file);
   if (PLAIN_TEXT.has(extension)) {
@@ -170,17 +185,20 @@ export function extractText(file: string): TextPart[] | undefined {
 /** Parts joined the way the project database's text is shown: '## <label>' before each labelled part. */
 export const joinParts = (parts: TextPart[]) => parts.map((part) => (part.label ? `## ${part.label}\n\n${part.text}` : part.text)).join("\n\n");
 
+/** Text bytes as a string: UTF-16 by its byte order mark, else UTF-8 (a UTF-8 BOM removed). */
 function decodeText(bytes: Buffer): string {
   if (bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString("utf16le");
   if (bytes[0] === 0xfe && bytes[1] === 0xff) return Buffer.from(bytes.subarray(2)).swap16().toString("utf16le");
   return bytes.toString("utf8").replace(/^﻿/, "");
 }
 
+/** The readable text of an HTML page: scripts and styles dropped, block ends as line breaks, tags removed. */
 function stripHtml(html: string): string {
   return decodeXml(html.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>|<\/(p|div|li|tr|h\d)>/gi, "\n").replace(/<[^>]+>/g, " "))
     .replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** Replaces XML's five named entities and numeric character references. */
 function decodeXml(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (whole, entity: string) => {
     const lower = entity.toLowerCase();
@@ -257,6 +275,7 @@ function relationships(zip: Zip, part: string): Map<string, string> {
 const numbered = (zip: Zip, pattern: RegExp) =>
   [...zip.keys()].filter((name) => pattern.test(name)).sort((a, b) => Number(a.match(/(\d+)\.xml$/)?.[1]) - Number(b.match(/(\d+)\.xml$/)?.[1]));
 
+/** A .docx's body text from word/document.xml: paragraphs as lines, table rows as tab-separated lines. */
 function wordText(zip: Zip): string {
   const xml = entryText(zip, "word/document.xml");
   if (xml === undefined) throw new Error("not a Word document (no word/document.xml)");
@@ -271,11 +290,17 @@ function wordText(zip: Zip): string {
   return tidy(pieces.join("").replace(/\n?\u0000/g, "\t"));
 }
 
+// "C12" -> 2: the zero-based column of a cell reference, so empty cells keep their place.
 const columnIndex = (reference: string | undefined) =>
   (reference?.match(/^[A-Z]+/i)?.[0].toUpperCase() ?? "").split("").reduce((sum, letter) => sum * 26 + letter.charCodeAt(0) - 64, 0) - 1;
 
+// The text runs of a shared or inline string; <rPh> (phonetic guides for East Asian text) is left out.
 const runText = (xml: string) => [...xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "").matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((match) => decodeXml(match[1])).join("");
 
+/**
+ * An .xlsx's cell values, one part per sheet in workbook order (or sheetN.xml order when the workbook doesn't say):
+ * each non-empty row a tab-separated line. Values only: formulas, formats and dates as numbers are not interpreted.
+ */
 function excelText(zip: Zip): TextPart[] {
   const workbook = entryText(zip, "xl/workbook.xml");
   if (workbook === undefined) throw new Error("not an Excel workbook (no xl/workbook.xml)");
@@ -309,6 +334,7 @@ function excelText(zip: Zip): TextPart[] {
   });
 }
 
+/** A .pptx's slide text, one part per slide ("Slide N") in presentation order; notes are not read. */
 function powerPointText(zip: Zip): TextPart[] {
   const presentation = entryText(zip, "ppt/presentation.xml");
   if (presentation === undefined) throw new Error("not a PowerPoint presentation (no ppt/presentation.xml)");

@@ -1,3 +1,9 @@
+// The "Civil 3D MCP" ribbon tab: the user's on/off switch for the AI connection and a status light.
+// Built by PluginEntry.Initialize; the toggle calls PluginEntry.ToggleConnection (the same TurnOn/TurnOff as
+// C3DMCPSTART/C3DMCPSTOP, which start or stop PluginRuntime's TCP listener) and Details calls PluginEntry.ShowStatus.
+// PluginEntry calls Refresh after every change so the button and the light match PluginRuntime.GetStatus().
+// The ribbon is optional: if it can't be built the commands still work, and a warning goes to PluginLog.
+// No drawing access; runs on the main (UI) thread only.
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -25,6 +31,8 @@ internal static class McpRibbon
   private static RibbonLabel? _status;
   private static bool _subscribed;
 
+  /// <summary>Adds the tab now if the ribbon exists, and (once per session) subscribes to ribbon initialization and
+  /// workspace changes (WSCURRENT) so the tab is added again whenever the ribbon is rebuilt.</summary>
   public static void Initialize()
   {
     if (!_subscribed)
@@ -44,7 +52,8 @@ internal static class McpRibbon
     EnsureTab();
   }
 
-  /// <summary>Updates the toggle and the status line to match the listener state.</summary>
+  /// <summary>Updates the toggle and the status line to match the listener state; does nothing before the tab is
+  /// built.</summary>
   public static void Refresh()
   {
     if (_toggle == null || _status == null)
@@ -62,6 +71,8 @@ internal static class McpRibbon
     _status.Image = running ? OnDot.Value : OffDot.Value;
   }
 
+  /// <summary>Builds the tab (toggle, status label, Details button) if the ribbon exists and doesn't have it yet;
+  /// otherwise just refreshes it. Never throws.</summary>
   private static void EnsureTab()
   {
     try
@@ -131,6 +142,7 @@ internal static class McpRibbon
     return bitmap;
   }
 
+  /// <summary>Minimal WPF <see cref="ICommand"/> that runs an action; always enabled.</summary>
   private sealed class ActionCommand : ICommand
   {
     private readonly Action _action;

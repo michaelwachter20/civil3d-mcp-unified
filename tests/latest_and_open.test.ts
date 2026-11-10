@@ -1,3 +1,8 @@
+// Guards projectLatest / seriesKey (src/tools/projectNotes.ts) and civil3d_drawing action=open (src/tools/openDrawing.ts):
+// the newest version of a file from the job database, and opening it (an already open drawing wins; ask when ambiguous).
+// Uses a copy of tests/fixtures/fixture.db (Project Analyzer's made-up job) in a temp folder; the drawing open hooks
+// are replaced, so no Civil 3D. Needs Node's built-in node:sqlite.
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

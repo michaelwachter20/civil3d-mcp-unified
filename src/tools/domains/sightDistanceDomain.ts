@@ -1,3 +1,7 @@
+// Sight distance domain: canonical tool `civil3d_sight_distance`, aliases `civil3d_sight_distance_calculate` and
+// `civil3d_stopping_distance_check`. Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts) and run by
+// domainRuntime.ts. Both actions are read-only queries (no approval) forwarded to SightDistanceCommands.cs in the
+// plugin; the only Node-side logic is filling defaults (2.5 s reaction time, AASHTO, 25-unit station interval).
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -10,6 +14,8 @@ const StoppingDistanceCheckArgs = z.object({ action: z.literal("stopping_distanc
 export const SIGHT_DISTANCE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "sight_distance",
   actions: {
+    // calculate: required stopping/passing/decision sight distance for a speed (calculateSightDistance); read-only.
+    // stopping_distance_check: K of the profile's vertical curves along an alignment (checkStoppingDistance); read-only.
     calculate: { action: "calculate", inputSchema: SightDistanceCalculateArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["calculateSightDistance"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("calculateSightDistance", { designSpeed: args.designSpeed, speedUnits: args.speedUnits ?? null, sightDistanceType: args.sightDistanceType, grade: args.grade ?? 0, frictionCoefficient: args.frictionCoefficient ?? null, perceptionReactionTime: args.perceptionReactionTime ?? 2.5, standard: args.standard ?? "AASHTO", alignmentName: args.alignmentName ?? null, profileName: args.profileName ?? null, checkStation: args.checkStation ?? null })) },
     stopping_distance_check: { action: "stopping_distance_check", inputSchema: StoppingDistanceCheckArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["checkStoppingDistance"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("checkStoppingDistance", { alignmentName: args.alignmentName, profileName: args.profileName, designSpeed: args.designSpeed, speedUnits: args.speedUnits ?? null, stationStart: args.stationStart ?? null, stationEnd: args.stationEnd ?? null, stationInterval: args.stationInterval ?? 25, standard: args.standard ?? "AASHTO" })) },
   },

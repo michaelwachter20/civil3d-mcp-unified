@@ -1,3 +1,14 @@
+// The drawing as a whole and the Civil 3D window: health, info, settings, selection, new/open/switch/save, undo/redo.
+// JSON-RPC methods (CommandDispatcher): getCivil3DHealth, getDrawingInfo, getProjectContext, getDrawingSettings,
+// newDrawing, openDrawing, listOpenDrawings, activateDrawing, saveDrawing, undoDrawing, redoDrawing,
+// listCivilObjectTypes, getSelectedCivilObjectsInfo. Called by src/tools/domains/drawingRuntimeDomain.ts
+// (civil3d_drawing), pluginDomain.ts (civil3d_health), the orchestrator (getProjectContext) and the approval policy,
+// which fingerprints the drawing with getDrawingInfo.
+// Reads use CivilExecution.ReadAsync; saveDrawing is a WriteAsync without view follow; new/open run in command context
+// and list/switch on the main thread (they act on the document manager). Undo/redo only queue UNDO/MREDO on the command
+// line; the undo guard (CommandLineMonitor) refuses when the user has worked since the AI's last change. Health
+// bypasses the host queue (tests/long_call_guard.test.ts checks it). Paths go through FileBoundary; the QNEW template
+// is read with Civil3DCompatibility's COM access.
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -92,6 +103,7 @@ public static class DrawingCommands
   private static string _lastVersion = string.Empty;
   private static bool _lastDrawingLoaded;
 
+  /// <summary>The health note for an unresponsive main thread, naming the operation in progress when the plugin started one.</summary>
   private static string HealthNote(PluginStatus status)
   {
     var what = status.CurrentOperation ?? "something the plugin didn't start, such as a command or a dialog";
@@ -161,7 +173,7 @@ public static class DrawingCommands
   /// Saves the active drawing to its own file, or with <c>saveAs</c> to a new <c>.dwg</c> path inside the allowed
   /// export folders (an existing file only with <c>overwrite: true</c>). A drawing never saved needs <c>saveAs</c>
   /// (CIVIL3D.INVALID_INPUT otherwise). Saves in the current DWG version; the approval policy treats it as a write
-  /// that needs approval.
+  /// that needs approval. Writes the .dwg file; FileBoundary's path and CIVIL3D.CONFLICT errors apply to saveAs.
   /// </summary>
   public static Task<object?> SaveDrawingAsync(JsonObject? parameters)
   {
@@ -197,11 +209,6 @@ public static class DrawingCommands
   }
 
   /// <summary>
-  /// Opens a new drawing tab, from <c>templatePath</c> (a <c>.dwt</c> or <c>.dwg</c> in the folders allowed for
-  /// reference files) or from AutoCAD's default template, and makes it the active drawing, so later requests act on
-  /// it. Returns its name and (empty until saved) file path.
-  /// </summary>
-  /// <summary>
   /// The template a person's New would start from: QNEW's, then Civil 3D's own. An empty template name gives a drawing
   /// with only Standard styles and no parts lists, where almost every style and pipe tool has nothing to work with.
   /// </summary>
@@ -234,6 +241,12 @@ public static class DrawingCommands
       && string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase);
   }
 
+  /// <summary>
+  /// Opens a new drawing tab, from <c>templatePath</c> (a <c>.dwt</c> or <c>.dwg</c> in the folders allowed for
+  /// reference files, or a .dwt in the program's own template folder) or from the default template (QNEW's, else Civil
+  /// 3D's), and makes it the active drawing, so later requests act on it. Returns its name and (empty until saved)
+  /// file path. Doesn't change any existing drawing; FileBoundary's path errors apply to templatePath.
+  /// </summary>
   public static async Task<object?> NewDrawingAsync(JsonObject? parameters)
   {
     var templatePath = PluginRuntime.GetOptionalString(parameters, "templatePath");
@@ -260,7 +273,9 @@ public static class DrawingCommands
   /// <summary>Opens a drawing from disk in a new tab, or makes it the active tab when it is open already. It is opened
   /// read-only when asked, or when someone else has it open: AutoCAD keeps the file in use and writes a .dwl lock file
   /// next to it that names who (shown as lockedBy). The path must be inside the allowed folders (CIVIL3D_FILE_ROOTS /
-  /// CIVIL3D_IMPORT_ROOTS, default Documents), like every file the plugin reads.</summary>
+  /// CIVIL3D_IMPORT_ROOTS, default Documents), like every file the plugin reads. Reads <c>path</c> (required) and
+  /// <c>readOnly</c>. Throws FileBoundary's path errors (an editable open is never from the shared knowledge folder)
+  /// and CIVIL3D.FILE_IO_ERROR when Civil 3D can't open the file.</summary>
   public static async Task<object?> OpenDrawingAsync(JsonObject? parameters)
   {
     var readOnly = PluginRuntime.GetOptionalBool(parameters, "readOnly") ?? false;
@@ -363,7 +378,11 @@ public static class DrawingCommands
     }));
   }
 
-  /// <summary>Makes another open drawing the active tab (by file name, with or without .dwg, or full path).</summary>
+  /// <summary>
+  /// Makes another open drawing the active tab (<c>name</c>: file name, with or without .dwg, or full path). Doesn't
+  /// change any drawing. CIVIL3D.OBJECT_NOT_FOUND when nothing matches, CIVIL3D.INVALID_INPUT when several do,
+  /// CIVIL3D.HOST_BUSY when Civil 3D won't switch right now.
+  /// </summary>
   public static Task<object?> ActivateDrawingAsync(JsonObject? parameters)
   {
     var wanted = PluginRuntime.GetRequiredString(parameters, "name").Trim();
@@ -428,7 +447,7 @@ public static class DrawingCommands
   /// Undoes the last <c>steps</c> (default 1) undo steps of the active drawing by sending <c>UNDO n</c> to the command
   /// line. Refuses with CIVIL3D.CONFLICT when the user has run commands since the AI's last change (they would be
   /// undone first), unless <c>force</c> is true because the user agreed. The command is queued, so it runs just after
-  /// this answer is sent rather than before it.
+  /// this answer is sent rather than before it, outside the host queue.
   /// </summary>
   public static Task<object?> UndoDrawingAsync(JsonObject? parameters)
   {
@@ -529,6 +548,7 @@ public static class DrawingCommands
     };
   }
 
+  /// <summary>The fixed list of object type names returned by listCivilObjectTypes and getProjectContext.</summary>
   private static object[] BuildCivilObjectTypes() =>
   [
     "Alignment",
@@ -542,6 +562,7 @@ public static class DrawingCommands
     "PipeNetwork",
   ];
 
+  /// <summary>The pickfirst selection (Editor.SelectImplied) as handle, type, name and description rows, at most <paramref name="limit"/>.</summary>
   private static List<Dictionary<string, object?>> BuildSelectedCivilObjects(
     Document doc,
     Transaction transaction,
@@ -574,6 +595,7 @@ public static class DrawingCommands
     return result;
   }
 
+  /// <summary>Profiles on all alignments together.</summary>
   private static int CountProfiles(CivilDocument civilDoc, Transaction transaction)
   {
     var count = 0;
@@ -586,6 +608,7 @@ public static class DrawingCommands
     return count;
   }
 
+  /// <summary>Parcels in all sites together.</summary>
   private static int CountParcels(CivilDocument civilDoc, Transaction transaction)
   {
     var count = 0;

@@ -1,3 +1,12 @@
+// Point group management and point export/transform for civil3d_point (src/tools/domains/pointDomain.ts).
+// JSON-RPC methods: createPointGroup, updatePointGroup, deletePointGroup, transformCogoPoints (writes,
+// CivilExecution.WriteAsync: command context, document lock, one transaction, one undo step) and exportCogoPoints
+// (read, CivilExecution.ReadAsync: main thread, no undo step).
+// exportCogoPoints returns the text in the answer (PointText.Format); it writes no file.
+// Rules: transformCogoPoints MOVES COGO points, which are often survey data; the AI may only use it when the user
+// asks (server instructions). The TS side requires approval and refuses to move every point unless allPoints is set;
+// this handler itself moves every point when neither pointNumbers nor groupName is given. Listing is in PointCommands.
+// Uses the typed PointGroup / StandardPointGroupQuery API; no reflection, no file access.
 using System.Text;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -18,6 +27,13 @@ public static class PointGroupCommands
   // createPointGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// createPointGroup (changes the drawing, one undo step): adds a point group named <c>name</c> (required) with an
+  /// optional <c>description</c> and a standard query from the optional <c>includeNumbers</c>,
+  /// <c>excludeNumbers</c> (number ranges such as "1-100,205") and <c>includeDescriptions</c> (raw description
+  /// patterns such as "EP*"). Returns name, handle and created. The name is not checked here first: a name already in
+  /// use fails inside Civil 3D's PointGroups.Add.
+  /// </summary>
   public static Task<object?> CreatePointGroupAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -46,6 +62,12 @@ public static class PointGroupCommands
   // updatePointGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// updatePointGroup (changes the drawing, one undo step): finds the group <c>name</c> (required, ignoring case) and
+  /// sets whichever of <c>description</c>, <c>includeNumbers</c>, <c>excludeNumbers</c>, <c>includeDescriptions</c> are
+  /// given; the others are kept. Returns name and updated. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and
+  /// CIVIL3D.CONFLICT when the group uses a custom query (its criteria would be lost).
+  /// </summary>
   public static Task<object?> UpdatePointGroupAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -73,6 +95,8 @@ public static class PointGroupCommands
   // deletePointGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>deletePointGroup (changes the drawing, one undo step): erases the group <c>name</c> (required); its
+  /// points stay in the drawing. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group.</summary>
   public static Task<object?> DeletePointGroupAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -94,6 +118,12 @@ public static class PointGroupCommands
   // exportCogoPoints
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// exportCogoPoints (read-only): the points as text, one line each in <c>format</c> (pnezd default, penz, xyzd, xyz,
+  /// csv; PointText.Format) joined by <c>delimiter</c> (default ","). Optional filters: <c>groupName</c> and
+  /// <c>pointNumbers</c>; both given means points in both. Returns format, exportedCount, data (the text) and units.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and CIVIL3D.INVALID_INPUT for an unknown format.
+  /// </summary>
   public static Task<object?> ExportCogoPointsAsync(JsonObject? parameters)
   {
     var format = PluginRuntime.GetOptionalString(parameters, "format") ?? "pnezd";
@@ -147,6 +177,14 @@ public static class PointGroupCommands
   // transformCogoPoints
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// transformCogoPoints (MOVES points; changes the drawing, one undo step): for the points in <c>pointNumbers</c>,
+  /// else in point group <c>groupName</c>, else EVERY point of the drawing, scales X and Y by <c>scaleFactor</c>
+  /// (default 1), rotates by <c>rotateRadians</c> (default 0), both about the drawing origin (0,0), then adds
+  /// <c>translateX/Y/Z</c> (default 0). Elevations are only translated. Returns transformedCount and the values used.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group and CIVIL3D.API_ERROR when Civil 3D won't move a point (the
+  /// whole write is then not committed).
+  /// </summary>
   public static Task<object?> TransformCogoPointsAsync(JsonObject? parameters)
   {
     var numbersNode = PluginRuntime.GetParameter(parameters, "pointNumbers") as JsonArray;
@@ -225,6 +263,8 @@ public static class PointGroupCommands
   // Private helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The point group named <paramref name="name"/> (ignoring case), opened in <paramref name="mode"/>.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static PointGroup FindPointGroupByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -243,6 +283,9 @@ public static class PointGroupCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Point group '{name}' was not found.");
   }
 
+  /// <summary>Sets the given include/exclude criteria on the group's standard query (creating one when the group has
+  /// none) and updates the group's point list; does nothing when all three are null. Throws CIVIL3D.CONFLICT for a
+  /// group with a custom query, so its criteria are never discarded.</summary>
   private static void ApplyStandardQuery(
     PointGroup group,
     string? includeNumbers,
@@ -270,6 +313,8 @@ public static class PointGroupCommands
     group.Update();
   }
 
+  /// <summary>Moves a point (open for write) to the given easting, northing and elevation; a refusal by Civil 3D
+  /// becomes CIVIL3D.API_ERROR naming the point.</summary>
   private static void SetPointCoordinate(CogoPoint point, double x, double y, double z)
   {
     try

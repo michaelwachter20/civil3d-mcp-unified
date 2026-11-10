@@ -1,3 +1,11 @@
+// Profile editing and profile view handlers for civil3d_profile (src/tools/domains/profileDomain.ts); pipeDomain.ts's
+// automate_profile_view also calls profileViewCreate.
+// JSON-RPC methods: profileAddPvi, profileDeletePvi, profileAddCurve, profileSetGrade, profileViewCreate,
+// profileViewBandSet (writes, CivilExecution.WriteAsync: command context, document lock, one transaction, one undo
+// step); profileGetElevation (same as ProfileCommands.getProfileElevation) and profileCheckKValues (reads,
+// CivilExecution.ReadAsync: main thread, no undo step). MinimumK (AASHTO K tables) is also used by SightDistanceCommands.
+// Alignments and profiles are found by name through CivilObjectUtils, styles through LookupUtils. Curve properties in
+// the K check are read late-bound through CivilObjectUtils. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -14,6 +22,12 @@ public static class ProfileEditCommands
 {
   // ─── profileAddPvi ────────────────────────────────────────────────────────
 
+  /// <summary>
+  /// profileAddPvi (changes the drawing, one undo step): adds a PVI at <c>station</c> and <c>elevation</c> to profile
+  /// <c>profileName</c> of <c>alignmentName</c> (all required). Returns the values and success. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment or profile, CIVIL3D.INVALID_INPUT for a station off the
+  /// alignment, CIVIL3D.CONFLICT when a PVI is already within 0.001 of the station.
+  /// </summary>
   public static Task<object?> AddPviAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -51,6 +65,9 @@ public static class ProfileEditCommands
 
   // ─── profileDeletePvi ─────────────────────────────────────────────────────
 
+  /// <summary>profileDeletePvi (changes the drawing, one undo step): removes the PVI within 1 unit of
+  /// <c>station</c> (with <c>alignmentName</c> and <c>profileName</c>, all required). Throws CIVIL3D.OBJECT_NOT_FOUND
+  /// for an unknown alignment or profile, or when no PVI is that close (naming the nearest).</summary>
   public static Task<object?> DeletePviAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -78,6 +95,10 @@ public static class ProfileEditCommands
 
   // ─── profileAddCurve ──────────────────────────────────────────────────────
 
+  /// <summary>profileAddCurve (changes the drawing, one undo step): adds a free symmetric parabola of
+  /// <c>length</c> at the PVI within 1 unit of <c>pviStation</c> (with <c>alignmentName</c>, <c>profileName</c>; all
+  /// required). <c>curveType</c> other than symmetric_parabola (the default) is refused with CIVIL3D.API_ERROR.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment, profile or PVI.</summary>
   public static Task<object?> AddCurveAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -122,6 +143,14 @@ public static class ProfileEditCommands
 
   // ─── profileSetGrade ──────────────────────────────────────────────────────
 
+  /// <summary>
+  /// profileSetGrade (changes the drawing, one undo step): gives tangent <c>entityIndex</c> of the profile the
+  /// <c>grade</c> (a fraction, 0.02 = 2%) by moving the elevation of the PVI at its down-station end; the next
+  /// tangent's grade changes with it. All of <c>alignmentName</c>, <c>profileName</c>, <c>entityIndex</c>,
+  /// <c>grade</c> are required. The index counts profile.Entities in Civil 3D's own order (not sorted by station).
+  /// Returns the PVI station and its previous and new elevation. Throws CIVIL3D.INVALID_INPUT for a grade above 1 in
+  /// size, an index out of range or an entity that is a curve, CIVIL3D.API_ERROR when no PVIs are found at its ends.
+  /// </summary>
   public static Task<object?> SetGradeAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -179,9 +208,8 @@ public static class ProfileEditCommands
   // ─── profileGetElevation ──────────────────────────────────────────────────
 
   /// <summary>
-  /// Delegates to the same underlying implementation as
-  /// ProfileCommands.GetProfileElevationAsync but is exposed as a
-  /// dedicated tool per JFS-10 requirements.
+  /// profileGetElevation: the same read as ProfileCommands.GetProfileElevationAsync (getProfileElevation), with the
+  /// same parameters, answer and errors, under its own method name for the profile editing actions.
   /// </summary>
   public static Task<object?> GetElevationAsync(JsonObject? parameters)
   {
@@ -190,6 +218,13 @@ public static class ProfileEditCommands
 
   // ─── profileCheckKValues ──────────────────────────────────────────────────
 
+  /// <summary>
+  /// profileCheckKValues (read-only): for each vertical curve of the profile, K = length / |grade change in %| against
+  /// the AASHTO stopping-sight-distance minimum for <c>designSpeed</c> (mph and feet, or km/h and metres when the
+  /// drawing's INSUNITS is metres). <c>alignmentName</c>, <c>profileName</c>, <c>designSpeed</c> required. Returns the
+  /// minimums, one row per curve (sag when the grade rises, else crest) and allPass. Throws CIVIL3D.OBJECT_NOT_FOUND
+  /// for an unknown alignment or profile, CIVIL3D.TRANSACTION_FAILED when the profile has no Entities collection.
+  /// </summary>
   public static Task<object?> CheckKValuesAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -276,6 +311,12 @@ public static class ProfileEditCommands
 
   // ─── profileViewCreate ────────────────────────────────────────────────────
 
+  /// <summary>
+  /// profileViewCreate (changes the drawing, one undo step): a profile view <c>profileViewName</c> of
+  /// <c>alignmentName</c> at <c>insertX</c>/<c>insertY</c> (all required), with optional <c>style</c> and
+  /// <c>bandSet</c> (default: the drawing's first band set). Returns profileViewName, handle, alignmentName and the
+  /// insertion point. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment, style or band set.
+  /// </summary>
   public static Task<object?> ProfileViewCreateAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -312,6 +353,9 @@ public static class ProfileEditCommands
 
   // ─── profileViewBandSet ───────────────────────────────────────────────────
 
+  /// <summary>profileViewBandSet (changes the drawing, one undo step): imports band set style <c>bandSetName</c> into
+  /// the model-space profile view <c>profileViewName</c> (both required). Throws CIVIL3D.OBJECT_NOT_FOUND for an
+  /// unknown view or band set.</summary>
   public static Task<object?> ProfileViewBandSetAsync(JsonObject? parameters)
   {
     var profileViewName = PluginRuntime.GetRequiredString(parameters, "profileViewName");
@@ -338,6 +382,8 @@ public static class ProfileEditCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────
 
+  /// <summary>The profile view named <paramref name="name"/> (ignoring case) in model space, open for read;
+  /// CIVIL3D.OBJECT_NOT_FOUND otherwise.</summary>
   private static ProfileView FindProfileViewByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -367,7 +413,8 @@ public static class ProfileEditCommands
 
   /// <summary>
   /// The PVI at a station, within <see cref="PviTolerance"/> drawing units. Further off is an error, not the nearest
-  /// one: "delete the PVI at 500" must not delete the one at 1000.
+  /// one: "delete the PVI at 500" must not delete the one at 1000. Null only when the profile has no PVIs; throws
+  /// CIVIL3D.OBJECT_NOT_FOUND naming the nearest when none is close enough.
   /// </summary>
   private static ProfilePVI? FindPviNearStation(ProfilePVICollection pvis, double targetStation)
   {
@@ -396,11 +443,12 @@ public static class ProfileEditCommands
 
   private const double PviTolerance = 1.0;
 
-  /// <summary>AASHTO minimum K for stopping sight distance, metric: (km/h, sag, crest), K in metres per percent.</summary>
-  /// <summary>The stopping sight distance K for a design speed: km/h and metres, or mph and feet.</summary>
+  /// <summary>The stopping sight distance K for a design speed: km/h and metres, or mph and feet. Interpolated
+  /// between table speeds; below or above the table it takes the first or last row.</summary>
   internal static (double Sag, double Crest) MinimumK(double designSpeed, bool metric) =>
     LookupKValues(metric ? BuildAashtoKTableMetric() : BuildAashtoKTableImperial(), designSpeed);
 
+  /// <summary>AASHTO minimum K for stopping sight distance, metric: (km/h, sag, crest), K in metres per percent.</summary>
   private static List<(double speed, double kSag, double kCrest)> BuildAashtoKTableMetric() =>
   [
     (20, 3, 1),
@@ -436,6 +484,8 @@ public static class ProfileEditCommands
     (80, 231, 384),
   ];
 
+  /// <summary>The row within 0.5 of the speed, else linear interpolation between the rows around it, else the
+  /// table's first or last row.</summary>
   private static (double kSag, double kCrest) LookupKValues(
     List<(double speed, double kSag, double kCrest)> table,
     double designSpeed)

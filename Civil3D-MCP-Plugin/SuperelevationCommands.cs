@@ -1,3 +1,9 @@
+// SuperelevationCommands.cs - alignment superelevation. Methods (CommandDispatcher.cs): getSuperelevation,
+// setSuperelevation, setSuperelevationStation, checkSuperelevationDesign, generateSuperelevationReport. Caller:
+// src/tools/domains/superelevationDomain.ts (civil3d_superelevation). Reads run in CivilExecution.ReadAsync (no undo
+// step); setSuperelevationStation is the only write, in CivilExecution.WriteAsync (one transaction, one undo step).
+// setSuperelevation always refuses (no API runs the wizard). Rule: no design standard is assumed; checks need the
+// engineer's limits, and nothing claims a violation without them. The report file goes through FileBoundary.
 using System.Text;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -21,6 +27,10 @@ public static class SuperelevationCommands
   // getSuperelevation
   // -------------------------------------------------------------------------
 
+  /// <summary><c>getSuperelevation</c>: reads <c>alignmentName</c> (required) and <c>includeRawData</c> (bool). Returns
+  /// design speeds, superelevation type, curve count, whether any superelevation was calculated, and with
+  /// <c>includeRawData</c> the critical-station table (slopes in percent). Wizard settings come back null (not exposed).
+  /// Read-only. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.</summary>
   public static Task<object?> GetSuperelevationAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -69,6 +79,9 @@ public static class SuperelevationCommands
   // setSuperelevation
   // -------------------------------------------------------------------------
 
+  /// <summary><c>setSuperelevation</c>: checks <c>alignmentName</c>, <c>designSpeed</c>, <c>normalCrownSlope</c> are
+  /// given, then always throws CIVIL3D.API_ERROR: the wizard can't be run through the API. Changes nothing; use
+  /// setSuperelevationStation for a reviewed table.</summary>
   public static Task<object?> SetSuperelevationAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -89,6 +102,10 @@ public static class SuperelevationCommands
   /// <summary>
   /// Sets the cross slopes at one critical station, adding the station if it isn't one yet. Slopes are percent, as the
   /// table reads them. A road without a median has no inner lanes, so a side's slope goes on whichever segments it has.
+  /// <c>setSuperelevationStation</c>: reads <c>alignmentName</c>, <c>station</c> (required), <c>stationType</c> (a
+  /// SuperelevationCriticalStationType name, default Manual) and at least one of <c>leftLaneSlope</c>,
+  /// <c>rightLaneSlope</c>, <c>leftShoulderSlope</c>, <c>rightShoulderSlope</c>. Changes the drawing (WriteAsync, one
+  /// undo step). CIVIL3D.INVALID_INPUT (bad type, no slope, station off the alignment), CIVIL3D.OBJECT_NOT_FOUND.
   /// </summary>
   public static Task<object?> SetSuperelevationStationAsync(JsonObject? parameters)
   {
@@ -164,6 +181,12 @@ public static class SuperelevationCommands
   // checkSuperelevationDesign
   // -------------------------------------------------------------------------
 
+  /// <summary><c>checkSuperelevationDesign</c>: compares each critical station's largest lane cross slope (percent)
+  /// with <c>maxSuperelevation</c> (required, same units, engineer-approved). Reads <c>alignmentName</c>,
+  /// <c>designSpeed</c> (required, echoed only) and <c>checkAttainmentLength</c> / <c>checkRunoffLength</c> (default
+  /// true; both must be false, as the API can't verify them). Read-only. Throws CIVIL3D.INVALID_INPUT (no max),
+  /// CIVIL3D.API_ERROR (length checks asked for, no calculated stations, a station with no lane slope),
+  /// CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> CheckSuperelevationDesignAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -241,6 +264,11 @@ public static class SuperelevationCommands
   // generateSuperelevationReport
   // -------------------------------------------------------------------------
 
+  /// <summary><c>generateSuperelevationReport</c>: a plain-text report (design speeds, type, and with
+  /// <c>includeRunoffTable</c>, default true, the critical-station table). Reads <c>alignmentName</c> (required),
+  /// <c>outputPath</c> (optional .txt, written atomically through FileBoundary; <c>overwrite</c> to replace) and
+  /// <c>includeViolations</c>, which must be false (CIVIL3D.INVALID_INPUT otherwise: no criteria, no violations).
+  /// Returns the text inline when no path is given. Doesn't change the drawing; path errors come from FileBoundary.</summary>
   public static Task<object?> GenerateSuperelevationReportAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -309,6 +337,8 @@ public static class SuperelevationCommands
   // Helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>Every critical station of every superelevation curve: station, types, the four lane slopes in percent
+  /// (null where the road has no such segment) and the largest-magnitude slope per side.</summary>
   private static List<Dictionary<string, object?>> ReadSuperelevationTable(Alignment alignment)
   {
     var table = new List<Dictionary<string, object?>>();
@@ -340,6 +370,7 @@ public static class SuperelevationCommands
     return table;
   }
 
+  /// <summary>A segment's slope in percent, or null when the station has no such segment (the API throws then).</summary>
   private static double? TryGetSlopePercent(
     SuperelevationCriticalStation station,
     SuperelevationCrossSegmentType segmentType)
@@ -354,6 +385,7 @@ public static class SuperelevationCommands
     }
   }
 
+  /// <summary>The value with the largest absolute size, sign kept; null when all are null.</summary>
   private static double? MaximumMagnitude(params double?[] values)
   {
     return values

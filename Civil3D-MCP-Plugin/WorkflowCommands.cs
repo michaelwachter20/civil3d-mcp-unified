@@ -1,3 +1,11 @@
+// WorkflowCommands.cs - multi-step workflows run inside the plugin (civil3d_workflow, src/tools/domains/workflowDomain.ts).
+// Methods (CommandDispatcher.cs): corridorQcReportWorkflow, surfaceComparisonReportWorkflow,
+// dataShortcutPublishSyncWorkflow, dataShortcutReferenceSyncWorkflow, projectStartupWorkflow,
+// projectReferenceSetupWorkflow, drawingReadinessAuditWorkflow, featureLineToGradingWorkflow,
+// planProductionPublishWorkflow, qcFixAndVerifyWorkflow. Each one only calls other handlers (QcCommands,
+// SurfaceCommands, DataShortcutCommands, DrawingCommands, GradingCommands, PlanProductionCommands) in order; those do
+// their own CivilExecution reads/writes and FileBoundary checks. So a workflow is several host-queue turns and several
+// undo steps, not one, and a failing step stops it with the earlier steps kept. Approval is enforced once, in Node.
 using System.Linq;
 using System.Text.Json.Nodes;
 
@@ -75,8 +83,9 @@ public static class WorkflowCommands
       warnings);
   }
 
-  /// <summary>Both surfaces' details, their TIN volume and the text volume report (<c>format</c> summary or
-  /// detailed), with elevation and area differences. Reads only.</summary>
+  /// <summary>Both surfaces' details (<c>baseSurface</c>, <c>comparisonSurface</c>, required), their TIN volume and the
+  /// text volume report (<c>format</c> summary or detailed). Changes nothing in the drawing (the two volume steps use
+  /// MeasureAsync, each leaving one blank undo step).</summary>
   public static async Task<object?> SurfaceComparisonReportWorkflowAsync(JsonObject? parameters)
   {
     var baseSurface = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -128,7 +137,8 @@ public static class WorkflowCommands
   }
 
   /// <summary>Publishes object <c>objectName</c> of <c>objectType</c> as a data shortcut (named <c>shortcutName</c>,
-  /// default the object's name), then synchronizes shortcuts; <c>dryRun</c> is passed to both steps.</summary>
+  /// default the object's name), then synchronizes shortcuts. With <c>dryRun</c> the publish step is skipped (only the
+  /// shortcut folder is checked) and the sync runs as a dry run.</summary>
   public static async Task<object?> DataShortcutPublishSyncWorkflowAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -182,7 +192,7 @@ public static class WorkflowCommands
   }
 
   /// <summary>References shortcut <c>shortcutName</c> of <c>shortcutType</c> from <c>projectFolder</c> into this
-  /// drawing, then synchronizes; <c>dryRun</c> is passed to both steps.</summary>
+  /// drawing, then synchronizes. With <c>dryRun</c> the reference step is skipped and the sync runs as a dry run.</summary>
   public static async Task<object?> DataShortcutReferenceSyncWorkflowAsync(JsonObject? parameters)
   {
     var projectFolder = PluginRuntime.GetRequiredString(parameters, "projectFolder");
@@ -299,7 +309,9 @@ public static class WorkflowCommands
   }
 
   /// <summary>References each data shortcut in <c>references</c> ({projectFolder, shortcutName, shortcutType,
-  /// layer}), synchronizes, lists the shortcuts, and saves to <c>saveAs</c> when given.</summary>
+  /// layer}), synchronizes (against the first reference's project folder), lists the shortcuts, and saves to
+  /// <c>saveAs</c> when given. <c>dryRun</c> skips the references and dry-runs the sync, but a given <c>saveAs</c> still
+  /// saves. CIVIL3D.INVALID_INPUT without at least one reference.</summary>
   public static async Task<object?> ProjectReferenceSetupWorkflowAsync(JsonObject? parameters)
   {
     if (PluginRuntime.GetParameter(parameters, "references") is not JsonArray referencesArray || referencesArray.Count == 0)
@@ -664,6 +676,7 @@ public static class WorkflowCommands
     };
   }
 
+  /// <summary>One step entry: name, the tool action it matches, status (completed/skipped) and its result if any.</summary>
   private static Dictionary<string, object?> WorkflowStep(string name, string action, string status, object? result = null)
   {
     var step = new Dictionary<string, object?>
@@ -681,6 +694,7 @@ public static class WorkflowCommands
     return step;
   }
 
+  /// <summary>A string array parameter without blanks; empty when absent.</summary>
   private static List<string> ParseStringArray(JsonObject? parameters, string name)
   {
     if (PluginRuntime.GetParameter(parameters, name) is not JsonArray array)
@@ -695,6 +709,7 @@ public static class WorkflowCommands
       .ToList();
   }
 
+  /// <summary>Strings as a JsonArray, for passing to another handler.</summary>
   private static JsonArray ToJsonArray(IEnumerable<string> values)
   {
     var array = new JsonArray();
@@ -706,6 +721,7 @@ public static class WorkflowCommands
     return array;
   }
 
+  /// <summary>Same as <see cref="ToJsonArray"/> (kept as it is used by the publish workflow).</summary>
   private static class JsonSerializerHelper
   {
     public static JsonArray StringArray(IEnumerable<string> values)

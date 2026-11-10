@@ -4,6 +4,10 @@
 // Autodesk assemblies are never copied.
 //
 //   npm run plugin:prebuild     then commit prebuilt/ together with the plugin source change
+//
+// Runs `dotnet build` into a temp folder (compiles only; it does not start Civil 3D), refuses Autodesk DLLs and any
+// file containing the builder's user name or a C:\Users\... path, then replaces prebuilt/Civil3DMcpPlugin and writes
+// BUILD-INFO.json (version + plugin-source-hash.mjs fingerprint, which release.yml checks). By hand only.
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";

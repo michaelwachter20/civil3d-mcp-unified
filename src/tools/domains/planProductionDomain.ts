@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The plan production domain: `civil3d_plan_production` and one alias per action (`civil3d_sheet_set_list`,
  * `civil3d_sheet_add`, `civil3d_sheet_publish_pdf`, ...). The plugin side is PlanProductionCommands.cs; domainRuntime.ts
@@ -13,7 +9,13 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * its path as the name. `sheet_set_export` plots with the same engine as `sheet_publish_pdf`, which answers once the
  * file exists. (The jobs domain's `publish_sheet_pdf` runs the same `publishSheetPdf`.) `sheet_set_title_block` and
  * `plan_profile_sheet_update_alignment` always refuse: neither is a setting Civil 3D has, and each answer says what to do.
+ *
+ * Approval (approvalPolicy.ts): sheet_set_list, sheet_set_get_info and sheet_get_properties are reads. Every other
+ * action (create, add, edit, view, publish, export) needs an approvalToken.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 /** One sheet in a sheet set, as the list and info answers give it. */
 const SheetSummarySchema = z.object({
@@ -324,8 +326,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // NOTE: the plugin sets the sheet's alignment (and profile) id by trying property names through reflection and
-    // ignores whether any of them took, so it can answer `updated: true` when nothing changed.
+    // The plugin always refuses (CIVIL3D.API_ERROR, nothing changed): a view frame's alignment is read-only once made,
+    // so the answer tells the AI to make new view frames instead.
     plan_profile_sheet_update_alignment: {
       action: "plan_profile_sheet_update_alignment",
       inputSchema: PlanProfileSheetUpdateAlignmentArgsSchema,
@@ -379,8 +381,9 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // The plugin checks the output path (FileBoundary: export roots, .pdf, no overwrite without `overwrite: true`).
-    // sheet_publish_pdf then plots; sheet_set_export refuses with CIVIL3D.API_ERROR and writes nothing.
+    // The plugin checks the output path (FileBoundary: export roots, .pdf, no overwrite without `overwrite: true`),
+    // then plots. sheet_set_export plots the set's sheets the same way, but refuses (nothing published) when a sheet
+    // to plot is in another drawing or the set has none to plot.
     sheet_publish_pdf: {
       action: "sheet_publish_pdf",
       inputSchema: SheetPublishPdfArgsSchema,
@@ -457,6 +460,8 @@ export const PLAN_PRODUCTION_DOMAIN_DEFINITION: DomainToolDefinition = {
       supportedActions: ["sheet_set_get_info"],
       resolveAction: (rawArgs) => ({ action: "sheet_set_get_info", args: { action: "sheet_set_get_info", name: rawArgs.name } }),
     },
+    // NOTE: this alias takes no `outputPath`, which sheet_set_create's schema requires, so a call through it fails
+    // validation; the canonical tool works.
     {
       toolName: "civil3d_sheet_set_create",
       displayName: "Civil 3D Sheet Set Create",

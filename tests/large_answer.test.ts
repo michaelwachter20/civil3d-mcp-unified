@@ -1,3 +1,6 @@
+// Guards src/tools/largeAnswer.ts (fitAnswer): an answer over MAX_INLINE_BYTES is cut to its shape and says what to do,
+// so a huge drawing query cannot flood the AI's context. Pure unit test.
+
 import { describe, expect, it } from "vitest";
 import { fitAnswer, MAX_INLINE_BYTES } from "../src/tools/largeAnswer.js";
 

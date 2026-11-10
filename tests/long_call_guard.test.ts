@@ -1,3 +1,7 @@
+// Source-text guard on the PLUGIN (reads Civil3D-MCP-Plugin/*.cs as text, runs nothing): keeps code patterns that would
+// freeze Civil 3D on a very long profile, and keeps the plugin answering health while a long call runs.
+// Runs from the repo root (relative path Civil3D-MCP-Plugin/). If a plugin file is renamed, update this test.
+
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 

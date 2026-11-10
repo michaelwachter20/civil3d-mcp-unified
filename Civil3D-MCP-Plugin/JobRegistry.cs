@@ -1,3 +1,8 @@
+// The in-memory registry of background jobs (JobRecord) and its counts (JobRegistryStats).
+// Serves no JSON-RPC method itself: JobCommands (getJobStatus, cancelJob, startJob) and CorridorCommands
+// (rebuildCorridor) create and finish jobs here, and getCivil3DHealth reports GetStats. Pure bookkeeping, thread-safe
+// (a lock for retention, one per record for its fields): it never touches the drawing, writes no files, and loses
+// every job when Civil 3D closes. Limits: 256 jobs, finished ones kept 24 hours.
 using System.Collections.Concurrent;
 
 namespace Civil3DMcpPlugin;
@@ -244,6 +249,7 @@ public static class JobRegistry
     }
   }
 
+  /// <summary>Counts of jobs by state after dropping expired ones, plus capacity and retention (for health and job answers).</summary>
   public static JobRegistryStats GetStats()
   {
     ApplyRetentionSafely();
@@ -258,6 +264,7 @@ public static class JobRegistry
       (int)TerminalRetention.TotalMinutes);
   }
 
+  /// <summary>A job by id without retention; CIVIL3D.OBJECT_NOT_FOUND naming what was being done (<paramref name="operation"/>).</summary>
   private static JobRecord GetRequired(string jobId, string operation)
   {
     if (!Jobs.TryGetValue(jobId, out var record))
@@ -269,6 +276,7 @@ public static class JobRegistry
     return record;
   }
 
+  /// <summary>Stamps the end time and duration. Callers hold the record's SyncRoot.</summary>
   private static void MarkTerminal(JobRecord record)
   {
     var completedAt = DateTimeOffset.UtcNow;
@@ -309,6 +317,7 @@ public static class JobRegistry
     }
   }
 
+  /// <summary>Removes finished jobs that ended before <paramref name="cutoff"/>; returns how many. Callers hold <c>RetentionSync</c>.</summary>
   private static int PurgeTerminalJobsOlderThanCore(DateTimeOffset cutoff)
   {
     var removed = 0;

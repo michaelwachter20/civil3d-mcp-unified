@@ -1,3 +1,10 @@
+// SectionCommands.cs - sample lines, sections and section views (civil3d_section, src/tools/domains/sectionDomain.ts).
+// Methods (CommandDispatcher.cs): listSampleLineGroups, getSectionData, createSampleLines, createSectionViews,
+// listSectionViews, updateSectionViewStyles, createSectionViewGroup, exportSectionData. Reads (list/get/export) run in
+// CivilExecution.ReadAsync (no undo step); creating and restyling run in CivilExecution.WriteAsync (one transaction,
+// one undo step). The CSV export is the only file write and goes through FileBoundary. Station lists and sample line
+// names come from StationMath; late-bound calls (GetSampleLineGroupIds) go through CivilObjectUtils. Quirk to keep:
+// SampleLineGroup.GetSectionSources() needs the group open for write, or Civil 3D crashes.
 using System.Text.Json.Nodes;
 using System.IO;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -73,7 +80,10 @@ public static class SectionCommands
   /// both positive). Stations come from <c>stations</c> (an array, duplicates dropped, sorted) or else every
   /// <c>interval</c> from the alignment's start; with neither it refuses with CIVIL3D.INVALID_INPUT. <c>surfaces</c>
   /// (optional names) limits which section sources are sampled; without it every source is sampled. Sample lines are
-  /// named "SL-" plus the station (e.g. "SL-1250", StationMath.SampleLineName). Writes to the drawing in one undo step.
+  /// named after the group plus "SL-" and the station (e.g. "Elm SLG SL-1250", StationMath.SampleLineName(group,
+  /// station)). Writes to the drawing in one undo step. Throws CIVIL3D.OBJECT_NOT_FOUND (alignment, or a named surface
+  /// that isn't a section source), CIVIL3D.INVALID_INPUT (no width, neither stations nor interval, a station off the
+  /// alignment).
   /// </summary>
   public static Task<object?> CreateSampleLinesAsync(JsonObject? parameters)
   {
@@ -88,6 +98,7 @@ public static class SectionCommands
     {
       var alignment = CivilObjectUtils.FindAlignmentByName(civilDoc, transaction, alignmentName);
       var groupId = SampleLineGroup.Create(groupName, alignment.ObjectId);
+      // Open for write before GetSectionSources(): it updates the group and crashes Civil 3D on a group open for read.
       var group = CivilObjectUtils.GetRequiredObject<SampleLineGroup>(transaction, groupId, OpenMode.ForWrite);
       var sectionSources = group.GetSectionSources();
       var requestedSurfaces = (PluginRuntime.GetParameter(parameters, "surfaces") as JsonArray)?.Select(node => node?.GetValue<string>()).Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -166,11 +177,6 @@ public static class SectionCommands
   }
 
   /// <summary>
-  /// Finds the sample line at <c>station</c> (within 0.0001) in sample line group <c>sampleLineGroupName</c> of
-  /// <c>alignmentName</c> and returns its station and the drawing's units. CIVIL3D.OBJECT_NOT_FOUND when the
-  /// alignment has no groups, the group isn't there or no sample line is at that station. Read only.
-  /// </summary>
-  /// <summary>
   /// Most points to return per surface unless asked: one real station came to 197,000 characters, enough to fill an AI's
   /// whole working memory. Evenly spread, so breaks between them can be missed: `thinned` says when, and maxPoints gets all.
   /// </summary>
@@ -219,6 +225,13 @@ public static class SectionCommands
       .ToList();
   }
 
+  /// <summary>
+  /// <c>getSectionData</c>: finds the sample line at <c>station</c> (within 0.0001) in sample line group
+  /// <c>sampleLineGroupName</c> of <c>alignmentName</c> (all required) and returns its station, each section's source
+  /// name with its drawn offsets and elevations (at most <c>maxPoints</c> per section, default 200, evenly thinned;
+  /// <c>thinned</c> says so) and the drawing's units. CIVIL3D.OBJECT_NOT_FOUND when the alignment has no groups, the
+  /// group isn't there or no sample line is at that station. Read only.
+  /// </summary>
   public static Task<object?> GetSectionDataAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -615,6 +628,8 @@ public static class SectionCommands
     return value;
   }
 
+  /// <summary>The alignment's sample line group by name (case-insensitive), open for read; CIVIL3D.OBJECT_NOT_FOUND
+  /// when the alignment has none or none has that name.</summary>
   private static SampleLineGroup FindSampleLineGroup(Alignment alignment, Transaction transaction, string sampleLineGroupName)
   {
     var groupIds = alignment.GetSampleLineGroupIds();
@@ -635,6 +650,7 @@ public static class SectionCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Sample line group '{sampleLineGroupName}' was not found.");
   }
 
+  /// <summary>The alignment's sample line groups, or only the one named (empty when none match).</summary>
   private static IEnumerable<SampleLineGroup> ListSampleLineGroups(Alignment alignment, Transaction transaction, string? sampleLineGroupName = null)
   {
     var groupIds = alignment.GetSampleLineGroupIds();
@@ -656,6 +672,7 @@ public static class SectionCommands
     return result;
   }
 
+  /// <summary>Every section view in every section view group of the sample line group, open for read.</summary>
   private static IEnumerable<SectionView> EnumerateSectionViews(SampleLineGroup group, Transaction transaction)
   {
     foreach (SectionViewGroup sectionViewGroup in group.SectionViewGroups)
@@ -667,6 +684,7 @@ public static class SectionCommands
     }
   }
 
+  /// <summary>The views of one section view group, opened in <paramref name="openMode"/> (null ids skipped).</summary>
   private static IEnumerable<SectionView> OpenSectionViews(SectionViewGroup group, Transaction transaction, OpenMode openMode)
   {
     foreach (ObjectId viewId in group.GetSectionViewIds())
@@ -755,6 +773,7 @@ public static class SectionCommands
     return updated;
   }
 
+  /// <summary>One listSectionViews row: alignment, group, view name, handle and style name.</summary>
   private static Dictionary<string, object?> MapSectionViewSummary(SectionView view, SampleLineGroup group, Alignment alignment)
   {
     return new Dictionary<string, object?>

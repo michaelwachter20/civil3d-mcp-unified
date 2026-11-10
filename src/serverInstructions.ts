@@ -1,3 +1,10 @@
+// The instructions every MCP client receives when it connects (InitializeResult.instructions), built once by
+// src/index.ts at startup. They hold the rules for the AI (safe drawing changes, COGO points, the three kinds of
+// knowledge, the job database is reference only, no job data in know-how), followed by the user's preferences
+// (knowledgeBase.ts), the suite's good practices (practices.ts, shared practices.json) and the user's own skills
+// (skillsLibrary.ts). CLAUDE.md rule 8: keep this text, the tool descriptions and the working_safely_in_civil3d skill
+// saying the same. Reading the knowledge folders must never stop the server from starting, so failures are swallowed.
+// The text feeds what clients show the model; change wording on purpose only.
 import { allLessons, knowledgeStatus, listPreferences } from "./tools/knowledgeBase.js";
 import { practicesForInstructions } from "./tools/practices.js";
 import { loadSkills } from "./tools/skillsLibrary.js";
@@ -45,6 +52,7 @@ export const SERVER_INSTRUCTIONS = [
 const MAX_PREFERENCES_CHARS = 8_000;
 const MAX_PRACTICES_CHARS = 6_000;
 
+/** Cuts a block to `limit` characters and points to the tool action that lists the rest, so instructions stay small. */
 const capped = (block: string, limit: number, more: string) => (block.length > limit ? `${block.slice(0, limit)}\n[...more: ${more}]` : block);
 
 /**

@@ -1,3 +1,9 @@
+// Reading and writing point text lines (pnezd, penz, xyzd, xyz, csv) with no Civil 3D types.
+// Used by PointCommands.ImportCogoPointsAsync (importCogoPoints, civil3d_point import with typed-in data) to parse,
+// and by PointGroupCommands.ExportCogoPointsAsync (exportCogoPoints) to format. Point files on disk are not read here:
+// those go through Civil 3D's own importer (PointCommands.importPointFile).
+// Pure text and numbers: no drawing access, no file access, culture-invariant (dot decimals). Kept free of Autodesk
+// types so the .NET file-boundary harness (tests/FileBoundaryHarness) can test it without Civil 3D.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -24,7 +30,9 @@ public static class PointText
   public readonly record struct ParsedPoint(uint? Number, double X, double Y, double Z, string Description);
 
   /// <summary>The points in <paramref name="data"/>; throws CIVIL3D.INVALID_INPUT naming the first line that doesn't
-  /// fit <paramref name="format"/> (too few columns, a coordinate that isn't a number, an unknown format).</summary>
+  /// fit <paramref name="format"/> (too few columns, a coordinate that isn't a number, an unknown format). Blank lines
+  /// are skipped. The format name is matched exactly (lower case). Lazy: call ToList() to check every line before
+  /// acting on any.</summary>
   public static IEnumerable<ParsedPoint> Parse(string data, string format)
   {
     var lineNumber = 0;
@@ -55,6 +63,8 @@ public static class PointText
     }
   }
 
+  /// <summary>A finite number read with a dot for decimals; anything else throws CIVIL3D.INVALID_INPUT naming the
+  /// line.</summary>
   private static double Coordinate(string token, string line, int lineNumber)
   {
     if (double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value))
@@ -66,6 +76,7 @@ public static class PointText
       $"Line {lineNumber}: '{token}' isn't a number (use a dot for decimals): {line}");
   }
 
+  /// <summary>A point number: a whole number above 0, or null (then the drawing's next number is used).</summary>
   private static uint? Number(string token)
   {
     return uint.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number > 0

@@ -1,3 +1,6 @@
+// Repo-boundary test (CLAUDE.md rule 5): direct .NET reflection in Civil3D-MCP-Plugin/*.cs is allowed only in
+// Civil3DCompatibility.cs. Reads the plugin source as text; no Civil 3D.
+
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";

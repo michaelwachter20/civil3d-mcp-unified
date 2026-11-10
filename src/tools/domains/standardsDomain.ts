@@ -1,3 +1,9 @@
+// Standards domain: `civil3d_standards` and its aliases (labels, styles, the framework standards lookup, label and
+// layer checks, the layer fix), listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Drawing actions are one call
+// each to LabelCommands.cs, StyleCommands.cs or QcCommands.cs; `lookup` runs in Node only, over the JSON shipped in
+// src/standards/data (FrameworkStandardsService.ts), and needs no drawing. Writes: label_add (non-retryable create,
+// needs an approvalToken) and fix_drawing_standards (layer renames/colours; its name contains "fix", so approval is
+// required even with dryRun). Everything else is read-only. Details are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import { lookupFrameworkStandards } from "../../standards/FrameworkStandardsService.js";
@@ -172,6 +178,10 @@ const QcFixDrawingStandardsArgsSchema = z.object({
  */
 export const STANDARDS_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "standards",
+  // Action -> plugin method. Read-only: label_list (listLabels), label_list_styles (listLabelStyles), style_list
+  // (listStyles), style_get (getStyle), check_labels (qcCheckLabels), check_drawing_standards
+  // (qcCheckDrawingStandards), lookup (no plugin call). Writes needing approval: label_add (addLabel),
+  // fix_drawing_standards (qcFixDrawingStandards).
   actions: {
     label_list: {
       action: "label_list",

@@ -1,3 +1,9 @@
+// The tool manifest: the list of every domain definition (MIGRATED_DOMAIN_DEFINITIONS) and the startup registration
+// built from it (registerManifestTools, called by register.ts). Also answers "which action is this tool call?" for
+// the approval tools (findManifestAction*), and decides which exposures MCP clients see (compact mode, or every alias
+// with CIVIL3D_ENABLE_TOOL_ALIASES=true). Everything that lists tools (catalog, civil3d_docs, the orchestrator,
+// docs/tools.generated.md via scripts/generate-tool-docs.mjs) derives from this file, so adding or renaming an action
+// means running `npm run docs:generate` (CLAUDE.md rule 6). Registration calls no plugin and needs no Civil 3D.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   buildDomainToolCatalogEntries,

@@ -1,3 +1,6 @@
+// Guards src/utils/SocketClient.ts (the TCP JSON-RPC client to the plugin): connect, send/receive, chunked replies,
+// error envelopes, closed connections and cancellation. Uses a fake plugin server on a local port; no Civil 3D.
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as net from "net";
 import { ApplicationClientConnection, Civil3DRpcError } from "../src/utils/SocketClient.js";

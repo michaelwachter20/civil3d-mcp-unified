@@ -1,3 +1,14 @@
+// Pressure pipe networks (water, force mains): list, inspect, create, delete, assign a parts list, add pipes,
+// fittings and appurtenances, swap a pipe's size, and export a network's parts as JSON data.
+// JSON-RPC methods (CommandDispatcher.cs): listPressureNetworks, getPressureNetworkInfo, createPressureNetwork,
+// deletePressureNetwork, assignPressurePartsList, setPressureNetworkCover, validatePressureNetwork,
+// exportPressureNetwork, connectPressureNetworks, addPressurePipe, getPressurePipeProperties, resizePressurePipe,
+// addPressureFitting, getPressureFittingProperties, addPressureAppurtenance. All are the *_pressure_* actions of
+// civil3d_pipe (src/tools/domains/pipeDomain.ts), plus civil3d_pressure_* alias tools when aliases are enabled.
+// Reads use CivilExecution.ReadAsync (main thread, no undo step); create, delete, assign and add/resize use WriteAsync
+// (command context, document lock, one transaction, one undo step). setPressureNetworkCover, validatePressureNetwork
+// and connectPressureNetworks always throw CIVIL3D.API_ERROR without touching the drawing. No files are written.
+// Late-bound reads go through CivilObjectUtils helpers and Civil3DCompatibility (GetNamedMember); no reflection here.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -12,15 +23,11 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Handlers for pressure network MCP tools.
 ///
-/// Civil 3D API notes (reflection-based late binding):
-///   AeccPressureNetwork   -- top-level network object
-///   AeccPressurePipe      -- pipe segment (InnerDiameter, Length3D, Material, CoverDepth)
-///   AeccPressureFitting   -- fitting (elbow, tee, reducer, cap)
-///   AeccPressureAppurtenance -- valve, hydrant, meter, ARV, etc.
-///
-/// The API surface lives in AeccDbMgd.dll. We access it via reflection so the
-/// plugin builds without a direct assembly reference and tolerates minor
-/// version differences between Civil 3D releases.
+/// The writes use the typed API from AeccDbMgd.dll: PressurePipeNetwork (Create, AddLinePipe, AddFitting,
+/// AddAppurtenance, PartsListId), PressurePipe.SwapPartSize, and PressurePartList / PressurePartSize to find a part
+/// by its description (ignoring case). The reads (names, sizes, points, child ids) are late-bound through CivilObjectUtils and
+/// try several member names, so a property a release lacks reads as null rather than failing.
+/// Networks, pipes, fittings and appurtenances are found by name, case-insensitively.
 /// </summary>
 public static class PressureNetworkCommands
 {
@@ -28,6 +35,8 @@ public static class PressureNetworkCommands
   // listPressureNetworks
   // -------------------------------------------------------------------------
 
+  /// <summary>Lists every pressure network: name, handle, pipe, fitting and appurtenance counts, and parts list name.
+  /// Takes no parameters. Read-only. Returns <c>{ networks: [...] }</c>.</summary>
   public static Task<object?> ListPressureNetworksAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -44,6 +53,11 @@ public static class PressureNetworkCommands
   // getPressureNetworkInfo
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Details of pressure network <c>name</c> (required): name, handle, parts list, and every pipe, fitting and
+  /// appurtenance with its data (see ToPressurePipeData and ToPressureFittingData). Read-only. Throws
+  /// CIVIL3D.INVALID_INPUT without <c>name</c> and CIVIL3D.OBJECT_NOT_FOUND for an unknown network.
+  /// </summary>
   public static Task<object?> GetPressureNetworkInfoAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -79,6 +93,13 @@ public static class PressureNetworkCommands
   // createPressureNetwork
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Creates pressure network <c>name</c> (required) with pressure parts list <c>partsList</c> (required), and
+  /// optionally sets its <c>layer</c>, <c>referenceSurface</c> and <c>referenceAlignment</c> (by name). Changes the
+  /// drawing: one WriteAsync transaction, one undo step, so a failure part-way leaves nothing behind. Returns name,
+  /// handle, <c>partsList</c> and <c>created</c>. Throws CIVIL3D.INVALID_INPUT for a missing name and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown parts list, surface or alignment.
+  /// </summary>
   public static Task<object?> CreatePressureNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -130,6 +151,9 @@ public static class PressureNetworkCommands
   // deletePressureNetwork
   // -------------------------------------------------------------------------
 
+  /// <summary>Erases pressure network <c>name</c> (required). Changes the drawing (one undo step). Returns
+  /// <c>deleted</c> and <c>name</c>. Throws CIVIL3D.INVALID_INPUT without <c>name</c> and CIVIL3D.OBJECT_NOT_FOUND for
+  /// an unknown network.</summary>
   public static Task<object?> DeletePressureNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -145,6 +169,10 @@ public static class PressureNetworkCommands
   // assignPressurePartsList
   // -------------------------------------------------------------------------
 
+  /// <summary>Sets the pressure parts list <c>partsList</c> (required) on network <c>networkName</c> (required).
+  /// Changes the drawing (one undo step). Returns <c>networkName</c>,
+  /// <c>partsList</c> and <c>assigned</c>. Throws CIVIL3D.INVALID_INPUT for a missing name and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown network or parts list.</summary>
   public static Task<object?> AssignPressurePartsListAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -169,6 +197,11 @@ public static class PressureNetworkCommands
   // setPressureNetworkCover
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Not supported: PressurePipeNetwork has no network-level cover setters. Reads <c>networkName</c> and
+  /// <c>minCoverDepth</c> (required, CIVIL3D.INVALID_INPUT without them) and <c>maxCoverDepth</c> (optional), then
+  /// always throws CIVIL3D.API_ERROR. The drawing isn't touched.
+  /// </summary>
   public static Task<object?> SetPressureNetworkCoverAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -184,6 +217,8 @@ public static class PressureNetworkCommands
   // validatePressureNetwork
   // -------------------------------------------------------------------------
 
+  /// <summary>Not supported: a validation needs explicit cover criteria and typed connection checks, and a guessed
+  /// "valid" would mislead. Reads <c>networkName</c> (required) and always throws CIVIL3D.API_ERROR.</summary>
   public static Task<object?> ValidatePressureNetworkAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -196,6 +231,12 @@ public static class PressureNetworkCommands
   // exportPressureNetwork
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Returns network <c>networkName</c> (required) as JSON data: handle, parts list, pipes, fittings, appurtenances
+  /// and an <c>exportedAt</c> UTC time. <c>includeCoordinates</c> (optional, default true) false drops the points and
+  /// positions. No file is written; read-only. Throws CIVIL3D.INVALID_INPUT without <c>networkName</c> and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown network.
+  /// </summary>
   public static Task<object?> ExportPressureNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -234,6 +275,9 @@ public static class PressureNetworkCommands
   // connectPressureNetworks
   // -------------------------------------------------------------------------
 
+  /// <summary>Not supported (see the error message: AddPipe would list a part in both networks). Reads
+  /// <c>targetNetwork</c> and <c>sourceNetwork</c> (both required) and always throws CIVIL3D.API_ERROR; neither network
+  /// is changed.</summary>
   public static Task<object?> ConnectPressureNetworksAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "targetNetwork");
@@ -247,6 +291,15 @@ public static class PressureNetworkCommands
   // addPressurePipe
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Adds a straight pressure pipe to network <c>networkName</c> from <c>startPoint</c> to <c>endPoint</c> (both
+  /// required <c>{x, y, z}</c> objects), using the pipe part whose description matches <c>partName</c> (required,
+  /// ignoring case) in the network's parts list. <c>diameter</c> (optional) is only checked against the part, not applied. Changes the
+  /// drawing (one undo step). Returns <c>networkName</c>, the new <c>pipe</c>'s data and <c>added</c>.
+  /// Throws CIVIL3D.INVALID_INPUT for a missing name or point, a missing coordinate, equal points, or a part whose
+  /// diameter doesn't match <c>diameter</c> (the transaction then isn't committed), and CIVIL3D.OBJECT_NOT_FOUND for
+  /// an unknown network or part, or a network without a parts list.
+  /// </summary>
   public static Task<object?> AddPressurePipeAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -281,6 +334,9 @@ public static class PressureNetworkCommands
   // getPressurePipeProperties
   // -------------------------------------------------------------------------
 
+  /// <summary>Data of pipe <c>pipeName</c> in network <c>networkName</c> (both required), as ToPressurePipeData gives
+  /// it. Read-only. Throws CIVIL3D.INVALID_INPUT for a missing name and CIVIL3D.OBJECT_NOT_FOUND for an unknown network
+  /// or pipe.</summary>
   public static Task<object?> GetPressurePipePropertiesAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -298,6 +354,13 @@ public static class PressureNetworkCommands
   // resizePressurePipe
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Swaps pipe <c>pipeName</c> in network <c>networkName</c> to the pipe part described as <c>newPartName</c> (all
+  /// required) from the network's parts list, with PressurePipe.SwapPartSize. Changes the drawing (one undo step).
+  /// Returns the names, <c>previousDiameter</c>, <c>newDiameter</c> and <c>resized</c>. Throws CIVIL3D.INVALID_INPUT
+  /// for a missing name and CIVIL3D.OBJECT_NOT_FOUND for an unknown network, pipe or part, or a network without a parts
+  /// list.
+  /// </summary>
   public static Task<object?> ResizePressurePipeAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -330,6 +393,14 @@ public static class PressureNetworkCommands
   // addPressureFitting
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Adds a fitting (elbow, tee, wye, cross, cap, coupling, plug or reducer part described as <c>partName</c>) to
+  /// network <c>networkName</c> at <c>position</c> (required <c>{x, y, z}</c>). <c>rotation</c> must be absent or 0:
+  /// AddFitting takes none, so any other value throws CIVIL3D.API_ERROR before the drawing is touched. Changes the
+  /// drawing (one undo step). Returns <c>networkName</c>, the new <c>fitting</c>'s data and <c>added</c>. Throws
+  /// CIVIL3D.INVALID_INPUT for a missing name, position or coordinate, and CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// network or part, or a network without a parts list.
+  /// </summary>
   public static Task<object?> AddPressureFittingAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -359,6 +430,9 @@ public static class PressureNetworkCommands
   // getPressureFittingProperties
   // -------------------------------------------------------------------------
 
+  /// <summary>Data of fitting <c>fittingName</c> in network <c>networkName</c> (both required), as
+  /// ToPressureFittingData gives it. Read-only. Throws CIVIL3D.INVALID_INPUT for a missing name and
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown network or fitting.</summary>
   public static Task<object?> GetPressureFittingPropertiesAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -376,6 +450,15 @@ public static class PressureNetworkCommands
   // addPressureAppurtenance
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// Adds an appurtenance (valve, pump or hydrant part described as <c>partName</c>) to network <c>networkName</c> at
+  /// <c>position</c> (required <c>{x, y, z}</c>). With <c>onPipeName</c> (optional) the position moves to that pipe's
+  /// midpoint when the pipe and its end points can be found; otherwise <c>position</c> is used silently.
+  /// <c>rotation</c> must be absent or 0 (CIVIL3D.API_ERROR otherwise, before the drawing is touched). Changes the
+  /// drawing (one undo step). Returns <c>networkName</c>, the new <c>appurtenance</c>'s data and <c>added</c>. Throws
+  /// CIVIL3D.INVALID_INPUT for a missing name, position or coordinate, and CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// network or part, or a network without a parts list.
+  /// </summary>
   public static Task<object?> AddPressureAppurtenanceAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -430,6 +513,7 @@ public static class PressureNetworkCommands
   // Private helpers
   // =========================================================================
 
+  /// <summary>Every pressure network in the drawing, opened with <paramref name="openMode"/>.</summary>
   private static IEnumerable<AcDbObject> EnumeratePressureNetworks(object civilDoc, Transaction transaction, OpenMode openMode)
   {
     foreach (var objectId in GetPressureNetworkIds(civilDoc))
@@ -438,6 +522,8 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>Pressure network ids from CivilDocument.GetPressurePipeNetworkIds. The late-bound fallbacks after it only
+  /// run when <paramref name="civilDoc"/> is not a CivilDocument, which the handlers here never pass.</summary>
   private static IEnumerable<ObjectId> GetPressureNetworkIds(object civilDoc)
   {
     if (civilDoc is CivilDocument typedDocument)
@@ -469,6 +555,8 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>The pressure network named <paramref name="name"/> (case-insensitive), reopened for write when asked.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static AcDbObject FindPressureNetworkByName(object civilDoc, Transaction transaction, string name, OpenMode openMode)
   {
     foreach (var network in EnumeratePressureNetworks(civilDoc, transaction, OpenMode.ForRead))
@@ -489,6 +577,9 @@ public static class PressureNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pressure network '{name}' was not found.");
   }
 
+  /// <summary>The pipe, fitting or appurtenance of <paramref name="network"/> named <paramref name="componentName"/>
+  /// (case-insensitive), opened for read; <paramref name="idMethods"/> picks which kind. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static AcDbObject FindPressureComponentByName(
     AcDbObject network,
     Transaction transaction,
@@ -508,6 +599,7 @@ public static class PressureNetworkCommands
       $"Component '{componentName}' was not found in network '{CivilObjectUtils.GetName(network)}'.");
   }
 
+  /// <summary>A network's list entry: name, handle, part counts and parts list name.</summary>
   private static Dictionary<string, object?> ToPressureNetworkSummary(AcDbObject network, Transaction transaction)
   {
     var pipeIds = GetChildObjectIds(network, "GetPipeIds", "PipeIds", "Pipes").ToList();
@@ -525,6 +617,9 @@ public static class PressureNetworkCommands
     };
   }
 
+  /// <summary>A pressure pipe as JSON data: name, handle, diameter, center-to-center length, material, start and end
+  /// points, cover depth. Each value is read late-bound from the first member name that answers; null when none
+  /// does.</summary>
   private static Dictionary<string, object?> ToPressurePipeData(AcDbObject pipe)
   {
     var sp = GetPointProperty(pipe, "StartPoint", "PointAtStart");
@@ -543,6 +638,8 @@ public static class PressureNetworkCommands
     };
   }
 
+  /// <summary>A pressure fitting as JSON data: name, handle, type (falls back to the .NET class name), position and
+  /// part size, read late-bound like ToPressurePipeData.</summary>
   private static Dictionary<string, object?> ToPressureFittingData(AcDbObject fitting)
   {
     var pos = GetPointProperty(fitting, "Position", "Location", "CenterPoint");
@@ -557,6 +654,7 @@ public static class PressureNetworkCommands
     };
   }
 
+  /// <summary>A pressure appurtenance as JSON data, the same shape as ToPressureFittingData.</summary>
   private static Dictionary<string, object?> ToPressureAppurtenanceData(AcDbObject app)
   {
     var pos = GetPointProperty(app, "Position", "Location", "CenterPoint");
@@ -571,6 +669,7 @@ public static class PressureNetworkCommands
     };
   }
 
+  /// <summary>ToPressurePipeData, without the start and end points unless <paramref name="includeCoords"/>.</summary>
   private static Dictionary<string, object?> ExportPressurePipe(AcDbObject pipe, bool includeCoords)
   {
     var data = ToPressurePipeData(pipe);
@@ -583,6 +682,7 @@ public static class PressureNetworkCommands
     return data;
   }
 
+  /// <summary>ToPressureFittingData, without the position unless <paramref name="includeCoords"/>.</summary>
   private static Dictionary<string, object?> ExportPressureFitting(AcDbObject fitting, bool includeCoords)
   {
     var data = ToPressureFittingData(fitting);
@@ -594,6 +694,7 @@ public static class PressureNetworkCommands
     return data;
   }
 
+  /// <summary>ToPressureAppurtenanceData, without the position unless <paramref name="includeCoords"/>.</summary>
   private static Dictionary<string, object?> ExportPressureAppurtenance(AcDbObject app, bool includeCoords)
   {
     var data = ToPressureAppurtenanceData(app);
@@ -605,9 +706,15 @@ public static class PressureNetworkCommands
     return data;
   }
 
+  /// <summary>Creates an empty pressure network named <paramref name="name"/>; the caller sets its parts list.</summary>
   private static ObjectId CreatePressureNetwork(Database database, string name)
     => PressurePipeNetwork.Create(database, name);
 
+  /// <summary>
+  /// Adds a straight pipe of part <paramref name="partName"/> along the segment and returns its id. When
+  /// <paramref name="diameter"/> is given, the new pipe's inner diameter must match it within 1e-6 or it throws
+  /// CIVIL3D.INVALID_INPUT; the pipe already exists then, and the uncommitted transaction is what drops it.
+  /// </summary>
   private static ObjectId AddPressurePipeToNetwork(AcDbObject network, Transaction transaction, string partName, Point3d startPoint, Point3d endPoint, double? diameter)
   {
     var pressureNetwork = (PressurePipeNetwork)network;
@@ -623,6 +730,9 @@ public static class PressureNetworkCommands
     return id;
   }
 
+  /// <summary>Adds a fitting or an appurtenance of part <paramref name="partName"/> at <paramref name="position"/> and
+  /// returns its id. The part is looked up among the fitting or appurtenance part types only. <paramref name="rotation"/>
+  /// is ignored: the callers already refuse anything but 0.</summary>
   private static ObjectId AddPressureComponentToNetwork(AcDbObject network, Transaction transaction, string partName, Point3d position, double rotation, bool isFitting)
   {
     _ = rotation;
@@ -636,6 +746,8 @@ public static class PressureNetworkCommands
       : pressureNetwork.AddAppurtenance(position, part);
   }
 
+  /// <summary>The id of the pressure parts list named <paramref name="partsListName"/> (case-insensitive). Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static ObjectId FindPressurePartsListId(object civilDoc, Transaction transaction, string partsListName)
   {
     foreach (ObjectId objectId in ((CivilDocument)civilDoc).Styles.GetPressurePartLists())
@@ -648,6 +760,11 @@ public static class PressureNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pressure parts list '{partsListName}' was not found.");
   }
 
+  /// <summary>
+  /// The valid part of one of <paramref name="partTypes"/> whose description equals <paramref name="partName"/>
+  /// (ignoring case) in the parts list. Throws CIVIL3D.OBJECT_NOT_FOUND when the network has no parts list, or when no
+  /// part matches; that message lists up to 12 descriptions the list does have, so the AI can pick one.
+  /// </summary>
   private static PressurePartSize FindPressurePart(
     Transaction transaction,
     ObjectId partsListId,
@@ -668,6 +785,8 @@ public static class PressureNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Exact pressure part '{partName}' was not found in parts list '{partsList.Name}'. It has: {string.Join(", ", partTypes.SelectMany(type => partsList.GetParts(type).Where(part => part.IsValid).Select(part => part.Description)).Take(12))}.");
   }
 
+  /// <summary>Child object ids of <paramref name="owner"/>: for each member name, the method's result or, when that is
+  /// null, the property or field of that name. Null ids are skipped.</summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(object owner, params string[] memberNames)
   {
     foreach (var memberName in memberNames)
@@ -680,6 +799,8 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>Object ids from a value: what CivilObjectUtils.ToObjectIds finds, or else each item of a collection that
+  /// is an ObjectId or has an ObjectId/Id property.</summary>
   private static IEnumerable<ObjectId> ToObjectIdsFlexible(object? value)
   {
     var direct = CivilObjectUtils.ToObjectIds(value).ToList();
@@ -705,6 +826,7 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>The non-null items of a collection. Not called anywhere at present.</summary>
   private static IEnumerable<object> EnumerateObjects(object? collection)
   {
     if (collection is IEnumerable enumerable)
@@ -716,12 +838,15 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>A property, or else a field, of that name, through Civil3DCompatibility (the plugin's one place for
+  /// reflection). Null when neither exists.</summary>
   private static object? GetNamedMember(object? value, string memberName)
   {
     return Civil3DCompatibility.GetPropertyValue(value, memberName)
       ?? Civil3DCompatibility.GetFieldValue(value, memberName);
   }
 
+  /// <summary>The name of the object behind an id (a parts list, say), or null for a null id or any failure.</summary>
   private static string? ResolveObjectName(Transaction transaction, ObjectId objectId)
   {
     if (objectId == ObjectId.Null) return null;
@@ -729,6 +854,7 @@ public static class PressureNetworkCommands
     catch { return null; }
   }
 
+  /// <summary>The first of several ObjectId properties that is not null, or ObjectId.Null.</summary>
   private static ObjectId GetAnyObjectId(object? value, params string[] propertyNames)
   {
     foreach (var name in propertyNames)
@@ -740,6 +866,7 @@ public static class PressureNetworkCommands
     return ObjectId.Null;
   }
 
+  /// <summary>The first of several numeric properties that has a value, or null.</summary>
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var name in propertyNames)
@@ -751,6 +878,7 @@ public static class PressureNetworkCommands
     return null;
   }
 
+  /// <summary>The first of several string properties that is not blank, or null.</summary>
   private static string? GetAnyString(object? value, params string[] propertyNames)
   {
     foreach (var name in propertyNames)
@@ -762,6 +890,7 @@ public static class PressureNetworkCommands
     return null;
   }
 
+  /// <summary>The first of several Point3d properties that has a value, or null.</summary>
   private static Point3d? GetPointProperty(object? value, params string[] propertyNames)
   {
     foreach (var name in propertyNames)
@@ -773,6 +902,8 @@ public static class PressureNetworkCommands
     return null;
   }
 
+  /// <summary>Sets the first of several ObjectId properties that accepts the id (skipped for a null id). Not called
+  /// anywhere at present.</summary>
   private static void TrySetObjectIdProperty(object target, ObjectId objectId, params string[] propertyNames)
   {
     if (objectId == ObjectId.Null) return;
@@ -782,6 +913,7 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>Sets the first of several numeric properties that accepts the value. Not called anywhere at present.</summary>
   private static void TrySetDoubleProperty(object target, double value, params string[] propertyNames)
   {
     foreach (var name in propertyNames)
@@ -790,6 +922,8 @@ public static class PressureNetworkCommands
     }
   }
 
+  /// <summary>An object id from a late-bound call's result, or else from one of its arguments. Not called anywhere at
+  /// present.</summary>
   private static ObjectId ExtractObjectId(object? result, object?[] args)
   {
     if (result is ObjectId id && id != ObjectId.Null) return id;
@@ -804,6 +938,9 @@ public static class PressureNetworkCommands
     return ObjectId.Null;
   }
 
+  /// <summary>Reads parameter <paramref name="paramName"/> as an <c>{x, y, z}</c> object. Null when it is missing or
+  /// not an object (the callers then throw); throws CIVIL3D.INVALID_INPUT when x, y or z is missing, so no coordinate
+  /// or elevation is ever assumed to be 0.</summary>
   private static Point3d? ReadPoint(JsonObject? parameters, string paramName)
   {
     if (PluginRuntime.GetParameter(parameters, paramName) is not JsonObject node) return null;

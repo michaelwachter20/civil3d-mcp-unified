@@ -1,3 +1,9 @@
+// SheetSetCom.cs - sheet set (.dst) access through AutoCAD's AcSmComponents COM library. Only PlanProductionCommands
+// calls it (listSheetSets, getSheetSetInfo, createSheetSet, addSheet, publish/export of a set; civil3d_plan_production,
+// src/tools/domains/planProductionDomain.ts); DataShortcutCommands uses SameFile. Callers resolve every path through
+// FileBoundary (ResolveExportPath / ResolveImportPath) before it gets here. It changes .dst files, never the drawing;
+// the COM object is created through Civil3DCompatibility (the one place for late binding). Rule: every path out
+// unlocks and closes the sheet set database, or the .dst stays locked until Civil 3D closes.
 using System.Runtime.InteropServices;
 using Autodesk.AutoCAD.Interop;
 
@@ -10,15 +16,19 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 internal static class SheetSetCom
 {
+  // AcSmComponents' ProgID version suffix ("AcSmComponents.AcSmSheetSetMgr.26").
   private const string ProgIdVersion = "26";
 
   /// <summary>One sheet: <c>Drawing</c> is the file its layout is in.</summary>
   public sealed record Sheet(string Name, string Number, string Title, string? Layout, string? Drawing, bool DoNotPlot);
 
+  /// <summary>Creates an AcSmComponents COM object by class name.</summary>
   private static T Make<T>(string className) =>
     Civil3DCompatibility.CreateComObject<T>($"AcSmComponents.{className}.{ProgIdVersion}");
 
-  /// <summary>Makes the file, and a sheet for each layout of <paramref name="drawingPath"/>; the file on disk is the result.</summary>
+  /// <summary>Makes the file, and a sheet for each layout of <paramref name="drawingPath"/>; the file on disk is the result.
+  /// Sheets are numbered 1, 2, ... and titled with the layout name. Throws CIVIL3D.API_ERROR when a layout isn't in the
+  /// saved drawing.</summary>
   public static Dictionary<string, object?> Create(string path, string name, string? description, string drawingPath, List<string> layoutNames, bool overwrite)
   {
     var manager = Make<IAcSmSheetSetMgr>("AcSmSheetSetMgr");
@@ -48,7 +58,9 @@ internal static class SheetSetCom
     return new Dictionary<string, object?> { ["name"] = name, ["path"] = path, ["sheetCount"] = layoutNames.Count, ["created"] = true };
   }
 
-  /// <summary>Adds a layout to a sheet set as a new sheet, numbered after the last one unless given a number.</summary>
+  /// <summary>Adds a layout to a sheet set as a new sheet, numbered after the last one unless given a number. Throws
+  /// CIVIL3D.CONFLICT when that layout of that drawing is already a sheet, CIVIL3D.API_ERROR when the layout isn't in
+  /// the saved drawing.</summary>
   public static Dictionary<string, object?> AddSheet(string path, string sheetName, string? sheetNumber, string drawingPath, string layoutName)
   {
     var manager = Make<IAcSmSheetSetMgr>("AcSmSheetSetMgr");
@@ -158,6 +170,7 @@ internal static class SheetSetCom
     }
   }
 
+  /// <summary>A sheet's name, number, title, layout and drawing (resolved path, else the recorded one).</summary>
   private static Sheet Describe(IAcSmSheet sheet)
   {
     var layout = (IAcSmAcDbLayoutReference?)sheet.GetLayout();
@@ -181,6 +194,7 @@ internal static class SheetSetCom
     return (numbers.DefaultIfEmpty(0).Max() is var highest && highest > 0 ? highest + 1 : existing.Count + 1).ToString();
   }
 
+  /// <summary>The last top-level component (sheet or subset), or null for an empty set.</summary>
   private static IAcSmComponent? LastComponent(IAcSmEnumComponent components)
   {
     IAcSmComponent? last = null;
@@ -192,6 +206,8 @@ internal static class SheetSetCom
     return last;
   }
 
+  /// <summary>Imports one layout of the saved drawing as a sheet at the end of the set (the database must be locked).
+  /// A COM failure becomes CIVIL3D.API_ERROR asking to save the drawing.</summary>
   private static void AddLayout(AcSmDatabase database, AcSmSheetSet sheetSet, string drawingPath, string layoutName, string title, string number)
   {
     try

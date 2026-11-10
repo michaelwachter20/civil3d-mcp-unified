@@ -1,9 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
-import { withApplicationConnection } from "../utils/ConnectionManager.js";
-import type { ToolCapability } from "./toolMetadata.js";
-
-type JsonObject = Record<string, unknown>;
-
 /**
  * The approval policy for drawing changes: decides which actions need the user's approval and checks the tokens
  * that grant it. The flow is civil3d_preview_action (does this need approval?), civil3d_request_approval (issue a
@@ -11,7 +5,14 @@ type JsonObject = Record<string, unknown>;
  * action. A token is kept in memory only, used once, expires (5 minutes by default) and is bound to the tool, the
  * action, a hash of the exact parameters and a fingerprint of the active drawing, so it can't be reused for a
  * different change or another drawing. CIVIL3D_APPROVAL_MODE=disabled switches the policy off (test setups only).
+ * The decision comes only from what an action declares (capabilities, name, safeForRetry), so a write declared as a
+ * query would skip approval (CLAUDE.md rule 4). The fingerprint is the one plugin call made here (getDrawingInfo).
  */
+import { createHash, randomUUID } from "node:crypto";
+import { withApplicationConnection } from "../utils/ConnectionManager.js";
+import type { ToolCapability } from "./toolMetadata.js";
+
+type JsonObject = Record<string, unknown>;
 
 /** What the policy needs to know about an action: its tool, name, capabilities and retry safety. */
 export interface ApprovalTarget {
@@ -22,6 +23,7 @@ export interface ApprovalTarget {
   requiresActiveDrawing?: boolean;
 }
 
+/** One issued token's binding, kept in memory until used or the server stops. */
 interface ApprovalGrant {
   toolName: string;
   action: string;
@@ -30,16 +32,23 @@ interface ApprovalGrant {
   expiresAt: number;
 }
 
+/** What civil3d_request_approval returns: the token, its expiry (ISO time) and the drawing it is bound to. */
 export interface ApprovalReceipt {
   approvalToken: string;
   expiresAt: string;
   drawingFingerprint: string;
 }
 
+/**
+ * The action needs a token and the call carried none. It has no `code`, so domainRuntime.ts infers CIVIL3D.CONFLICT
+ * from the message ("Approval required").
+ */
 export class ApprovalRequiredError extends Error {}
 
+/** The token is unknown, used, expired or doesn't match the call or the drawing; or no approval was needed. */
 export class ApprovalValidationError extends Error {}
 
+/** Returns the active drawing's fingerprint; replaced by a fake in tests. */
 export type DrawingFingerprintProvider = () => Promise<string>;
 
 const APPROVAL_TOKEN_TTL_MS = 5 * 60 * 1000;
@@ -133,6 +142,7 @@ export class ApprovalPolicyService {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
+  /** The drawing fingerprint, or a fixed placeholder when no drawing is open and the action doesn't need one. */
   private async fingerprintFor(target: ApprovalTarget): Promise<string> {
     try {
       return await this.drawingFingerprint();

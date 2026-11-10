@@ -6,6 +6,11 @@
 // Nothing runs on GitHub's machines: the plugin is compiled here against your local Civil 3D,
 // and only the zip and its checksum are uploaded. Requires the GitHub CLI (gh), signed in once
 // with `gh auth login`, and the release commit already pushed (e.g. with GitHub Desktop).
+//
+// Touches GitHub: it creates the v<version> tag and the Release on the origin repository (only when origin belongs to
+// the signed-in gh account). Stops first on a dirty tree, an unpushed commit, an existing release, or a missing
+// CHANGELOG section. Runs npm run build, npm test and npm run package:release (scripts/package-release.mjs) before
+// uploading. By hand only; an automated session must not run it.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -18,17 +23,20 @@ const version = packageJson.version;
 const tag = `v${version}`;
 const draft = process.argv.includes("--draft");
 
+/** Prints why the release stopped and exits 1 (nothing has been published at any point this is called). */
 function fail(message) {
   console.error(`\nrelease:publish stopped: ${message}`);
   process.exit(1);
 }
 
+/** Runs a command quietly and returns { ok, out, err } (trimmed); never throws, so callers can probe for tools. */
 function capture(command, args) {
   const result = spawnSync(command, args, { cwd: repositoryRoot, encoding: "utf8" });
   if (result.error) return { ok: false, out: "", err: result.error.message };
   return { ok: result.status === 0, out: (result.stdout ?? "").trim(), err: (result.stderr ?? "").trim() };
 }
 
+/** Runs a command with inherited output; a non-zero exit stops the release through fail(). */
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: repositoryRoot, stdio: "inherit" });
   if (result.error) throw result.error;
@@ -49,6 +57,7 @@ function findGit() {
   fail("git was not found. Install Git or GitHub Desktop.");
 }
 
+// gh: PATH first, then the default install folder under Program Files.
 function findGh() {
   if (capture("gh", ["--version"]).ok) return "gh";
   const candidate = path.join(process.env.ProgramFiles ?? "C:\\Program Files", "GitHub CLI", "gh.exe");

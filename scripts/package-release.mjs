@@ -2,9 +2,13 @@
 // and a standalone MCP server folder, then refuses to finish if any file contains the builder's
 // user name or a local user-profile path.
 //
-//   npm run package:release
+//   npm run package:release                 compiles the plugin here (dotnet build)
+//   npm run package:release -- --prebuilt   uses prebuilt/Civil3DMcpPlugin instead (.github/workflows/release.yml),
+//                                           after checking its version and plugin-source-hash.mjs fingerprint
 //
-// Requires the .NET 10 SDK and a Civil 3D 2027 install (for the plugin references), plus Node 18+.
+// Requires the .NET 10 SDK and a Civil 3D 2027 install (for the plugin references) unless --prebuilt, plus Node
+// 22.15+ (package.json engines). Must run through npm (npm_execpath). Writes only under dist/release (wiped first);
+// also called by scripts/publish-release.mjs. Never copies Autodesk assemblies into the bundle.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -26,6 +30,7 @@ const pluginBuild = path.join(releaseRoot, "plugin-build");
 const zipPath = path.join(releaseRoot, `${releaseName}.zip`);
 const bundleSource = path.join(repositoryRoot, "packaging", "civil3d-bundle");
 
+/** Runs a command (npm through the launching npm CLI) with inherited output; throws on failure or non-zero exit. */
 function run(command, args, cwd = repositoryRoot) {
   // Run npm through the same npm CLI that launched this script (no shell needed).
   if (command === "npm") {
@@ -36,6 +41,7 @@ function run(command, args, cwd = repositoryRoot) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited with code ${result.status}.`);
 }
+/** Fills the {{VERSION}}, {{URL}} and {{AUTHOR}} placeholders in the bundle's PackageContents.xml and INSTALL.md. */
 const fill = (text) => text.replaceAll("{{VERSION}}", version).replaceAll("{{URL}}", repoUrl).replaceAll("{{AUTHOR}}", author);
 
 await rm(releaseRoot, { recursive: true, force: true });
@@ -84,6 +90,7 @@ for (const file of ["LICENSE", "THIRD_PARTY_NOTICES.md"]) await cp(path.join(rep
 const userName = os.userInfo().username;
 const forbidden = [new RegExp(`\\b${userName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"), /[A-Za-z]:[\\/]+Users[\\/]+(?!Public)/i];
 const offenders = [];
+/** Collects every file under `dir` whose bytes (read as Latin-1 and as UTF-16LE, to catch .NET strings) match `forbidden`. */
 async function scan(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);

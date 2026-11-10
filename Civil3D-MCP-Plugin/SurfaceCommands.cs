@@ -1,3 +1,12 @@
+// SurfaceCommands.cs - surfaces (civil3d_surface, src/tools/domains/surfaceDomain.ts, including its comparison and
+// drainage workflows; workflowDomain.ts also calls calculateSurfaceVolume). Methods (CommandDispatcher.cs): listSurfaces,
+// getSurface, getSurfaceElevation, getSurfaceElevationsAlong, getSurfaceStatistics, getSurfaceStatisticsDetailed,
+// sampleSurfaceElevations, createSurface, deleteSurface, addSurfacePoints, addSurfaceBreakline, addSurfaceBoundary,
+// extractSurfaceContours, computeSurfaceVolume, calculateSurfaceVolume, getSurfaceVolumeReport,
+// calculateSurfaceVolumeByRegion, analyzeSurfaceSlope/Elevation/Directions, setSurfaceContourInterval,
+// addSurfaceWatershed(s), createSurfaceFromDem. Reads: CivilExecution.ReadAsync (no undo step). Writes: WriteAsync (one
+// transaction, one undo step). Exact volumes: MeasureAsync (a temporary TIN volume surface under the lock, never
+// committed). Watersheds: WithDocumentLockAsync plus LandCom (COM). The DEM path goes through FileBoundary.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -17,9 +26,10 @@ namespace Civil3DMcpPlugin;
 /// one undo step. Surfaces are found by name (case-insensitive) with CivilObjectUtils.FindSurfaceByName; a missing one
 /// is CIVIL3D.OBJECT_NOT_FOUND.
 ///
-/// The volume methods create a temporary TIN volume surface inside a read transaction. Reads never commit, so the
-/// volume surface is discarded with the transaction and the drawing is left unchanged (scripts/live-host-smoke.mjs
-/// checks that the surface list is the same before and after).
+/// The TIN volume methods create a temporary TIN volume surface through CivilExecution.MeasureAsync: under the document
+/// lock (Civil 3D won't create one without it), but never committed, so the volume surface is discarded with the
+/// transaction and the drawing is left unchanged apart from one blank undo step (scripts/live-host-smoke.mjs checks
+/// that the surface list is the same before and after).
 /// </summary>
 public static class SurfaceCommands
 {
@@ -51,8 +61,9 @@ public static class SurfaceCommands
 
   /// <summary>
   /// One surface's detail for <c>name</c>: style, layer, elevation and area statistics, triangle count (TIN only),
-  /// bounding box and drawing units. <c>dependentAlignments</c> and <c>dependentCorridors</c> are always empty lists;
-  /// they keep the response shape the TypeScript schema expects.
+  /// bounding box and drawing units. <c>dependentAlignments</c> and <c>dependentCorridors</c> list what uses the surface
+  /// (see <see cref="Dependents"/>); for a surface with no points they are empty, with zero statistics and a note.
+  /// Read-only. CIVIL3D.OBJECT_NOT_FOUND for an unknown name.
   /// </summary>
   public static Task<object?> GetSurfaceAsync(JsonObject? parameters)
   {
@@ -163,6 +174,7 @@ public static class SurfaceCommands
     }
   }
 
+  /// <summary>All-zero statistics for a surface with no points.</summary>
   private static Dictionary<string, object?> EmptyStatistics() => new()
   {
     ["minimumElevation"] = 0.0,
@@ -268,7 +280,8 @@ public static class SurfaceCommands
   }
 
   /// <summary>Creates an empty TIN surface <c>name</c> with an optional <c>style</c> (default style when missing),
-  /// <c>layer</c> and <c>description</c>. Data is added afterwards with the add* methods.</summary>
+  /// <c>layer</c> and <c>description</c>. Data is added afterwards with the add* methods. Changes the drawing (one undo
+  /// step). CIVIL3D.CONFLICT when a surface already has that name (case-insensitive).</summary>
   public static Task<object?> CreateSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -309,8 +322,9 @@ public static class SurfaceCommands
     });
   }
 
-  /// <summary>Erases surface <c>name</c>. Approval-gated on the TypeScript side; objects that depend on it are not
-  /// checked here.</summary>
+  /// <summary>Erases surface <c>name</c> (one undo step). Approval-gated on the TypeScript side. Refuses with
+  /// CIVIL3D.CONFLICT, naming them, when alignments (EG profiles), corridors (targets) or pipe networks use it;
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown name.</summary>
   public static Task<object?> DeleteSurfaceAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -334,7 +348,8 @@ public static class SurfaceCommands
   }
 
   /// <summary>Adds <c>points</c> ([{x, y, z}], z required) as TIN vertices to surface <c>name</c> and rebuilds it.
-  /// Only TIN surfaces accept vertices.</summary>
+  /// Only TIN surfaces accept vertices (CIVIL3D.API_ERROR otherwise). Reports points added and points ignored (on the
+  /// XY of an existing vertex). Changes the drawing (one undo step).</summary>
   public static Task<object?> AddSurfacePointsAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -411,7 +426,8 @@ public static class SurfaceCommands
   }
 
   /// <summary>Adds a boundary polygon (<c>points</c>, at least three, x/y only) of type <c>boundaryType</c>
-  /// (outer by default; show, hide, data clip) to surface <c>name</c> and rebuilds it.</summary>
+  /// (outer by default; show, hide, data clip) to surface <c>name</c> and rebuilds it. Changes the drawing (one undo
+  /// step). CIVIL3D.INVALID_INPUT for too few points or an unknown type.</summary>
   public static Task<object?> AddSurfaceBoundaryAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -468,7 +484,9 @@ public static class SurfaceCommands
   }
 
   /// <summary>Cut, fill and net volume between <c>baseSurface</c> and <c>comparisonSurface</c>, from a temporary
-  /// TIN volume surface (see the class remarks). Cut and fill areas aren't available from the API and come back null.</summary>
+  /// TIN volume surface (see the class remarks). Cut and fill areas aren't available from the API and come back null.
+  /// Leaves the drawing unchanged. CIVIL3D.OBJECT_NOT_FOUND for an unknown surface; the same surface twice is refused
+  /// (CivilObjectUtils.RequireDifferentSurfaces).</summary>
   public static Task<object?> ComputeSurfaceVolumeAsync(JsonObject? parameters)
   {
     var baseSurfaceName = PluginRuntime.GetRequiredString(parameters, "baseSurface");
@@ -836,8 +854,10 @@ public static class SurfaceCommands
 
   /// <summary>
   /// Runs Civil 3D's watershed analysis on surface <c>name</c> through COM (the .NET API has no call for it) and lists
-  /// the regions. <c>depthThreshold</c> merges depressions shallower than that, and <c>mergeAdjacentWatersheds</c>
-  /// joins adjacent boundary watersheds, as on the Analysis tab of Surface Properties.
+  /// the regions. <c>depthThreshold</c> (default 0.1) merges depressions shallower than that, and
+  /// <c>mergeAdjacentWatersheds</c> joins adjacent boundary watersheds, as on the Analysis tab of Surface Properties.
+  /// Changes the surface's stored analysis (WithDocumentLockAsync: command context, lock, no transaction of its own).
+  /// Serves both <c>addSurfaceWatershed</c> and <c>addSurfaceWatersheds</c>. CIVIL3D.OBJECT_NOT_FOUND for an unknown name.
   /// </summary>
   public static Task<object?> AddSurfaceWatershedsAsync(JsonObject? parameters)
   {
@@ -847,6 +867,7 @@ public static class SurfaceCommands
 
     return CivilExecution.WithDocumentLockAsync<object?>((doc, civilDoc) =>
     {
+      // Only to check the name (clear error); COM then opens the surface itself, so no transaction may stay open.
       using (var transaction = doc.Database.TransactionManager.StartOpenCloseTransaction())
       {
         CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, name, OpenMode.ForRead);
@@ -883,7 +904,7 @@ public static class SurfaceCommands
 
   /// <summary>
   /// Sets the minor and major contour intervals on surface <c>name</c>'s style. The change is to the style, so every
-  /// surface that uses the same style changes too.
+  /// surface that uses the same style changes too. Changes the drawing (one undo step).
   /// </summary>
   public static Task<object?> SetSurfaceContourIntervalAsync(JsonObject? parameters)
   {
@@ -911,7 +932,8 @@ public static class SurfaceCommands
     });
   }
 
-  /// <summary>The statistics of GetSurfaceStatisticsAsync with horizontal, vertical and area units.</summary>
+  /// <summary>The statistics of GetSurfaceStatisticsAsync with horizontal, vertical and area units. Unlike that method
+  /// it has no empty-surface case, so a surface with no points fails (the API throws).</summary>
   public static Task<object?> GetSurfaceStatisticsDetailedAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -1158,6 +1180,7 @@ public static class SurfaceCommands
 
   // ─── Private helpers for new methods ────────────────────────────────────
 
+  /// <summary>Even-odd ray casting: whether (x, y) is inside the polygon.</summary>
   private static bool IsPointInPolygon(double x, double y, Point2dCollection polygon)
   {
     var count = polygon.Count;
@@ -1177,6 +1200,7 @@ public static class SurfaceCommands
     return inside;
   }
 
+  /// <summary>"TINVolume", "Grid", or "TIN" for anything else.</summary>
   private static string MapSurfaceType(CivilSurface surface)
   {
     return surface switch
@@ -1203,6 +1227,7 @@ public static class SurfaceCommands
     }
   }
 
+  /// <summary>2D/3D area properties for TIN and grid surfaces; null for volume surfaces.</summary>
   private static TerrainSurfaceProperties? GetTerrainProperties(CivilSurface surface) => surface switch
   {
     TinSurface tinSurface => tinSurface.GetTerrainProperties(),
@@ -1210,6 +1235,7 @@ public static class SurfaceCommands
     _ => null,
   };
 
+  /// <summary>Triangle count for TIN and TIN volume surfaces; null for grids.</summary>
   private static int? GetTriangleCount(CivilSurface surface) => surface switch
   {
     TinSurface tinSurface => tinSurface.GetTinProperties().NumberOfTriangles,
@@ -1219,6 +1245,8 @@ public static class SurfaceCommands
 
   private static ObjectId CreateTinSurface(string name, ObjectId styleId) => TinSurface.Create(name, styleId);
 
+  /// <summary>Reads an array of {x, y, z} (non-objects skipped); CIVIL3D.INVALID_INPUT with
+  /// <paramref name="errorMessage"/> when empty, or naming the missing coordinate.</summary>
   private static Point3dCollection ParseRequiredPoint3dArray(JsonObject? parameters, string name, string errorMessage)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, name) as JsonArray;
@@ -1249,6 +1277,7 @@ public static class SurfaceCommands
     return points;
   }
 
+  /// <summary>As <see cref="ParseRequiredPoint3dArray"/> for {x, y}.</summary>
   private static Point2dCollection ParseRequiredPoint2dArray(JsonObject? parameters, string name, string errorMessage)
   {
     var pointsNode = PluginRuntime.GetParameter(parameters, name) as JsonArray;
@@ -1278,6 +1307,7 @@ public static class SurfaceCommands
     return points;
   }
 
+  /// <summary>show, hide, outer, or dataclip (also data_clip / data-clip); CIVIL3D.INVALID_INPUT otherwise.</summary>
   private static SurfaceBoundaryType ResolveBoundaryType(string boundaryType) => boundaryType.Trim().ToLowerInvariant() switch
   {
     "show" => SurfaceBoundaryType.Show,
@@ -1300,6 +1330,8 @@ public static class SurfaceCommands
     surface.Rebuild();
   }
 
+  /// <summary>Extracts contour entities into the drawing at the minor interval and, when different, the major one
+  /// (TIN and grid surfaces only, CIVIL3D.API_ERROR otherwise); CIVIL3D.INVALID_INPUT for a non-positive interval.</summary>
   private static List<ObjectId> ExtractContourEntities(CivilSurface surface, double minorInterval, double majorInterval)
   {
     if (minorInterval <= 0 || majorInterval <= 0)
@@ -1334,6 +1366,8 @@ public static class SurfaceCommands
     return volumeSurface.GetVolumeProperties();
   }
 
+  /// <summary>Creates the temporary "MCP_TMP_VOLUME_&lt;guid&gt;" TIN volume surface (base vs comparison) in the
+  /// caller's transaction; refuses the same surface twice.</summary>
   private static TinVolumeSurface CreateTinVolumeSurface(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Transaction transaction, CivilSurface baseSurface, CivilSurface comparisonSurface)
   {
     CivilObjectUtils.RequireDifferentSurfaces(baseSurface, comparisonSurface);

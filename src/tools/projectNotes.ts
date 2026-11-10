@@ -1,3 +1,11 @@
+// civil3d_project_notes: what the suite knows about ONE job, read from its project database, plus Civil 3D MCP's own
+// notes and linked folders in it. Used by scriptingDomain.ts (the tool and the briefing on code results) and
+// openDrawing.ts (projectLatest, seriesKey). Uses projectDb.ts (SQLite), userKnowledge.ts (the job's User Knowledge
+// folder), practices.ts (overview) and the plugin only to learn the active drawing (listOpenDrawings, getDrawingInfo).
+// Rules (project-analyzer's docs/suite-knowledge.md): read actions open the database read-only; only link, unlink and
+// the note actions write, in short transactions, and only rows with tool = 'civil3d'; notes are retired, never
+// deleted; every read answer carries REFERENCE_ONLY (the database is for finding things, never data for edits); the
+// User Knowledge folder is only ever created, never written into; nothing is written to a job folder.
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -123,6 +131,10 @@ export async function activeDrawingPath(): Promise<string | undefined> {
   }
 }
 
+/**
+ * The job to answer about: the named one (by slug), else the job whose folder holds the active drawing. Throws
+ * OBJECT_NOT_FOUND telling the AI to ask the user and link, and warns when an unreadable database may be that job.
+ */
 async function resolveProject(name: string | undefined): Promise<{ job: Job; drawing?: string }> {
   if (name) {
     const job = jobByName(name);
@@ -150,15 +162,18 @@ async function resolveProject(name: string | undefined): Promise<{ job: Job; dra
 
 // ---------------------------------------------------------------- facts
 
+/** A `facts` row as read with FACT_COLUMNS (topics and sources are JSON text). */
 interface FactRow {
   id: string; fact: string; topics: string; date: string | null; confidence: string; key: number; supersedes: string | null;
   sources: string; tool: string; author: string | null; added: string; updated: string | null; retired: string | null;
 }
 
 const FACT_COLUMNS = "f.id, f.fact, f.topics, f.date, f.confidence, f.key, f.supersedes, f.sources, f.tool, f.author, f.added, f.updated, f.retired";
+// SQL conditions on `facts f`: not retired, and not replaced by a current fact that supersedes it.
 const CURRENT = "f.retired IS NULL";
 const NOT_SUPERSEDED = "NOT EXISTS (SELECT 1 FROM facts s WHERE s.supersedes = f.id AND s.retired IS NULL)";
 
+/** A fact as the AI sees it: JSON columns parsed, empty and default fields left out. */
 function presentFact(row: FactRow) {
   const topics = parseJson<string[]>(row.topics, []);
   const sources = parseJson<unknown[]>(row.sources, []);
@@ -182,6 +197,7 @@ function presentFact(row: FactRow) {
 const facts = (db: DatabaseSync, where: string, ...params: Array<string | number | null>) =>
   (db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE ${where}`).all(...params) as unknown as FactRow[]).map(presentFact);
 
+/** action=list for one job: its folders, this tool's own notes and how many facts each other tool has. */
 async function describe(job: Job) {
   const userKnowledgeFolder = ensureUserKnowledgeDirectory(job.file);
   const { files } = listFolder(userKnowledgeFolder);
@@ -201,6 +217,10 @@ async function describe(job: Job) {
   });
 }
 
+/**
+ * action=list: the named job, else the active drawing's job; when the drawing belongs to no job, every known job and
+ * a hint to ask the user and link (no error, so the AI can choose).
+ */
 export async function listProjectNotes(name?: string) {
   if (!name) {
     const drawing = await activeDrawingPath();
@@ -254,6 +274,7 @@ export async function listProjectFiles(name?: string) {
   };
 }
 
+// What to tell the AI when a User Knowledge document's text can't be given: who can read it.
 const notReadableHint = (job: Job, absolute: string, row: AnalyzerDocument | undefined, read: boolean) => {
   const openIt = `If your AI app can open files, it can open ${absolute} itself.`;
   if (read && row) {
@@ -327,7 +348,11 @@ export async function readUserKnowledge(file: string, name?: string, options: { 
   };
 }
 
-/** Creates the project database if needed and links a folder to it (default: the active drawing's folder). */
+/**
+ * action=link: creates the project database if needed and links a folder to it (default: the active drawing's folder)
+ * as a folders row with tool = 'civil3d'; also creates the job's User Knowledge folder. Throws INVALID_INPUT when
+ * there is no folder, or when the folder already belongs to another job (one folder, one job).
+ */
 export async function linkProjectFolder(name: string, folder?: string) {
   const drawing = folder ? undefined : await activeDrawingPath();
   // A drawing never saved has no folder: its name alone would resolve to the server's working folder.
@@ -354,7 +379,10 @@ export async function linkProjectFolder(name: string, folder?: string) {
   return { success: true, action: result, project: job.name, folders: job.roots.map((root) => root.path), path: job.file, userKnowledgeFolder };
 }
 
-/** Removes a folder this tool linked (notes are kept; other tools' folders and source_root stay). */
+/**
+ * action=unlink: removes a folder this tool linked (notes are kept; other tools' folders and source_root stay). This
+ * DELETEs the tool's own folders row; the folders table has no retired column to set instead.
+ */
 export async function unlinkProjectFolder(name: string, folder: string) {
   const job = jobByName(name);
   if (!job) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No project named '${name}'.`);
@@ -387,10 +415,16 @@ async function noteSource(job: Job, drawing: string | undefined, fromUser: boole
   return { file: "user", path: "said by the user" };
 }
 
+/** Note options: `supersedes` = the fact id this note corrects; `source: "user"` = the user said it (not the drawing). */
 export interface NoteOptions { topics?: string[]; supersedes?: string; source?: "drawing" | "user" }
 
 const cleanTopics = (topics: string[] | undefined) => [...new Set((topics ?? []).map(oneLine).filter(Boolean))];
 
+/**
+ * action=add: inserts a fact (fact-<next>, tool = 'civil3d') citing the active drawing or the user. When a current
+ * fact already says the same (any tool), nothing is added; for this tool's own fact the new source is added to it.
+ * Throws INVALID_INPUT when empty, OBJECT_NOT_FOUND for an unknown `supersedes` id.
+ */
 export async function addProjectNote(note: string, name?: string, options: NoteOptions = {}) {
   const text = oneLine(note);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The note is empty.");
@@ -421,6 +455,10 @@ export async function addProjectNote(note: string, name?: string, options: NoteO
   }), { write: true });
 }
 
+/**
+ * A fact this tool may change: throws OBJECT_NOT_FOUND for an unknown id, CONFLICT for another tool's fact (correct it
+ * with a superseding note instead) or a retired one.
+ */
 function ownFact(db: DatabaseSync, job: Job, id: string): FactRow {
   const row = db.prepare(`SELECT ${FACT_COLUMNS} FROM facts f WHERE f.id = ?`).get(id) as unknown as FactRow | undefined;
   if (!row) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No note '${id}' in project '${job.name}'.`);
@@ -431,6 +469,7 @@ function ownFact(db: DatabaseSync, job: Job, id: string): FactRow {
   return row;
 }
 
+/** action=update: rewrites one of this tool's own notes (topics only when given) and stamps `updated`. */
 export async function updateProjectNote(id: string, note: string, name?: string, options: Pick<NoteOptions, "topics"> = {}) {
   const text = oneLine(note);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The note is empty.");
@@ -457,13 +496,13 @@ export async function removeProjectNote(id: string, name?: string) {
 
 // ---------------------------------------------------------------- reading what the suite knows
 
-/** Busy and damage always reach the caller (withProjectDb waits, or says how to restore); other errors are the caller's. */
 /** Facts for a list that keeps the older ones (search, newest): each one replaced by a newer fact says so. */
 function markSuperseded(db: DatabaseSync, where: string, ...params: Array<string | number | null>) {
   const replaced = new Set(all<{ supersedes: string }>(db, "SELECT supersedes FROM facts WHERE supersedes IS NOT NULL AND retired IS NULL").map((row) => row.supersedes));
   return facts(db, where, ...params).map((fact) => (replaced.has(fact.id) ? { ...fact, superseded: true } : fact));
 }
 
+/** Busy and damage always reach the caller (withProjectDb waits, or says how to restore); other errors are the caller's. */
 function passOnDamage(error: unknown) {
   if (isBusy(error) || isCorrupt(error)) throw error;
 }
@@ -497,6 +536,7 @@ function filePaths(db: DatabaseSync, ids: Iterable<string | null | undefined>): 
 /** A file id's path from filePaths' answer: the id itself when it has no row, undefined for none. */
 const pathIn = (paths: Map<string, string>, fileId: string | null | undefined) => (fileId ? paths.get(fileId) ?? fileId : undefined);
 
+/** Where the job folder was read from and whether it is a copy (meta source_root, copy_status, original_roots). */
 function copyInfo(db: DatabaseSync) {
   return {
     sourceRoot: metaValue(db, "source_root") ?? null,
@@ -550,6 +590,7 @@ export async function projectOverview(name?: string) {
   });
 }
 
+/** The suite's current practices for the overview; empty when practices.json can't be read (never fails the overview). */
 function safePractices() {
   try {
     return listPractices().map((practice) => ({ id: practice.id, practice: practice.practice, source: practice.source ?? "unknown" }));
@@ -564,6 +605,7 @@ interface SearchHit { file: string | null; path?: string; part: string | null; s
 const SEARCH_DIRECT_MAX_BYTES = 20 * 1024 * 1024;
 const SEARCH_DIRECT_TOTAL_BYTES = 200 * 1024 * 1024;
 
+/** About 240 characters starting 100 before the first word found, whitespace folded. */
 function snippetOf(text: string, words: string[]): string {
   const lower = text.toLowerCase();
   const found = words.map((word) => lower.indexOf(word)).filter((at) => at >= 0);
@@ -640,6 +682,11 @@ interface FileRow {
   summary: string | null; doc_date: string | null; author: string | null; error: string | null; chars: number | null; parent_id: string | null;
 }
 
+/**
+ * A `files` row by id, by stored path (an absolute path is first turned into the stored form), else by file name or
+ * path ending; a moved file's old row loses to the current one. Throws INVALID_INPUT when several match,
+ * OBJECT_NOT_FOUND when none does.
+ */
 function findFile(db: DatabaseSync, file: string): FileRow {
   const columns = "id, path, name, kind, size, status, duplicate_of, summary, doc_date, author, error, chars, parent_id";
   // A path on this computer (in the job folder or one of its other folders) is looked up as the database stores it.
@@ -867,6 +914,7 @@ export async function locatePath(written: string, name?: string) {
 const SEVERITY_ORDER = "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'info' THEN 2 ELSE 3 END";
 const CHECK_FILES_SHOWN = 10;
 
+/** action=checks filters: one severity and/or kind, and how many to list (1-500, default 50). */
 export interface ChecksOptions { severity?: string; kind?: string; limit?: number }
 
 /**
@@ -918,6 +966,7 @@ const daysAgo = (days: number) => {
   return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
 };
 
+/** action=changes filters: since a date (YYYY[-MM[-DD]]), for one file, and how many (1-500, default 50). */
 export interface ChangesOptions { since?: string; file?: string; limit?: number }
 
 /**
@@ -1062,6 +1111,7 @@ export async function projectLatest(name: string, project?: string, near?: strin
 // without being repeated on every call.
 const announced = new Set<string>();
 
+/** The short job overview attached once per job per session to a code result (projectNotesOnce). */
 export interface ProjectBriefing {
   project: string;
   keyFacts: string[];
@@ -1073,6 +1123,11 @@ export interface ProjectBriefing {
   hint: string;
 }
 
+/**
+ * The briefing for the active drawing's job the first time it is asked for in this server session (later calls, no
+ * job, or any error: undefined, so a code result never fails because of it). Reads read-only; creates the User Knowledge
+ * folder when missing.
+ */
 export async function projectNotesOnce(): Promise<ProjectBriefing | undefined> {
   try {
     const job = projectForDrawing(await activeDrawingPath());

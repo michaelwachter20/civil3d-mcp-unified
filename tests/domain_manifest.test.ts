@@ -1,3 +1,8 @@
+// Guards the tool manifest (src/tools/toolManifest.ts and src/tools/domains/*Domain.ts): unique tool names, and that each
+// domain exposes its canonical tool plus the expected action/alias names. When you add, rename or remove an action, this
+// is the list of expected actions that CLAUDE.md "Adding a tool" step 4 says to extend.
+// Pure unit test: no Civil 3D.
+
 import { describe, expect, it } from "vitest";
 import { GENERATED_TOOL_CATALOG_ENTRIES, MIGRATED_DOMAIN_DEFINITIONS } from "../src/tools/toolManifest.js";
 import { TOOL_CATALOG } from "../src/tools/tool_catalog.js";

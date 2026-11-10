@@ -1,3 +1,13 @@
+// The plugin's request runtime, between the TCP listener and the handlers.
+// Lifecycle: PluginEntry.TurnOn (C3DMCPSTART, the ribbon toggle, CIVIL3D_MCP_AUTOSTART) calls StartServer, which
+// starts RpcTcpServer on 127.0.0.1:8080 and a 30 s timer that logs long calls; TurnOff and plugin unload call
+// StopServer. RpcTcpServer hands each request's text to HandleRawRequestAsync, which checks the JSON-RPC envelope,
+// sets the per-request context (method, id, cancellation, expected drawing) in AsyncLocals, calls
+// CommandDispatcher.DispatchAsync and turns the result or exception into the JSON-RPC answer (JsonRpcProtocol).
+// CivilExecution calls Queue/Start/Cancel/CompleteHostOperation around every host-gate operation; GetStatus is what
+// C3DMCPSTATUS, the ribbon and civil3d_health (DrawingCommands.GetCivil3DHealthAsync) report.
+// Also home of JsonRpcDispatchException and the GetRequired*/GetOptional* argument helpers every handler uses.
+// No drawing access here; every request line is logged to PluginLog.
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -24,11 +34,13 @@ public sealed record PluginStatus(
 /// </summary>
 public sealed class JsonRpcDispatchException : Exception
 {
+  /// <summary>Creates the error with a CIVIL3D.* <paramref name="code"/> and a message for the AI.</summary>
   public JsonRpcDispatchException(string code, string message) : base(message)
   {
     Code = code;
   }
 
+  /// <summary>The CIVIL3D.* domain code, sent as error.data.code.</summary>
   public string Code { get; }
 }
 
@@ -40,6 +52,7 @@ public sealed class JsonRpcDispatchException : Exception
 /// </summary>
 public static class PluginRuntime
 {
+  /// <summary>The loopback port the listener binds; the TS server's CIVIL3D_PORT default matches it.</summary>
   public const int Port = 8080;
 
   private static readonly object Sync = new();
@@ -209,6 +222,12 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>
+  /// True when an unexpected exception came from inside Civil 3D/AutoCAD rather than from plugin code: the first
+  /// "at Autodesk." stack frame comes before any "at Civil3DMcpPlugin." frame. Such errors are answered as
+  /// CIVIL3D.API_ERROR ("Civil 3D refused this") instead of INTERNAL_ERROR. Null reference, out of memory and invalid
+  /// cast are always treated as plugin faults.
+  /// </summary>
   private static bool ThrownByCivil3D(Exception exception)
   {
     if (exception is NullReferenceException or OutOfMemoryException or InvalidCastException)
@@ -223,18 +242,26 @@ public static class PluginRuntime
     return inCivil3D >= 0 && (inPlugin < 0 || inCivil3D < inPlugin);
   }
 
+  /// <summary>The current request's cancellation token (cancelled when the client disconnects); default outside a
+  /// request.</summary>
   internal static CancellationToken GetCurrentRequestCancellationToken() => CurrentRequestCancellation.Value;
 
+  /// <summary>The current request's method name, or "Civil 3D operation" outside a request.</summary>
   internal static string GetCurrentRequestOperation() => CurrentRequestOperation.Value ?? "Civil 3D operation";
 
+  /// <summary>The current request's JSON-RPC id as JSON text, or null.</summary>
   internal static string? GetCurrentRequestId() => CurrentRequestId.Value;
 
+  /// <summary>The identity (see <see cref="GetDrawingIdentity"/>) of the active drawing, or null when none is open.
+  /// Must be called on the main thread.</summary>
   internal static string? GetActiveDrawingIdentity()
   {
     var document = App.DocumentManager.MdiActiveDocument;
     return GetDrawingIdentity(document);
   }
 
+  /// <summary>A drawing's identity for "is this still the same drawing" checks: its full file name, or its document
+  /// name ("Drawing1.dwg") when it has never been saved. Null for no document.</summary>
   internal static string? GetDrawingIdentity(Autodesk.AutoCAD.ApplicationServices.Document? document)
   {
     if (document == null) return null;
@@ -242,6 +269,8 @@ public static class PluginRuntime
     return string.IsNullOrWhiteSpace(fileName) ? document.Name : fileName;
   }
 
+  /// <summary>The drawing background work was started for (set by <see cref="RunWithRequestContextAsync"/>), or null
+  /// for an ordinary request, which runs on whatever drawing is active.</summary>
   internal static string? GetExpectedDrawingIdentity() => CurrentExpectedDrawingIdentity.Value;
 
   /// <summary>
@@ -338,6 +367,7 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>Takes a request that never started (cancelled or timed out while waiting) out of the queue count.</summary>
   internal static void CancelQueuedHostOperation()
   {
     lock (Sync)
@@ -346,6 +376,8 @@ public static class PluginRuntime
     }
   }
 
+  /// <summary>Marks a running operation finished; when none is left running, clears the current operation shown by
+  /// health.</summary>
   internal static void CompleteHostOperation()
   {
     lock (Sync)
@@ -390,6 +422,7 @@ public static class PluginRuntime
     return stringValue;
   }
 
+  /// <summary>A required number; missing or not a number is CIVIL3D.INVALID_INPUT.</summary>
   public static double GetRequiredDouble(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
@@ -401,6 +434,7 @@ public static class PluginRuntime
     return ConvertParameter<double>(value, name, "a number");
   }
 
+  /// <summary>A required integer; missing or not an integer (3.5 included) is CIVIL3D.INVALID_INPUT.</summary>
   public static int GetRequiredInt(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
@@ -412,24 +446,30 @@ public static class PluginRuntime
     return ConvertParameter<int>(value, name, "an integer");
   }
 
+  /// <summary>An optional string, or null when absent; another JSON type is CIVIL3D.INVALID_INPUT. An empty string
+  /// is returned as is.</summary>
   public static string? GetOptionalString(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
     return value == null ? null : ConvertParameter<string>(value, name, "a string");
   }
 
+  /// <summary>An optional number, or null when absent; not a number is CIVIL3D.INVALID_INPUT.</summary>
   public static double? GetOptionalDouble(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
     return value == null ? null : ConvertParameter<double>(value, name, "a number");
   }
 
+  /// <summary>An optional integer, or null when absent; not an integer is CIVIL3D.INVALID_INPUT.</summary>
   public static int? GetOptionalInt(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;
     return value == null ? null : ConvertParameter<int>(value, name, "an integer");
   }
 
+  /// <summary>An optional boolean, or null when absent; anything but true/false (the string "true" included) is
+  /// CIVIL3D.INVALID_INPUT.</summary>
   public static bool? GetOptionalBool(JsonObject? parameters, string name)
   {
     var value = GetParameter(parameters, name) as JsonNode;

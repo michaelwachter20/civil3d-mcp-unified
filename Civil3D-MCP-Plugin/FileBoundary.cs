@@ -1,3 +1,12 @@
+// The only place the plugin resolves caller-supplied paths and writes files (tests/security_boundary.test.ts allows
+// direct file writes only here and in PluginLog.cs). Serves no JSON-RPC method; every handler that imports, exports,
+// opens a drawing or saves a script calls it.
+// Rules it enforces: absolute paths only, canonicalized, inside CIVIL3D_IMPORT_ROOTS / CIVIL3D_EXPORT_ROOTS (else
+// CIVIL3D_FILE_ROOTS, else the user's Documents folder); per-command extension allowlist; no links or junctions on the
+// way; never importing from the suite's shared knowledge folder (SharedFolder.Root, job databases are reference only),
+// except a job's User Knowledge folder for reference reads; no overwrite unless overwrite=true; writes go to a hidden
+// temp file and are moved into place atomically, with the export directory chain held open against swaps.
+// It never touches the drawing.
 using System.Text;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -35,6 +44,11 @@ internal static class FileBoundary
   public static string ResolveReferencePath(string rawPath, params string[] allowedExtensions) =>
     ResolveRead(rawPath, userKnowledgeAllowed: true, allowedExtensions);
 
+  /// <summary>
+  /// Resolves a path to read against the import roots. Throws CIVIL3D.PATH_NOT_ALLOWED inside the shared knowledge
+  /// folder (unless a User Knowledge file is allowed) and CIVIL3D.OBJECT_NOT_FOUND when the file doesn't exist, plus
+  /// every <see cref="ResolvePath"/> error.
+  /// </summary>
   private static string ResolveRead(string rawPath, bool userKnowledgeAllowed, string[] allowedExtensions)
   {
     var path = ResolvePath(rawPath, ImportRoots.Value, "import", allowedExtensions);
@@ -55,6 +69,11 @@ internal static class FileBoundary
     return path;
   }
 
+  /// <summary>
+  /// The canonical path for a file to write, inside the export roots with an allowed extension. Writes nothing.
+  /// Throws CIVIL3D.CONFLICT when the file exists and <paramref name="overwrite"/> is false, plus every
+  /// <see cref="ResolvePath"/> error. Unlike imports, the shared knowledge folder is not excluded here.
+  /// </summary>
   public static string ResolveExportPath(
     string rawPath,
     bool overwrite,
@@ -71,6 +90,13 @@ internal static class FileBoundary
     return path;
   }
 
+  /// <summary>
+  /// Writes <paramref name="content"/> to a caller-supplied export path: resolved as in
+  /// <see cref="ResolveExportPath"/>, missing directories created under the root while the directory chain is locked,
+  /// written to a hidden temp file and moved into place. Returns the canonical path. Throws CIVIL3D.CONFLICT (exists,
+  /// no overwrite), CIVIL3D.FILE_IO_ERROR (write failed; the temp file is removed), CIVIL3D.INVALID_CONFIGURATION
+  /// (export root missing) and the path errors.
+  /// </summary>
   public static string WriteAllTextAtomic(
     string rawPath,
     string content,
@@ -193,7 +219,11 @@ internal static class FileBoundary
     }
   }
 
-  /// <summary>Resolves a bare file name inside <paramref name="directory"/>, rejecting traversal.</summary>
+  /// <summary>
+  /// Resolves a bare file name inside <paramref name="directory"/>, rejecting traversal (CIVIL3D.INVALID_INPUT for a
+  /// bad name, CIVIL3D.PATH_NOT_ALLOWED for a reparse-point directory or a path that escapes). Creates the directory
+  /// when <paramref name="createDirectory"/> is true.
+  /// </summary>
   public static string ResolveFileWithinDirectory(string directory, string fileName, bool createDirectory)
   {
     if (string.IsNullOrWhiteSpace(fileName) ||
@@ -225,6 +255,11 @@ internal static class FileBoundary
     return path;
   }
 
+  /// <summary>
+  /// Canonicalizes an absolute path and checks it against <paramref name="roots"/>, links on the way and the
+  /// extension allowlist (empty = any). Throws CIVIL3D.INVALID_INPUT (empty, relative or invalid path),
+  /// CIVIL3D.PATH_NOT_ALLOWED (outside the roots, or through a link/junction), CIVIL3D.FILE_TYPE_NOT_ALLOWED.
+  /// </summary>
   private static string ResolvePath(
     string rawPath,
     IReadOnlyCollection<string> roots,
@@ -277,6 +312,10 @@ internal static class FileBoundary
     return canonicalPath;
   }
 
+  /// <summary>
+  /// The roots for an operation: its own variable, else CIVIL3D_FILE_ROOTS (both PATH-separator lists of absolute
+  /// folders), else the user's Documents folder. Read once per process (Lazy).
+  /// </summary>
   private static string[] LoadRoots(string operationVariable)
   {
     var configured = Environment.GetEnvironmentVariable(operationVariable);
@@ -301,6 +340,7 @@ internal static class FileBoundary
       .ToArray();
   }
 
+  /// <summary>The configured root list split on ';'. CIVIL3D.INVALID_CONFIGURATION for a root that isn't absolute.</summary>
   private static IEnumerable<string> SplitRoots(string? configured)
   {
     if (string.IsNullOrWhiteSpace(configured))
@@ -354,6 +394,7 @@ internal static class FileBoundary
     }
   }
 
+  /// <summary>Whether <paramref name="path"/> is <paramref name="root"/> or below it (both canonical).</summary>
   private static bool IsWithinRoot(string path, string root)
   {
     var relative = Path.GetRelativePath(root, path);
@@ -363,6 +404,10 @@ internal static class FileBoundary
       && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
   }
 
+  /// <summary>
+  /// Walks each existing folder or file from <paramref name="root"/> down to <paramref name="path"/> and refuses any
+  /// symbolic link or junction (CIVIL3D.PATH_NOT_ALLOWED); CIVIL3D.FILE_IO_ERROR when attributes can't be read.
+  /// </summary>
   private static void RejectReparsePointTraversal(string path, string root)
   {
     var relative = Path.GetRelativePath(root, path);
@@ -407,6 +452,11 @@ internal static class FileBoundary
   private static string NormalizeExtension(string extension) =>
     extension.StartsWith('.') ? extension : $".{extension}";
 
+  /// <summary>
+  /// Opens a handle on every folder from the longest matching export root down to <paramref name="directory"/>
+  /// (creating missing ones), each refusing links and denying delete sharing, so no folder can be swapped for a
+  /// junction until the returned lock is disposed. CIVIL3D.PATH_NOT_ALLOWED / INVALID_CONFIGURATION / FILE_IO_ERROR.
+  /// </summary>
   private static DirectoryChainLock LockExportDirectoryChain(string directory)
   {
     var canonicalDirectory = Path.GetFullPath(directory);
@@ -457,6 +507,10 @@ internal static class FileBoundary
     }
   }
 
+  /// <summary>
+  /// Opens a folder handle without following reparse points (Win32 CreateFileW with backup semantics, read/write
+  /// sharing only) and refuses it if it is a link. CIVIL3D.FILE_IO_ERROR when it can't be opened or inspected.
+  /// </summary>
   private static SafeFileHandle OpenLockedDirectory(string path)
   {
     var handle = CreateFileW(
@@ -499,6 +553,7 @@ internal static class FileBoundary
     return handle;
   }
 
+  /// <summary>The folder handles held by <see cref="LockExportDirectoryChain"/>; disposing closes them innermost first.</summary>
   private sealed class DirectoryChainLock(List<SafeFileHandle> handles) : IDisposable
   {
     public void Dispose()

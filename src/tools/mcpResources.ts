@@ -1,15 +1,15 @@
+/**
+ * The server's general MCP resources, registered by register.ts after the tools: the tool catalog
+ * (`civil3d://catalog/tools`), a short safety and approval note, the bundled framework standards, and the kept
+ * report results (`civil3d://reports/{id}`, from reportResourceStore.ts). The help resources are registered
+ * separately by helpTool.ts. None of these need Civil 3D; all are read-only. Resource titles and descriptions are
+ * client-visible text.
+ */
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { lookupFrameworkStandards } from "../standards/FrameworkStandardsService.js";
 import { MIGRATED_DOMAIN_DEFINITIONS, selectManifestExposures } from "./toolManifest.js";
 import { TOOL_CATALOG } from "./tool_catalog.js";
 import { getReportResource, listReportResources } from "./reportResourceStore.js";
-
-/**
- * The server's general MCP resources, registered by register.ts after the tools: the tool catalog
- * (`civil3d://catalog/tools`), a short safety and approval note, the bundled framework standards, and the kept
- * report results (`civil3d://reports/{id}`, from reportResourceStore.ts). The help resources are registered
- * separately by helpTool.ts. None of these need Civil 3D.
- */
 
 /** The text of `civil3d://docs/safety-and-approval`: the one path every drawing change takes. */
 const SAFETY_GUIDANCE = `# Civil 3D MCP safety and execution

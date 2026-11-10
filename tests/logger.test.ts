@@ -1,3 +1,6 @@
+// Guards src/utils/logger.ts: writes to stderr (stdout is the MCP channel), honours CIVIL3D_LOG_LEVEL, timestamps in ISO
+// form, and always logs errors. Pure unit test.
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 describe("Logger", () => {

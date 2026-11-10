@@ -1,3 +1,12 @@
+// ScriptSandbox.cs - first half of the script sandbox for the Roslyn code-execution engine (civil3d_execute,
+// civil3d_query, saved scripts, MCPRUN); ScriptSymbolCheck is the second half. ScriptEngine.Compile calls Validate on
+// the source before compiling; ScriptCommands reads HostProtectionEnabled for acad_command's blocked commands.
+// Three rule sets, matched on the source with comments removed: crash rules (always), host-protection rules (processes,
+// network, reflection, native code, registry, deleting/moving files, plugin internals; off with
+// CIVIL3D_SCRIPT_SANDBOX=disabled) and read-only rules (only for read runs: no commit, own transaction, commands,
+// saving, file writes, adding entities, opening drawings, system variables), which keep civil3d_query read-only in
+// spirit; the transaction rollback in ScriptEngine keeps it read-only in fact. Do not edit the patterns casually:
+// tests and the boundary checks depend on their exact text.
 using System.Text.RegularExpressions;
 
 namespace Civil3DMcpPlugin;
@@ -49,10 +58,13 @@ public static class ScriptSandbox
     (@"\.\s*GetSectionSources\s*\(", "SampleLineGroup.GetSectionSources() updates the group and crashes Civil 3D on a group opened for read; use the SectionSources(groupId) helper in civil3d_execute"),
   });
 
+  /// <summary>False only when CIVIL3D_SCRIPT_SANDBOX=disabled; then the host-protection rules here and in
+  /// ScriptSymbolCheck, and acad_command's blocked-command list, are skipped.</summary>
   public static bool HostProtectionEnabled =>
     !string.Equals(Environment.GetEnvironmentVariable("CIVIL3D_SCRIPT_SANDBOX"), "disabled", StringComparison.OrdinalIgnoreCase);
 
-  /// <summary>Throws CIVIL3D.SANDBOX_VIOLATION when the code matches a blocked pattern.</summary>
+  /// <summary>Throws CIVIL3D.SANDBOX_VIOLATION when the code matches a blocked pattern (naming the script line, the
+  /// match and why), CIVIL3D.INVALID_INPUT when the code is empty or longer than 200,000 characters.</summary>
   public static void Validate(string code, bool writeMode)
   {
     if (string.IsNullOrWhiteSpace(code))
@@ -79,6 +91,7 @@ public static class ScriptSandbox
     }
   }
 
+  /// <summary>Throws CIVIL3D.SANDBOX_VIOLATION for the first rule that matches.</summary>
   private static void Check(string code, (Regex Pattern, string Reason)[] rules, string suffix)
   {
     foreach (var (pattern, reason) in rules)
@@ -94,6 +107,8 @@ public static class ScriptSandbox
     }
   }
 
+  /// <summary>The code without comments, so a blocked name in a comment isn't refused. A "//" right after ':', '"' or
+  /// '\'' is kept (URLs, strings).</summary>
   private static string StripComments(string code)
   {
     // Remove block and line comments while keeping line numbers stable.

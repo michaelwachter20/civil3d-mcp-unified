@@ -1,5 +1,7 @@
 // Prints the CHANGELOG.md section for a version (default: package.json version) as release notes.
 //   node scripts/release-notes.mjs [x.y.z] > notes.md
+// Used by .github/workflows/release.yml; publish-release.mjs has its own copy of the same logic. Read-only: it only
+// reads package.json and CHANGELOG.md and writes to stdout; exits 1 when the version has no "## vX.Y.Z" section.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

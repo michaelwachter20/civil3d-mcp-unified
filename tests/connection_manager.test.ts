@@ -1,3 +1,6 @@
+// Guards src/utils/ConnectionManager.ts: every command of a composite action opens its own TCP connection to the plugin
+// (the plugin handles one JSON-RPC request per connection). Uses a fake plugin server on a local port; no Civil 3D.
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as net from "node:net";
 

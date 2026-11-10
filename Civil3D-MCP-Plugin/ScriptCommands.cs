@@ -1,3 +1,12 @@
+// ScriptCommands.cs - the JSON-RPC face of the Roslyn code-execution engine and of acad_command.
+// Methods (CommandDispatcher.cs): executeCode, queryCode, compileCode, getScriptingStatus, runAcadCommand,
+// scriptSave, scriptList, scriptGet, scriptRun, scriptDelete. Caller: src/tools/domains/scriptingDomain.ts
+// (civil3d_execute, civil3d_query, acad_command, civil3d_script). PluginEntry calls the MCPRUN / MCPSCRIPTS helpers.
+// The work is done by ScriptSandbox + ScriptSymbolCheck (what code may do), ScriptEngine (compile and run inside the
+// host gate: write runs in command context with a lock, one transaction and UNDO BEGIN/END; read runs on the main
+// thread, transaction always aborted), ScriptContext (the script globals) and ScriptLibrary (saved .csx files,
+// written only through FileBoundary). Code that creates COGO points asks the user first (PointCreationGate).
+// Approval for write runs is enforced on the Node side before a request gets here.
 using System.Globalization;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -15,6 +24,8 @@ namespace Civil3DMcpPlugin;
 /// </summary>
 public static class ScriptCommands
 {
+  // Commands acad_command refuses while host protection is on: they start programs, load code, run script files,
+  // close the session or the AI connection, or open dialogs that would block the host queue.
   private static readonly HashSet<string> BlockedCommands = new(StringComparer.OrdinalIgnoreCase)
   {
     "SHELL", "SH", "START", "NETLOAD", "APPLOAD", "ARX", "SECURELOAD", "TRUSTEDPATHS",
@@ -26,16 +37,30 @@ public static class ScriptCommands
   // Code execution
   // ---------------------------------------------------------------------------
 
+  /// <summary>
+  /// <c>executeCode</c> (civil3d_execute): compiles and runs AI-written C# as a drawing change. Reads <c>code</c>
+  /// (required), <c>description</c> and <c>args</c> (object, given to the script as <c>Args</c>). The transaction is
+  /// committed and the run is one undo step. Returns the run (see <see cref="Describe"/>). Throws
+  /// CIVIL3D.SANDBOX_VIOLATION, CIVIL3D.COMPILATION_ERROR, CIVIL3D.SCRIPT_ERROR, CIVIL3D.TIMEOUT (nothing committed
+  /// in those cases), and the PointCreationGate refusal when the user says no to code that creates COGO points.
+  /// </summary>
   public static async Task<object?> ExecuteCodeAsync(JsonObject? parameters)
   {
     return await RunCodeAsync(parameters, write: true);
   }
 
+  /// <summary>
+  /// <c>queryCode</c> (civil3d_query): runs AI-written C# read-only. Same parameters as <see cref="ExecuteCodeAsync"/>;
+  /// the read-only sandbox rules also apply and the transaction is always aborted, so the drawing is not changed and
+  /// no undo step is added. Same error codes, minus the point-creation question.
+  /// </summary>
   public static async Task<object?> QueryCodeAsync(JsonObject? parameters)
   {
     return await RunCodeAsync(parameters, write: false);
   }
 
+  /// <summary>Shared body of execute/query: point-creation question (writes only), compile off the main thread, run
+  /// through the host gate, describe the result.</summary>
   private static async Task<object?> RunCodeAsync(JsonObject? parameters, bool write)
   {
     var code = PluginRuntime.GetRequiredString(parameters, "code");
@@ -54,7 +79,12 @@ public static class ScriptCommands
     return Describe(run, write ? "execute" : "query", null);
   }
 
-  /// <summary>Compile-only check, used by the AI to validate code before saving or executing.</summary>
+  /// <summary>
+  /// <c>compileCode</c>: compile-only check, used by the AI to validate code before saving or executing. Reads
+  /// <c>code</c> (required) and <c>mode</c> ("write" default, or "read"); runs the sandbox and symbol checks for that
+  /// mode. Returns success, mode, the source hash and compiler warnings. Doesn't touch the drawing. Throws
+  /// CIVIL3D.SANDBOX_VIOLATION / CIVIL3D.COMPILATION_ERROR / CIVIL3D.INVALID_INPUT.
+  /// </summary>
   public static async Task<object?> CompileCodeAsync(JsonObject? parameters)
   {
     var code = PluginRuntime.GetRequiredString(parameters, "code");
@@ -69,6 +99,9 @@ public static class ScriptCommands
     };
   }
 
+  /// <summary><c>getScriptingStatus</c>: no parameters. Returns the scripts folder, saved-script count, whether host
+  /// protection is on, the timeout, undo grouping, view following, the script globals and default imports. Doesn't
+  /// touch the drawing.</summary>
   public static Task<object?> GetScriptingStatusAsync()
   {
     return Task.FromResult<object?>(new Dictionary<string, object?>
@@ -89,6 +122,15 @@ public static class ScriptCommands
   // Raw AutoCAD commands
   // ---------------------------------------------------------------------------
 
+  /// <summary>
+  /// <c>runAcadCommand</c> (acad_command): runs one AutoCAD command with its prompt answers through
+  /// <c>Editor.CommandAsync</c>. Reads <c>command</c> (required): a string, or an array whose first item is the command
+  /// name and the rest are answers (strings, numbers, booleans as _Yes/_No, {x,y,z?} points, "" for Enter). Runs in
+  /// command context through the host gate (not WriteAsync: no transaction of its own), so it can change the drawing.
+  /// Command-line output isn't captured. Throws CIVIL3D.INVALID_INPUT (no command name), CIVIL3D.SANDBOX_VIOLATION
+  /// (AutoLISP or a blocked command while host protection is on), CIVIL3D.COMMAND_FAILED, and asks the user first
+  /// for commands that create COGO points.
+  /// </summary>
   public static async Task<object?> RunAcadCommandAsync(JsonObject? parameters)
   {
     var tokens = ParseCommandTokens(parameters);
@@ -140,6 +182,8 @@ public static class ScriptCommands
     });
   }
 
+  /// <summary>Turns <c>command</c> into the object[] CommandAsync takes (strings, invariant-culture numbers, Point3d,
+  /// _Yes/_No). CIVIL3D.INVALID_INPUT when it is missing, empty, or the first token isn't a command name.</summary>
   private static object[] ParseCommandTokens(JsonObject? parameters)
   {
     var node = parameters?["command"] ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "command is required.");
@@ -175,6 +219,13 @@ public static class ScriptCommands
   // Saved scripts
   // ---------------------------------------------------------------------------
 
+  /// <summary>
+  /// <c>scriptSave</c> (civil3d_script action=save): reads <c>name</c>, <c>description</c>, <c>code</c> (all required),
+  /// <c>mode</c> (write/read), <c>overwrite</c> (bool) and <c>parameters</c> (array). The code must compile in its mode
+  /// first. Writes a .csx file in the scripts folder (ScriptLibrary, via FileBoundary; a replaced version is archived);
+  /// doesn't touch the drawing. Throws CIVIL3D.INVALID_INPUT, CIVIL3D.CONFLICT (exists, no overwrite), and the
+  /// sandbox/compile errors. The MCP server checks the text for job data before sending it.
+  /// </summary>
   public static async Task<object?> ScriptSaveAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -198,6 +249,8 @@ public static class ScriptCommands
     };
   }
 
+  /// <summary><c>scriptList</c>: saved scripts (without code), optionally filtered by <c>query</c> (case-insensitive,
+  /// in name or description). Reads files only.</summary>
   public static Task<object?> ScriptListAsync(JsonObject? parameters)
   {
     var query = PluginRuntime.GetOptionalString(parameters, "query")?.Trim();
@@ -216,12 +269,20 @@ public static class ScriptCommands
     });
   }
 
+  /// <summary><c>scriptGet</c>: one saved script with its code, by <c>name</c> (required). CIVIL3D.OBJECT_NOT_FOUND /
+  /// CIVIL3D.INVALID_INPUT from ScriptLibrary.Get.</summary>
   public static Task<object?> ScriptGetAsync(JsonObject? parameters)
   {
     var script = ScriptLibrary.Get(PluginRuntime.GetRequiredString(parameters, "name"));
     return Task.FromResult<object?>(ScriptLibrary.Describe(script, includeCode: true));
   }
 
+  /// <summary>
+  /// <c>scriptRun</c>: runs a saved script by <c>name</c> (required) with <c>args</c> (merged with its declared
+  /// defaults and coerced to their types). A "write" script changes the drawing like executeCode (one undo step); a
+  /// "read" script runs like queryCode (rolled back). Throws CIVIL3D.OBJECT_NOT_FOUND, CIVIL3D.INVALID_INPUT (missing
+  /// or wrong-typed argument), and the sandbox, compile, script and timeout errors.
+  /// </summary>
   public static async Task<object?> ScriptRunAsync(JsonObject? parameters)
   {
     var script = ScriptLibrary.Get(PluginRuntime.GetRequiredString(parameters, "name"));
@@ -239,6 +300,9 @@ public static class ScriptCommands
     return Describe(run, script.IsWrite ? "execute" : "query", script.Name);
   }
 
+  /// <summary><c>scriptDelete</c>: retires the saved script <c>name</c> (required): it is copied to <c>_archive</c>
+  /// and then removed from the library, never lost. Returns the archive path. CIVIL3D.OBJECT_NOT_FOUND when there is
+  /// no such script.</summary>
   public static Task<object?> ScriptDeleteAsync(JsonObject? parameters)
   {
     var name = ScriptLibrary.NormalizeName(PluginRuntime.GetRequiredString(parameters, "name"));
@@ -257,6 +321,9 @@ public static class ScriptCommands
     });
   }
 
+  /// <summary>The JSON answer for a run: success, mode ("execute"/"query"), committed, undoGrouped, elapsedMs, the
+  /// script's serialized return value (<c>result</c>), its Print lines (<c>output</c>), and warnings / undo note when
+  /// they apply.</summary>
   private static Dictionary<string, object?> Describe(ScriptRunResult run, string mode, string? scriptName)
   {
     var result = new Dictionary<string, object?>
@@ -280,6 +347,7 @@ public static class ScriptCommands
   // Command line: MCPRUN / MCPSCRIPTS (invoked from PluginEntry)
   // ---------------------------------------------------------------------------
 
+  /// <summary>MCPSCRIPTS: prints the saved scripts (name, mode, parameters, description) on the command line.</summary>
   internal static void ListSavedScriptsInteractive()
   {
     var editor = App.DocumentManager.MdiActiveDocument?.Editor;
@@ -300,6 +368,12 @@ public static class ScriptCommands
     }
   }
 
+  /// <summary>
+  /// MCPRUN: the user runs a saved script by hand. Prompts for the name ("?" lists them) and each declared parameter,
+  /// compiles, and runs it synchronously inside the user's own command (which already holds the document lock and
+  /// makes the undo step), not through the host gate or the AI connection. A write script commits; a read script
+  /// rolls back. Errors are written to the command line, never thrown.
+  /// </summary>
   internal static void RunSavedScriptInteractive()
   {
     var document = App.DocumentManager.MdiActiveDocument;
@@ -367,6 +441,8 @@ public static class ScriptCommands
     }
   }
 
+  /// <summary>Asks for one script parameter with the prompt that fits its type (point pick, number, Yes/No keyword,
+  /// or text; "string[]"/"json" text is parsed as JSON, else split on commas). Null when the user skips or cancels.</summary>
   private static JsonNode? PromptForParameter(Editor editor, ScriptParameter parameter)
   {
     var label = $"\n{parameter.Name}" + (parameter.Description != null ? $" ({parameter.Description})" : string.Empty);

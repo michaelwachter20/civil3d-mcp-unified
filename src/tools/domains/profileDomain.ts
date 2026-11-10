@@ -1,3 +1,8 @@
+// Profile domain: `civil3d_profile` and its `civil3d_profile_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS
+// (toolManifest.ts). Plugin side: ProfileCommands.cs and ProfileEditCommands.cs. Reads (list, get, get_elevation,
+// sample_elevations, report, check_k_values) need no approval; every write (create_*, delete, PVI/curve/grade edits,
+// view_create, view_band_set) is declared non-retryable or delete, so approvalPolicy asks for an approvalToken. Only
+// `report` has logic in Node (sampling and the summary). Details per action are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -290,6 +295,12 @@ function estimateSampleCount(startStation: number, endStation: number, interval:
  */
 export const PROFILE_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "profile",
+  // Action -> plugin method. Read-only: list (listProfiles), get (getProfile), get_elevation (getProfileElevation),
+  // sample_elevations (sampleProfileElevations), report (both of the last two, summarized in Node), check_k_values
+  // (profileCheckKValues, AASHTO minimum K per design speed). Writes needing approval: create_from_surface
+  // (createProfileFromSurface), create_layout (createLayoutProfile), delete (deleteProfile), add_pvi / delete_pvi /
+  // add_curve / set_grade (profileAddPvi / profileDeletePvi / profileAddCurve / profileSetGrade), view_create
+  // (profileViewCreate), view_band_set (profileViewBandSet).
   actions: {
     list: {
       action: "list",

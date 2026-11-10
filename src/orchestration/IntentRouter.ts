@@ -1,14 +1,15 @@
-import { TOOL_CATALOG, ToolCatalogEntry } from "./ToolCatalog.js";
-
 /**
  * The routing step of civil3d_orchestrate: picks the route in ToolCatalog.ts that best fits a plain-language request
  * and pulls parameter values out of the text. It is plain string matching (no model, no drawing access), written for
  * requests such as `create surface named EG_Test` or `volume between surfaces "EG" and "FG"`.
+ * Used by src/tools/civil3d_orchestrate.ts (routeIntent, RouteParams, RouteResult); SelectionResolver and
+ * WorkflowPlanner use its types. Pure: it calls nothing outside this process and changes nothing.
  *
  * An exact tool name in the request wins outright with confidence 1. Otherwise every route is scored on its
  * keywords, title and domain words, explicit routes get a bonus, and confidence is the best score over 8, capped at 1.
  * The best route is always returned, even when nothing matched well, so callers should look at `confidence`.
  */
+import { TOOL_CATALOG, ToolCatalogEntry } from "./ToolCatalog.js";
 
 /** Values the router can extract from a request; the same names the routes' buildToolArgs read. */
 export interface RouteParams {
@@ -178,6 +179,7 @@ function extractObjectName(request: string, objectType: string): string | undefi
   return forMatch;
 }
 
+/** A network/pipe/structure/fitting name: `<type>: X` / `<type> name: X` first, then phrasing such as "pipe named P-1". */
 function extractSimpleNamedObject(request: string, objectType: string): string | undefined {
   return extractNamedValue(request, `${objectType}(?:\\s*name)?`)
     ?? extractObjectName(request, objectType);

@@ -1,3 +1,7 @@
+// Guards the composite workflows in src/tools/domains/workflowDomain.ts: each workflow calls the right sequence of plugin
+// methods (QC, surface comparison, data shortcuts, startup readiness, grading, pipe sizing, plan production, survey).
+// ConnectionManager is mocked with a recording sendCommand; no plugin or Civil 3D.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { sendCommandMock } = vi.hoisted(() => ({

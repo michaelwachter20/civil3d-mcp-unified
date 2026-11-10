@@ -1,3 +1,10 @@
+// Civil 3D label handlers. JSON-RPC methods (CommandDispatcher.cs): listLabelStyles, listLabels, addLabel.
+// Callers: civil3d_standards (src/tools/domains/standardsDomain.ts: label_list_styles, label_list, label_add).
+// listLabelStyles and listLabels run in CivilExecution.ReadAsync (main thread, no undo step). addLabel runs in
+// CivilExecution.WriteAsync (command context, document lock, one transaction, one undo step) and only creates labels
+// or assigns a label set (an alignment's or profile's LabelSetId); it never moves or reshapes the labeled object.
+// COGO points and their labels are not handled here at all. Late-bound lookups (style collections, label ids, network members,
+// release-specific label classes) go through Civil3DCompatibility only. No file access.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -11,16 +18,23 @@ namespace Civil3DMcpPlugin;
 /// structures.
 ///
 /// The label API differs between Civil 3D releases (class names moved between namespaces, Create overloads take
-/// different arguments), so the label classes and style collections are reached late-bound through
-/// Civil3DCompatibility and CivilObjectUtils: each Create* helper lists candidate type names and tries every static
+/// different arguments), so some label classes and style collections are reached late-bound through
+/// Civil3DCompatibility and CivilObjectUtils: a Create* helper lists candidate type names and tries every static
 /// Create overload whose parameters the matching Build*Arguments method can fill. That keeps the plugin loading on
 /// a release where one name is missing, at the cost of failing at run time ("Unable to create a ... label with the
 /// available Civil 3D API overloads") instead of at compile time.
+///
+/// Today only profile station labels go that way (CreateProfileStationLabel). Alignment station, surface spot
+/// elevation, pipe and structure labels call the typed Create methods (StationOffsetLabel, SurfaceElevationLabel,
+/// PipeLabel, StructureLabel). CreateSurfaceSpotLabel, BuildSingleObjectLabelArguments and
+/// BuildAlignmentStationLabelArguments are not called.
 /// </summary>
 public static class LabelCommands
 {
-  /// <summary>The label styles for <c>objectType</c> (alignment and profile give their label set styles; surface,
-  /// pipe, pipe_network, structure their label styles). An unknown type gives an empty list, not an error.</summary>
+  /// <summary>The label styles for <c>objectType</c> (required; alignment and profile give their label set styles,
+  /// surface its spot elevation label styles, pipe its plan/profile label styles, structure its label styles, and
+  /// pipe_network whatever late-bound collection exists). Any other type is CIVIL3D.INVALID_INPUT before the drawing
+  /// is read; a supported type whose collection can't be found gives an empty list. Read only.</summary>
   public static Task<object?> ListLabelStylesAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -51,8 +65,11 @@ public static class LabelCommands
     });
   }
 
-  /// <summary>The labels attached to object <c>objectName</c> of <c>objectType</c>, with their type, style and text
-  /// (the override when one is set).</summary>
+  /// <summary>The labels attached to object <c>objectName</c> of <c>objectType</c> (both required; alignment,
+  /// profile, surface, pipe, structure or pipe_network), with their type, style and text (the override when one is
+  /// set). Read only. An unknown type is CIVIL3D.INVALID_INPUT; an unknown object is CIVIL3D.OBJECT_NOT_FOUND. Labels
+  /// come from whichever of GetLabelIds/LabelIds/Labels the object has, so an object with none gives an empty list.
+  /// </summary>
   public static Task<object?> ListLabelsAsync(JsonObject? parameters)
   {
     var objectType = PluginRuntime.GetRequiredString(parameters, "objectType");
@@ -87,9 +104,13 @@ public static class LabelCommands
   /// Adds a label to object <c>objectName</c> of <c>objectType</c>. Supported combinations: alignment or profile with
   /// <c>labelType = "label_set"</c> (assigns the label set named by <c>labelStyle</c>, replacing the current one),
   /// alignment or profile <c>station</c> (needs <c>station</c>), surface <c>spot_elevation</c> / <c>spot</c> (needs
-  /// <c>point</c> {x, y}), and pipe or structure labels (<c>labelType = "plan"</c> picks plan labels). Anything else is
-  /// CIVIL3D.INVALID_INPUT listing what is supported. When <c>labelStyle</c> is missing or doesn't match, the first
-  /// style of the collection is used rather than failing.
+  /// <c>point</c> {x, y}), and pipe or structure labels (any <c>labelType</c>; a pipe label sits at mid-length, a
+  /// structure label at the structure). Anything else is CIVIL3D.INVALID_INPUT listing what is supported.
+  /// <c>objectType</c>, <c>objectName</c> and <c>labelType</c> are required. With no <c>labelStyle</c> the
+  /// collection's first style is used; a <c>labelStyle</c> that isn't there is CIVIL3D.OBJECT_NOT_FOUND listing the
+  /// names that are. A missing station or point, or an alignment station off the alignment, is
+  /// CIVIL3D.INVALID_INPUT; an unknown object is CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step). The
+  /// answer gives the style used and the new label's handle (none for a label set).
   /// </summary>
   public static Task<object?> AddLabelAsync(JsonObject? parameters)
   {
@@ -122,6 +143,7 @@ public static class LabelCommands
           ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Alignment station labels require 'station'.");
         var alignment = (Autodesk.Civil.DatabaseServices.Alignment)target;
         AlignmentCommands.RequireStation(alignment, station);
+        // Station offset and spot elevation labels need a marker style too; the drawing's first one is used.
         var styleId = FindNamedStyle(((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.LabelStyles.AlignmentLabelStyles.StationOffsetLabelStyles, transaction, labelStyle);
         var labelId = CreateAlignmentStationLabel(alignment, styleId, station, ((Autodesk.Civil.ApplicationServices.CivilDocument)civilDoc).Styles.MarkerStyles.First());
         return new Dictionary<string, object?>
@@ -154,6 +176,7 @@ public static class LabelCommands
       {
         var station = PluginRuntime.GetOptionalDouble(parameters, "station")
           ?? throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", "Profile station labels require 'station'.");
+        // For "profile", GetLabelStyleCollection gives the profile label set styles, so the style comes from there.
         var styleId = FindLabelStyleId(civilDoc, transaction, objectType, labelStyle);
         var labelId = CreateProfileStationLabel(target, styleId, station);
         return new Dictionary<string, object?>
@@ -281,6 +304,8 @@ public static class LabelCommands
     throw new JsonRpcDispatchException("CIVIL3D.INVALID_INPUT", $"Unsupported label objectType '{objectType}'.");
   }
 
+  /// <summary>The pipe network named <paramref name="objectName"/> (case-insensitive), or CIVIL3D.OBJECT_NOT_FOUND.
+  /// </summary>
   private static DBObject ResolvePipeNetwork(object civilDoc, Transaction transaction, string objectName, OpenMode openMode)
   {
     foreach (var objectId in GetPipeNetworkIds(civilDoc))
@@ -295,6 +320,8 @@ public static class LabelCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pipe network '{objectName}' was not found.");
   }
 
+  /// <summary>The first pipe (<paramref name="pipe"/> true) or structure with this name in any gravity network, or
+  /// CIVIL3D.OBJECT_NOT_FOUND. Names can repeat across networks; the first match wins.</summary>
   private static DBObject ResolvePipeObject(object civilDoc, Transaction transaction, string objectName, OpenMode openMode, bool pipe)
   {
     foreach (var networkId in GetPipeNetworkIds(civilDoc))
@@ -338,7 +365,9 @@ public static class LabelCommands
     }
   }
 
-  /// <summary>The style collection for an object type, found late-bound with a fallback name for each.</summary>
+  /// <summary>The style collection for an object type, found late-bound with a fallback name for each (surface, pipe
+  /// and structure are read typed). An unknown type, or a collection not found, gives no ids; no Styles object at
+  /// all is CIVIL3D.TRANSACTION_FAILED.</summary>
   private static IEnumerable<ObjectId> GetLabelStyleCollection(object civilDoc, string objectType)
   {
     var styles = GetNamedMemberValue(civilDoc, "Styles") ?? throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", "Civil 3D styles collection is not available.");
@@ -399,6 +428,8 @@ public static class LabelCommands
     return named ? throw LookupUtils.NotFound("Label style", labelStyle!, names) : ObjectId.Null;
   }
 
+  /// <summary>A surface spot elevation label through the late-bound Create overloads. Not called: AddLabelAsync uses
+  /// SurfaceElevationLabel.Create.</summary>
   private static ObjectId CreateSurfaceSpotLabel(DBObject surface, ObjectId styleId, Point2d point)
   {
     return TryCreateLabel(
@@ -412,6 +443,8 @@ public static class LabelCommands
     );
   }
 
+  /// <summary>A profile station label through the late-bound Create overloads of the candidate label classes; none
+  /// that works is CIVIL3D.TRANSACTION_FAILED (from TryCreateLabel).</summary>
   private static ObjectId CreateProfileStationLabel(DBObject profile, ObjectId styleId, double station)
   {
     return TryCreateLabel(
@@ -426,6 +459,8 @@ public static class LabelCommands
     );
   }
 
+  /// <summary>A station offset label on the alignment at <paramref name="station"/>, offset 0 (the label is placed
+  /// at the alignment point for that station).</summary>
   private static ObjectId CreateAlignmentStationLabel(Autodesk.Civil.DatabaseServices.Alignment alignment, ObjectId styleId, double station, ObjectId markerStyleId)
   {
     double x = 0;
@@ -464,6 +499,7 @@ public static class LabelCommands
   /// <summary>
   /// Creates a label by trying each candidate type's static Create overloads until one accepts arguments from
   /// <paramref name="argumentBuilder"/> (which returns null for an overload it can't fill) and yields an object id.
+  /// When none does, throws CIVIL3D.TRANSACTION_FAILED.
   /// </summary>
   private static ObjectId TryCreateLabel(
     IEnumerable<string> candidateTypeNames,
@@ -561,6 +597,8 @@ public static class LabelCommands
     return args;
   }
 
+  /// <summary>Create arguments for a profile station label: ids get the profile then the style, the first double gets
+  /// the station; see BuildSurfaceSpotLabelArguments.</summary>
   private static object?[]? BuildProfileStationLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId profileId, ObjectId styleId, double station)
   {
     var args = new object?[parameters.Length];
@@ -619,6 +657,7 @@ public static class LabelCommands
     return args;
   }
 
+  /// <summary>Create arguments for a label needing only the object and style ids. Not called.</summary>
   private static object?[]? BuildSingleObjectLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId objectId, ObjectId styleId)
   {
     var args = new object?[parameters.Length];
@@ -676,6 +715,8 @@ public static class LabelCommands
     return args;
   }
 
+  /// <summary>Create arguments for an alignment station label. Not called: alignment station labels use
+  /// StationOffsetLabel.Create.</summary>
   private static object?[]? BuildAlignmentStationLabelArguments(Civil3DCompatibility.ParameterShape[] parameters, ObjectId alignmentId, ObjectId styleId, double station)
   {
     var args = new object?[parameters.Length];
@@ -760,6 +801,7 @@ public static class LabelCommands
     return ObjectId.Null;
   }
 
+  /// <summary>An object's handle, or null for a null id or an object that can't be opened.</summary>
   private static string? ResolveHandle(Transaction transaction, ObjectId objectId)
   {
     if (objectId == ObjectId.Null)
@@ -778,6 +820,8 @@ public static class LabelCommands
     }
   }
 
+  /// <summary>A network's pipe ids (<paramref name="pipe"/> true) or structure ids, from every member name that
+  /// exists (ids can repeat).</summary>
   private static IEnumerable<ObjectId> GetPipeRelatedObjectIds(DBObject network, bool pipe)
   {
     var members = pipe
@@ -797,6 +841,8 @@ public static class LabelCommands
     }
   }
 
+  /// <summary>An object's label ids, from every one of GetLabelIds/LabelIds/Labels that exists (ids can repeat).
+  /// </summary>
   private static IEnumerable<ObjectId> GetLabelIds(object target)
   {
     foreach (var name in new[] { "GetLabelIds", "LabelIds", "Labels" })
@@ -812,6 +858,7 @@ public static class LabelCommands
     }
   }
 
+  /// <summary>A property or field read by name through Civil3DCompatibility (null when neither exists).</summary>
   private static object? GetNamedMemberValue(object? value, string memberName)
   {
     if (value == null)
@@ -828,6 +875,7 @@ public static class LabelCommands
     return CivilObjectUtils.GetPropertyValue<ObjectId>(value, propertyName);
   }
 
+  /// <summary>An object's name, or null for a null id or an object that can't be opened.</summary>
   private static string? ResolveObjectName(Transaction transaction, ObjectId objectId)
   {
     if (objectId == ObjectId.Null)
@@ -846,7 +894,8 @@ public static class LabelCommands
   }
 
   /// <summary>Sets the first writable property of the given names (e.g. LabelSetId) to <paramref name="objectId"/>;
-  /// a null id means the requested style or label set wasn't found.</summary>
+  /// a null id means the requested style or label set wasn't found (CIVIL3D.OBJECT_NOT_FOUND). An object with none of
+  /// the properties writable is CIVIL3D.TRANSACTION_FAILED.</summary>
   private static void ApplyObjectIdProperty(object target, ObjectId objectId, params string[] propertyNames)
   {
     if (objectId == ObjectId.Null)

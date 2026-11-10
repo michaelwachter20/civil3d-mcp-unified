@@ -1,3 +1,8 @@
+// The civil3d_help tool and the civil3d://help/... resources. Registered by register.ts (outside the domain
+// manifest); its handler is also captured for the HTTP bridge (toolHandlerRegistry.ts). Uses src/help/ for the work.
+// Reads the Autodesk Offline Help files installed with Civil 3D (read-only) and the bundled video catalog; the only
+// files written are the search index cache, by helpIndex.ts, under %LOCALAPPDATA%. Never calls the plugin and holds
+// no job data. Local file paths stay out of answers unless CIVIL3D_DEBUG_PATHS=true. More in the block below.
 import fs from "node:fs";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -39,6 +44,7 @@ interface ProgressExtra {
   }) => Promise<void>;
 }
 
+/** civil3d_help arguments after zod parsing (defaults filled in by the schema below). */
 interface HelpToolInput {
   action: "search" | "search_videos" | "get_topic" | "status" | "reindex";
   query?: string;
@@ -320,6 +326,7 @@ function topicResult(topic: HelpTopic) {
   };
 }
 
+/** An MCP result in the manifest tools' shape: the JSON as text plus `structuredContent: { action, result }`. */
 function jsonResult(action: string, result: unknown, additionalContent: ContentBlock[] = []) {
   return {
     content: [
@@ -330,6 +337,7 @@ function jsonResult(action: string, result: unknown, additionalContent: ContentB
   };
 }
 
+/** The fields of a video the AI needs (ids, title, page and media links). */
 function publicVideo(video: HelpVideoRef) {
   return {
     id: video.id,
@@ -373,12 +381,14 @@ function toolError(code: string, message: string, rpcCode: number) {
   };
 }
 
+/** An Error with code CIVIL3D.INVALID_INPUT (reported with rpcCode -32602). */
 function invalidInput(message: string): Error & { code: string } {
   const error = new Error(message) as Error & { code: string };
   error.code = "CIVIL3D.INVALID_INPUT";
   return error;
 }
 
+/** The error's own code, else OBJECT_NOT_FOUND for "not found / not installed" messages, else INTERNAL_ERROR. */
 function errorCode(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && typeof error.code === "string") return error.code;
   if (/not found|not installed/i.test(error instanceof Error ? error.message : String(error))) return "CIVIL3D.OBJECT_NOT_FOUND";
@@ -418,6 +428,7 @@ function versionFromTopicUri(uri?: string): string | undefined {
   }
 }
 
+/** The index status without its local paths (help root, cache file) unless CIVIL3D_DEBUG_PATHS=true. */
 function safeIndexStatus(status: HelpIndexStatus) {
   const { root, cachePath, ...safe } = status;
   return process.env.CIVIL3D_DEBUG_PATHS === "true"

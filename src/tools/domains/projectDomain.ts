@@ -1,3 +1,8 @@
+// Project domain (Civil 3D data shortcuts, not the suite's job database): `civil3d_project` and its
+// `civil3d_data_shortcut*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts). Each action is one call
+// to DataShortcutCommands.cs. Only data_shortcut_list is read-only; create, promote, reference, sync and
+// create_reference change the drawing or the data-shortcut project and are non-retryable (promote and sync also match
+// approvalPolicy's name rule), so all of them need an approvalToken. Details are in the comment block below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -131,6 +136,11 @@ const DataShortcutCreateReferenceArgsSchema = z.object({
  */
 export const PROJECT_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "project",
+  // Action -> plugin method: data_shortcut_list (listDataShortcuts, read-only), data_shortcut_create
+  // (createDataShortcut), data_shortcut_promote (promoteDataShortcut, answers manual_step_required),
+  // data_shortcut_reference (referenceDataShortcut), data_shortcut_sync (syncDataShortcuts; dryRun only reports, but
+  // approval is still required because of the action's name), data_shortcut_create_reference
+  // (createDataShortcutReference). All but the list need approval.
   actions: {
     data_shortcut_list: {
       action: "data_shortcut_list",

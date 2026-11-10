@@ -1,3 +1,8 @@
+// Guards the job's User Knowledge folder (src/tools/userKnowledge.ts, projectNotes.ts): listing, reading plain text, Word,
+// Excel and PowerPoint files, reading what Project Analyzer already stored, refusing paths outside the folder, and that
+// the feature works standalone (never imports or starts Project Analyzer or TBC MCP).
+// Uses a copy of tests/fixtures/fixture.db in temp folders; builds small Office zip files itself (see zip()).
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

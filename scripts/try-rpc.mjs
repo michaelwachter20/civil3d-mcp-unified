@@ -1,5 +1,9 @@
 // Sends one JSON-RPC request straight to the plugin (bypasses the MCP server and approval flow).
 // Usage: node scripts/try-rpc.mjs <method> ['<json params>']
+// A developer's debugging aid, run by hand only: it talks to the plugin on CIVIL3D_HOST:CIVIL3D_PORT (default
+// 127.0.0.1:8080), so Civil 3D must be open with the AI connection on. Because it skips the MCP server, nothing asks
+// for approval: a write method changes the drawing at once (still one undo step, through the plugin's host gate).
+// Use read methods unless the drawing is disposable. Prints the first complete JSON response, then closes.
 import net from "node:net";
 
 const [method, params = "{}"] = process.argv.slice(2);

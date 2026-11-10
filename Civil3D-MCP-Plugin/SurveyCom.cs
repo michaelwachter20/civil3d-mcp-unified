@@ -1,3 +1,8 @@
+// SurveyCom.cs - late-bound (dynamic) access to Civil 3D's survey COM API (AeccXUiSurvey), used only by
+// SurveyCommands (civil3d_survey, src/tools/domains/surveyDomain.ts). The COM application is found by LandCom.
+// Survey databases are files in the survey working folder, not drawing objects, so work here does not go through a
+// drawing transaction; SurveyCommands still runs it inside the host gate. A database the user already has open is
+// never closed on them, and ReleaseObjects must run between calls so a read sees the write before it.
 using System.Runtime.InteropServices;
 
 namespace Civil3DMcpPlugin;
@@ -37,7 +42,8 @@ internal static class SurveyCom
 
   /// <summary>
   /// Runs an action with a survey database open. One the user already has open in the Survey tab is left open; closing
-  /// it would pull it out from under them.
+  /// it would pull it out from under them. Opened for write (<c>Open</c>) or read-only (<c>OpenEx(true)</c>). Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND when no survey database has that name.
   /// </summary>
   public static T WithDatabase<T>(string name, bool forWrite, Func<dynamic, T> action)
   {
@@ -62,6 +68,7 @@ internal static class SurveyCom
     }
   }
 
+  /// <summary>Whether the named database is the one currently open in the survey document.</summary>
   private static bool IsCurrent(dynamic document, string name)
   {
     try

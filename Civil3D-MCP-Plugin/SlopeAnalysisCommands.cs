@@ -1,3 +1,8 @@
+// SlopeAnalysisCommands.cs - read-only cut/fill slope geometry along an alignment. Methods (CommandDispatcher.cs):
+// calculateSlopeGeometry (called by src/tools/domains/slopeAnalysisDomain.ts, civil3d_slope_analysis) and
+// checkSlopeStability (dispatched, but no TS action calls it; it always refuses). Runs in CivilExecution.ReadAsync
+// (main thread, no undo step); never changes the drawing. The catch-point offsets are a planning estimate from the
+// profile, the surface and the given slope ratios, not a grading or corridor model.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.ApplicationServices;
@@ -8,12 +13,24 @@ namespace Civil3DMcpPlugin;
 
 /// <summary>
 /// Slope geometry and stability analysis commands.
-/// Calculates daylight line catch-points and flags unstable slope conditions.
+/// Calculates daylight line catch-points; the stability check refuses rather than guess (see
+/// <see cref="CheckSlopeStabilityAsync"/>).
 /// </summary>
 public static class SlopeAnalysisCommands
 {
   // ─── calculateSlopeGeometry ──────────────────────────────────────────────────
 
+  /// <summary>
+  /// <c>calculateSlopeGeometry</c>: for each station every <c>stationInterval</c> (default 10) between
+  /// <c>stationStart</c>/<c>stationEnd</c> (clipped to the profile's range), the design elevation, the ground elevation
+  /// under the alignment, cut/fill depth, and the catch-point offset: <c>roadwayWidth</c> (used as a half width, default
+  /// 0) plus height x ratio (<c>cutSlopeRatio</c> default 2, <c>fillSlopeRatio</c> default 3), with benches of
+  /// <c>benchWidth</c> every <c>benchHeightInterval</c> (default 20). <c>alignmentName</c>, <c>profileName</c> and
+  /// <c>surfaceName</c> are optional: without them the first alignment, a profile named like "FG"/"Design" (else the
+  /// first) and the first surface are used; a profile name that isn't found also falls back that way. Read-only.
+  /// Throws CIVIL3D.OBJECT_NOT_FOUND (no alignment / named alignment or surface missing / no profile or surface),
+  /// CIVIL3D.INVALID_INPUT (range outside the profile), CIVIL3D.API_ERROR (a sample failed).
+  /// </summary>
   public static Task<object?> CalculateSlopeGeometryAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetOptionalString(parameters, "alignmentName");
@@ -132,6 +149,8 @@ public static class SlopeAnalysisCommands
 
   // ─── checkSlopeStability ─────────────────────────────────────────────────────
 
+  /// <summary><c>checkSlopeStability</c>: always throws CIVIL3D.API_ERROR. A stability verdict needs geotechnical
+  /// parameters and a factor-of-safety method from an engineer, so none is made up. Reads nothing; changes nothing.</summary>
   public static Task<object?> CheckSlopeStabilityAsync(JsonObject? parameters)
   {
     throw new JsonRpcDispatchException(
@@ -141,6 +160,8 @@ public static class SlopeAnalysisCommands
 
   // ─── Private helpers ─────────────────────────────────────────────────────────
 
+  /// <summary>Horizontal run of a slope of <paramref name="height"/> at <paramref name="slopeRatio"/>:1, plus one
+  /// bench width for each full bench interval climbed (no benches when width or interval isn't positive).</summary>
   private static double CalculateCatchOffset(double height, double slopeRatio, double benchWidth, double benchInterval)
   {
     if (benchWidth <= 0 || benchInterval <= 0 || height <= 0)
@@ -151,6 +172,9 @@ public static class SlopeAnalysisCommands
     return (benches * benchInterval * slopeRatio) + (benches * benchWidth) + (remaining * slopeRatio);
   }
 
+  // The three samplers below turn a Civil 3D exception into CIVIL3D.API_ERROR naming the object and station/point.
+
+  /// <summary>The profile's elevation at a station.</summary>
   private static double GetProfileElevationAtStation(Profile profile, double station)
   {
     try
@@ -165,6 +189,7 @@ public static class SlopeAnalysisCommands
     }
   }
 
+  /// <summary>The alignment's XY at a station, offset 0.</summary>
   private static (double X, double Y) GetAlignmentPointAtStation(Alignment alignment, double station)
   {
     try
@@ -182,6 +207,7 @@ public static class SlopeAnalysisCommands
     }
   }
 
+  /// <summary>The surface elevation at XY (throws outside the surface).</summary>
   private static double GetSurfaceElevation(CivilSurface surface, double x, double y)
   {
     try
@@ -196,6 +222,7 @@ public static class SlopeAnalysisCommands
     }
   }
 
+  /// <summary>The drawing's first alignment, or null.</summary>
   private static Alignment? GetFirstAlignment(CivilDocument civilDoc, Transaction transaction)
   {
     foreach (ObjectId id in civilDoc.GetAlignmentIds())
@@ -206,6 +233,7 @@ public static class SlopeAnalysisCommands
     return null;
   }
 
+  /// <summary>The drawing's first surface, or null.</summary>
   private static CivilSurface? GetFirstSurface(CivilDocument civilDoc, Transaction transaction)
   {
     foreach (ObjectId id in civilDoc.GetSurfaceIds())
@@ -216,6 +244,7 @@ public static class SlopeAnalysisCommands
     return null;
   }
 
+  /// <summary>The alignment's profile with this name (case-insensitive), or null.</summary>
   private static Profile? FindProfileByName(Alignment alignment, Transaction transaction, string name)
   {
     foreach (ObjectId id in alignment.GetProfileIds())
@@ -230,6 +259,7 @@ public static class SlopeAnalysisCommands
     return null;
   }
 
+  /// <summary>The first profile whose name contains "FG" or "Design" (when preferred), else the first profile, else null.</summary>
   private static Profile? GetFirstProfile(Alignment alignment, Transaction transaction, bool preferFinishedGrade)
   {
     Profile? first = null;

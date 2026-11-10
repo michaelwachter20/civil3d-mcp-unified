@@ -1,3 +1,6 @@
+// StationMath.cs - pure station arithmetic and sample line naming shared by SectionCommands (createSampleLines,
+// getSectionData) and ProfileCommands (elevations every interval). No Civil 3D types and no drawing access, so
+// tests/FileBoundaryHarness compiles this file and tests it without Civil 3D.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -11,13 +14,6 @@ namespace Civil3DMcpPlugin;
 public static class StationMath
 {
   /// <summary>
-  /// Stations every <paramref name="interval"/> from <paramref name="start"/> to <paramref name="end"/>, the end
-  /// included when it falls on the interval. Each is worked out as start + i × interval rather than by adding the
-  /// interval up, because a running sum drifts: 0.1 added ten times is 0.9999999999999999, so a 0+00 to 1+00 run
-  /// every 10 would lose its last station. A station within a millionth of an interval of the end counts as the end.
-  /// Empty when the interval isn't a positive number or the end is before the start.
-  /// </summary>
-  /// <summary>
   /// Which of <paramref name="count"/> items to keep to show at most <paramref name="most"/>: evenly spread, the first
   /// and last always in. A real section can have over a thousand points on one surface.
   /// </summary>
@@ -29,6 +25,13 @@ public static class StationMath
     return Enumerable.Range(0, most).Select(index => (int)Math.Round(index * (count - 1) / (double)(most - 1))).Distinct().ToList();
   }
 
+  /// <summary>
+  /// Stations every <paramref name="interval"/> from <paramref name="start"/> to <paramref name="end"/>, the end
+  /// included when it falls on the interval. Each is worked out as start + i × interval rather than by adding the
+  /// interval up, because a running sum drifts: 0.1 added ten times is 0.9999999999999999, so a 0+00 to 1+00 run
+  /// every 10 would lose its last station. A station within a millionth of an interval of the end counts as the end.
+  /// Empty when the interval isn't a positive number or the end is before the start.
+  /// </summary>
   public static List<double> IntervalStations(double start, double end, double interval)
   {
     var stations = new List<double>();

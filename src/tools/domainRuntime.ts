@@ -1,14 +1,3 @@
-import { z, type ZodRawShape, type ZodTypeAny } from "zod";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { approvalPolicy, getActiveDrawingFingerprint, hasApprovalRisk } from "./approvalPolicy.js";
-import { captureToolHandler } from "./toolHandlerRegistry.js";
-import { fitAnswer } from "./largeAnswer.js";
-import { maybeStoreReportResource } from "./reportResourceStore.js";
-import { idempotencyStore } from "./idempotencyStore.js";
-import { createLogger } from "../utils/logger.js";
-import { createRequestId, runWithRequestId } from "../utils/requestContext.js";
-import type { ToolCapability, ToolCatalogEntry, ToolDomain } from "./toolMetadata.js";
-
 /**
  * The runtime every manifest tool goes through: it turns a DomainToolDefinition (one file per domain in domains/)
  * into MCP tools and gives each call the same path:
@@ -19,7 +8,20 @@ import type { ToolCapability, ToolCatalogEntry, ToolDomain } from "./toolMetadat
  * plus a request id for the logs, MCP progress notifications, optional idempotency keys, and one error shape
  * (buildToolErrorResult) for everything a handler throws. toolManifest.ts calls captureDomainToolHandlers (for
  * the HTTP bridge and civil3d_orchestrate) and registerSelectedDomainTools (for the MCP client) for each domain.
+ * Safety: no action runs before its schema and the approval check pass, and the HTTP bridge and the orchestrator call
+ * these same handlers, so they get the same checks (a composite workflow's inner steps are checked once, on the
+ * workflow action). Nothing here touches a drawing; `execute` does, through the plugin.
  */
+import { z, type ZodRawShape, type ZodTypeAny } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { approvalPolicy, getActiveDrawingFingerprint, hasApprovalRisk } from "./approvalPolicy.js";
+import { captureToolHandler } from "./toolHandlerRegistry.js";
+import { fitAnswer } from "./largeAnswer.js";
+import { maybeStoreReportResource } from "./reportResourceStore.js";
+import { idempotencyStore } from "./idempotencyStore.js";
+import { createLogger } from "../utils/logger.js";
+import { createRequestId, runWithRequestId } from "../utils/requestContext.js";
+import type { ToolCapability, ToolCatalogEntry, ToolDomain } from "./toolMetadata.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -38,7 +40,11 @@ interface ToolProgressExtra {
   }) => Promise<void>;
 }
 
-/** Capabilities that change something; a tool whose actions have none of them is annotated readOnlyHint. */
+/**
+ * Capabilities that change something; a tool whose actions have none of them is annotated readOnlyHint. Wider than
+ * approvalPolicy.ts's set (it adds "generate" and "register"), so a report or knowledge tool is not hinted read-only
+ * even though it may need no approval.
+ */
 const MUTATING_CAPABILITIES = new Set<ToolCapability>([
   "create",
   "edit",
@@ -94,6 +100,7 @@ export interface DomainToolDefinition {
   exposures: DomainToolExposure[];
 }
 
+/** Distinct non-empty strings in first-seen order, or undefined when there are none (keeps catalog entries lean). */
 function uniqueStrings(values: Iterable<string | undefined>): string[] | undefined {
   const unique = [...new Set([...values].filter((value): value is string => Boolean(value)))];
   return unique.length > 0 ? unique : undefined;
@@ -240,6 +247,7 @@ async function executeExposure(
     };
   };
 
+  // A keyed call shares the first identical call's promise, so approval is enforced (and its token used) only once.
   if (!idempotencyKey) return executeOnce();
   const signature = { ...rawArgs };
   delete signature.approvalToken;

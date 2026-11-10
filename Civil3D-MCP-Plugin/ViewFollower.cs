@@ -1,3 +1,8 @@
+// ViewFollower.cs - moves the view to what an AI write changed, so the user sees it. CivilExecution (WriteAsync,
+// WithDocumentLockAsync) and ScriptEngine (write runs) call Track before the work and Follow after the commit;
+// PluginEntry's C3DMCPFOLLOW toggles Enabled, and getScriptingStatus reports it. It only changes the view (no drawing
+// objects, no undo step); reading bounds uses its own open-close transaction after the request's transaction has
+// ended. It never throws into the operation that triggered it.
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -7,7 +12,7 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Keeps MCP work on screen: after a committed write, pans (and zooms out only
 /// if needed) so the created or modified model-space entities are visible.
-/// Never zooms in and never fails the operation that triggered it.
+/// Never zooms in (except to a script's FocusOn area) and never fails the operation that triggered it.
 /// Toggle with C3DMCPFOLLOW or CIVIL3D_FOLLOW_VIEW=false.
 /// </summary>
 internal static class ViewFollower
@@ -15,6 +20,7 @@ internal static class ViewFollower
   private const int MaxTrackedObjects = 20000;
   private const double MarginFraction = 0.15;
 
+  /// <summary>On unless CIVIL3D_FOLLOW_VIEW=false; C3DMCPFOLLOW flips it for the session.</summary>
   public static bool Enabled { get; set; } =
     !string.Equals(Environment.GetEnvironmentVariable("CIVIL3D_FOLLOW_VIEW"), "false", StringComparison.OrdinalIgnoreCase);
 
@@ -62,6 +68,8 @@ internal static class ViewFollower
     }
   }
 
+  /// <summary>The combined bounds of the tracked ids that are live model-space entities (objects Civil 3D hides at the
+  /// origin are skipped), read in an open-close transaction; null when none have bounds.</summary>
   private static Extents3d? GetModelSpaceExtents(Database database, IReadOnlyCollection<ObjectId> ids)
   {
     var modelSpaceId = SymbolUtilityServices.GetBlockModelSpaceId(database);
@@ -120,6 +128,8 @@ internal static class ViewFollower
     editor.SetCurrentView(view);
   }
 
+  /// <summary>The extents' eight corners in the view's display coordinates (handles view direction and twist), as a
+  /// 2D box.</summary>
   private static (double MinX, double MinY, double MaxX, double MaxY) ToDisplay(ViewTableRecord view, Extents3d extents)
   {
     var displayToWorld =
@@ -142,6 +152,8 @@ internal static class ViewFollower
     return (minX, minY, maxX, maxY);
   }
 
+  /// <summary>Does nothing when the extents are already in view; otherwise centers on them, keeping the zoom unless
+  /// they need more room (then zooms out just enough, with a margin).</summary>
   private static void MoveViewToShow(Document document, Extents3d extents)
   {
     var editor = document.Editor;
@@ -189,6 +201,8 @@ internal static class ViewFollower
     editor.SetCurrentView(view);
   }
 
+  /// <summary>Records the ids of objects appended or modified in a database (up to 20,000) while it is subscribed;
+  /// disposing unsubscribes. Does nothing when following is off.</summary>
   internal sealed class ChangeTracker : IDisposable
   {
     private readonly Database _database;
@@ -206,6 +220,7 @@ internal static class ViewFollower
       }
     }
 
+    /// <summary>The changed object ids seen so far.</summary>
     public IReadOnlyCollection<ObjectId> Ids => _ids;
 
     private void OnObjectChanged(object sender, ObjectEventArgs e)

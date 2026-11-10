@@ -1,3 +1,6 @@
+// Guards the framework standards lookup (src/standards/FrameworkStandardsService.ts, civil3d://standards/framework):
+// topic matching, and returning nothing for a query that no rule matches. Reads the standards data shipped in src/.
+
 import { describe, it, expect } from "vitest";
 import { lookupFrameworkStandards } from "../src/standards/FrameworkStandardsService.js";
 

@@ -1,3 +1,7 @@
+// Guards civil3d_orchestrate execution (src/tools/civil3d_orchestrate.ts, src/orchestration/): a routed request runs
+// through the registered tool handlers with defaults, required-field checks and extracted inputs applied.
+// The tool handler registry and project context are mocked; no plugin or Civil 3D.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { executeRegisteredToolMock, getProjectContextMock } = vi.hoisted(() => ({

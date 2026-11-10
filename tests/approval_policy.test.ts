@@ -1,3 +1,7 @@
+// Guards src/tools/approvalPolicy.ts (repo rule 4: declare actions truthfully): which actions need approval, and the
+// single-use approval token that is bound to the exact parameters and the drawing identity.
+// Pure unit test: no Civil 3D, no plugin.
+
 import { describe, expect, it } from "vitest";
 import {
   ApprovalPolicyService,

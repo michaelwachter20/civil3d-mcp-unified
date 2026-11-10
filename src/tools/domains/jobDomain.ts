@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The job domain: `civil3d_job`, background jobs for the few plugin operations that can run longer than one request
  * should (start, status, cancel). No aliases. The plugin side is JobCommands.cs and JobRegistry.cs; domainRuntime.ts
@@ -11,7 +7,13 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * completed, failed or cancelled. The job is bound to the drawing active when it started and fails, changing
  * nothing, if another drawing is active when its turn in the host queue comes. Corridor rebuilds make their own jobs
  * (civil3d_corridor) and are checked with the same `status` / `cancel`.
+ *
+ * Plugin methods: startJob, getJobStatus, cancelJob. Only `start` needs an approvalToken (see below); the work the
+ * job does is the inner method's, so a DEM import or PDF publish is approved once, on `start`.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 /**
  * The operations a job can run, each a plugin method run in the background: publish_sheet_pdf (publishSheetPdf),

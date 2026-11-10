@@ -1,7 +1,7 @@
 /**
  * Shared types of `civil3d_help`: installations found (helpDiscovery.ts), parsed topics and images (helpParser.ts),
  * the cached index and search results (helpIndex.ts), and tutorial videos (videoCatalog.ts). helpTool.ts returns
- * these shapes to the AI.
+ * these shapes to the AI. Types only: no code runs from this file.
  */
 
 /** The kind of help page, guessed by helpParser.inferTopicType. */

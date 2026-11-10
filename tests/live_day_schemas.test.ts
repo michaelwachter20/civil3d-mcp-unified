@@ -1,3 +1,7 @@
+// Regression tests for input schemas that were wrong when first tried on a live Civil 3D: the tool's outer schema and
+// each action's own schema must agree (surface and section domains). Pure schema tests; the real tool schemas are
+// imported from src/.
+
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { SURFACE_DOMAIN_DEFINITION } from "../src/tools/domains/surfaceDomain.js";

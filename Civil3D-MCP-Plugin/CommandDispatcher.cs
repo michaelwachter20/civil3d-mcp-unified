@@ -1,3 +1,9 @@
+// The JSON-RPC method table: one switch from method name to the static handler in a *Commands.cs class.
+// Called by PluginRuntime.HandleRawRequestAsync for every request RpcTcpServer accepts; the names are the ones the
+// TypeScript domains send with sendCommand and list in pluginMethods (src/tools/domains/*Domain.ts).
+// It does no drawing work itself: each handler goes through CivilExecution (or, for pure math, nothing).
+// Rules: one "name" => Handler(...) entry per line (tests/manifest_dispatcher_parity.test.ts parses this file); after
+// adding, renaming or removing a name run npm run docs:generate (CLAUDE.md "Adding a tool").
 using System.Text.Json.Nodes;
 
 namespace Civil3DMcpPlugin;

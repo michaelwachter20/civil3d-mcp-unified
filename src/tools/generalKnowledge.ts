@@ -1,3 +1,8 @@
+// The job-data check every piece of general know-how goes through before it is saved: preferences and lessons
+// (knowledgeBase.ts), skills (skillsLibrary.ts), saved scripts (scriptingDomain.ts) and practices (practices.ts) call
+// checkGeneral / jobDataProblems. It reads the job names from the suite's project databases (projectDb.ts
+// jobIdentities, read-only) and the user's home folder; it writes nothing. tests/knowledge_audit.test.ts applies the
+// same check to everything git tracks under skills\. The reasoning is in the block below the imports.
 import os from "node:os";
 import { knowledgeError } from "./knowledgeBase.js";
 import { jobIdentities } from "./projectDb.js";
@@ -11,7 +16,8 @@ import { jobIdentities } from "./projectDb.js";
  * them to everything shipped in skills\.
  */
 
-export const ALLOWED_PATH_PREFIXES = ["c:\\program files", "c:\\program files (x86)", "c:\\programdata", "c:\\windows"];
+/** Absolute paths that are general (install and system folders), so know-how may name them. Compared lower case. */
+export const ALLOWED_PATH_PREFIXES =["c:\\program files", "c:\\program files (x86)", "c:\\programdata", "c:\\windows"];
 
 /** Folder names too generic to identify a job, even when a job's folder ends in one. */
 export const GENERIC_FOLDER_NAMES = new Set([
@@ -21,6 +27,7 @@ export const GENERIC_FOLDER_NAMES = new Set([
   "incoming", "outgoing", "submittals", "correspondence", "email", "reports", "models", "points",
 ]);
 
+// A drive letter path ("X:\") and a UNC share ("\\server\share") not inside a word.
 const DRIVE_PATH = /(?<![A-Za-z0-9])[A-Za-z]:\\/g;
 const UNC_PATH = /(?:^|[\s"'(=[,`])\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]/;
 // A drawing or survey file named for real ("C-104.dwg", "Elm St.vce"); "<drawing>.dwg", "*.dwg" and ".dwg" are
@@ -83,7 +90,8 @@ export function jobDataProblems(text: string, names?: string[]): string[] {
 
 /**
  * Refuses to save know-how that names a job, its folders or files, a project drive or the user's profile. Texts
- * that aren't strings (parameters, topics) are checked as JSON.
+ * that aren't strings (parameters, topics) are checked as JSON. `what` names the item in the message ("lesson",
+ * "skill"). Throws knowledgeError CIVIL3D.INVALID_INPUT naming what was found (at most one of each kind), so the AI can rewrite it generally.
  */
 export function checkGeneral(what: string, ...texts: unknown[]) {
   const problems = jobDataProblems(texts

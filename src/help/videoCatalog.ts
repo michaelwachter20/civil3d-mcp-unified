@@ -1,3 +1,6 @@
+// The Autodesk tutorial video catalog behind civil3d_help's video suggestions. Used by src/tools/helpTool.ts. Reads
+// autodesk_videos.json once (copied to build/help/data by scripts/copy-static-assets.mjs) and writes nothing; makes
+// no network calls itself (clients play the videos from help.autodesk.com). Details in the block below.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,6 +24,7 @@ interface RawVideoPage {
   video_urls?: string[];
 }
 
+/** One scrape run's result in the file: its status and the pages with videos. */
 interface RawVideoScrapeResult {
   status?: string;
   video_pages?: RawVideoPage[];
@@ -84,10 +88,12 @@ export class AutodeskVideoCatalog {
       .slice(0, boundedLimit);
   }
 
+  /** A video by id (for the civil3d://help/videos resource). */
   get(id: string): HelpVideoRef | undefined {
     return this.byId.get(id);
   }
 
+  /** How many videos are loaded and from which help releases (civil3d_help action=status). */
   status(): { count: number; sourceVersions: string[] } {
     return {
       count: this.videos.length,
@@ -176,6 +182,7 @@ function trustedAutodeskUrl(value: string | undefined, requiredSuffix: string): 
   }
 }
 
+/** The title without a leading "Video:" and with whitespace collapsed. */
 function cleanVideoTitle(value: string): string {
   return value.replace(/^video:\s*/i, "").replace(/\s+/g, " ").trim();
 }
@@ -190,6 +197,7 @@ function normalizeVideoText(value: string): string {
     .trim();
 }
 
+/** Escapes the five HTML-special characters for text and attribute values. */
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

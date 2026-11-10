@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The parcel domain file: `civil3d_parcel` (sites and parcels) and its aliases `civil3d_parcel_create`,
  * `civil3d_parcel_edit`, `civil3d_parcel_lot_line_adjust` and `civil3d_parcel_report`. The plugin side is
@@ -9,8 +5,15 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  * Civil 3D releases; domainRuntime.ts turns these definitions into validated, approval-checked MCP tools.
  *
  * Every action forwards to one plugin method. Areas are worked out by the plugin as if the drawing were in feet
- * (`targetAreaSqFt`, the report's `units`), so answers for a drawing in meters need care.
+ * (the report's `units` conversion), so answers for a drawing in meters need care. lot_line_adjust always refuses.
+ *
+ * Approval (approvalPolicy.ts): list_sites, list, get and report are reads. create, edit, lot_line_adjust (drawing
+ * writes) and export_report (writes a CSV) need an approvalToken. The `civil3d_parcel_report` alias switches to
+ * export_report whenever `outputPath` is given, so its approval follows.
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 const GenericParcelResponseSchema = z.object({}).passthrough();
 
@@ -127,9 +130,8 @@ const ParcelEditArgsSchema = z.object({
 });
 
 /**
- * `lot_line_adjust`: slide a lot line until the parcel reaches `targetAreaSqFt`, within `tolerance` (default 1, in
- * the drawing's square units). `lotLineHandle` picks which lot line moves. The answer's `converged` says whether the
- * area ended within tolerance; when it is false, check the parcel in Civil 3D.
+ * `lot_line_adjust`: meant to slide a lot line until the parcel reaches `targetAreaSqFt`, within `tolerance`
+ * (default 1). The plugin currently refuses every call (see the action below), so these arguments are only checked.
  */
 const ParcelLotLineAdjustArgsSchema = z.object({
   action: z.literal("lot_line_adjust"),
@@ -250,10 +252,8 @@ export const PARCEL_DOMAIN_DEFINITION: DomainToolDefinition = {
         }),
       ),
     },
-    // NOTE: AdjustParcelLotLineAsync calls `AdjustLotLine` / `SlideAngle` on the Parcel by reflection, which aren't
-    // documented Parcel members, and compares the target in square feet with Parcel.Area in drawing units without
-    // converting (TargetAreaToDrawingUnits returns its input). When neither method exists nothing moves, and in a
-    // drawing in meters `converged` compares square feet with square meters.
+    // The plugin always refuses (CIVIL3D.API_ERROR, nothing changed): Civil 3D has no API for sliding a lot line, and
+    // the answer points the user to Parcel Layout Tools (Slide Line). Still approval-gated, as a declared edit.
     lot_line_adjust: {
       action: "lot_line_adjust",
       inputSchema: ParcelLotLineAdjustArgsSchema,

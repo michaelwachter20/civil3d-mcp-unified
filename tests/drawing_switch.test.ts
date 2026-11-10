@@ -1,3 +1,6 @@
+// Guards the civil3d_drawing actions list_open and switch (src/tools/domains/drawingRuntimeDomain.ts): they must not
+// need approval, must map to the right plugin methods, and switch must require a drawing name. Pure unit test.
+
 import { describe, expect, it } from "vitest";
 import { hasApprovalRisk } from "../src/tools/approvalPolicy.js";
 import { DRAWING_RUNTIME_DOMAIN_DEFINITION } from "../src/tools/domains/drawingRuntimeDomain.js";

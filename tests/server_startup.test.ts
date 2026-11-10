@@ -1,3 +1,7 @@
+// Guards the whole MCP server wiring (src/tools/register.ts, toolManifest.ts, toolHandlerRegistry.ts): a real in-memory
+// MCP client sees typed tools, output schemas, annotations, resources and progress; protected actions are blocked
+// without approval before reaching the plugin. In-memory transport; no plugin connection is needed and no Civil 3D.
+
 import { describe, expect, it } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

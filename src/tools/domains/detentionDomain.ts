@@ -1,3 +1,8 @@
+// Detention domain: the `civil3d_detention` tool plus the aliases `civil3d_detention_basin_size_calculate` and
+// `civil3d_detention_stage_storage`. Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts).
+// Both actions are read-only calculations in DetentionCommands.cs (calculateDetentionBasinSize,
+// calculateDetentionStageStorage; the stage-storage one reads a surface). Nothing changes the drawing, so no
+// approval. Node only fills the defaults (60 min storm, modified rational, 3:1 slopes, 0.5 elevation step, orifice).
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -10,6 +15,7 @@ const DetentionStageStorageArgs = z.object({ action: z.literal("stage_storage"),
 export const DETENTION_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "detention",
   actions: {
+    // basin_size_calculate -> calculateDetentionBasinSize; stage_storage -> calculateDetentionStageStorage. Both read-only.
     basin_size_calculate: { action: "basin_size_calculate", inputSchema: DetentionBasinSizeArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["calculateDetentionBasinSize"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("calculateDetentionBasinSize", { inflow: args.inflow, outflow: args.outflow, stormDuration: args.stormDuration ?? 60, method: args.method ?? "modified_rational", sideSlope: args.sideSlope ?? 3.0, bottomWidth: args.bottomWidth ?? 10.0, freeboardDepth: args.freeboardDepth ?? 1.0, surfaceName: args.surfaceName ?? null })) },
     stage_storage: { action: "stage_storage", inputSchema: DetentionStageStorageArgs, responseSchema: GenericResponseSchema, capabilities: ["query", "analyze", "generate"], requiresActiveDrawing: true, safeForRetry: true, pluginMethods: ["calculateDetentionStageStorage"], execute: async (args) => await withApplicationConnection(async (appClient) => await appClient.sendCommand("calculateDetentionStageStorage", { surfaceName: args.surfaceName, bottomElevation: args.bottomElevation, topElevation: args.topElevation, elevationIncrement: args.elevationIncrement ?? 0.5, outletType: args.outletType ?? "orifice", outletDiameter: args.outletDiameter ?? null, weirLength: args.weirLength ?? null, dischargeCoefficient: args.dischargeCoefficient ?? null })) },
   },

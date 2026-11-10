@@ -1,3 +1,12 @@
+// Plan production handlers for civil3d_plan_production (src/tools/domains/planProductionDomain.ts): sheet set files,
+// layout viewports and PDF publishing.
+// JSON-RPC methods: listSheetSets, getSheetSetInfo, getSheetProperties, createSheetSet, addSheet (sheet set .dst files
+// through SheetSetCom, run with CivilExecution.OnActiveDocumentAsync: main thread, host gate, no transaction, no
+// drawing change); createSheetView, setSheetViewScale (CivilExecution.WriteAsync: command context, document lock, one
+// transaction, one undo step); publishSheetPdf, exportSheetSet (WriteAsync around PdfPublisher; also reached through
+// the publish_sheet_pdf job and WorkflowCommands); setSheetTitleBlock, createPlanProfileSheet,
+// updatePlanProfileSheetAlignment (always refused with CIVIL3D.API_ERROR: no API for them; nothing changes).
+// Paths: .dst and .pdf outputs through FileBoundary.ResolveExportPath, existing .dst files through ResolveImportPath.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -25,6 +34,8 @@ public static class PlanProductionCommands
   /// <summary>
   /// The .dst files beside the active drawing and one folder up, where a sheet set usually sits. A sheet set isn't
   /// tied to a drawing, so there is no asking Civil 3D which ones belong to this job.
+  /// listSheetSets (no parameters, reads only): returns searched (the folders; none for an unsaved drawing) and
+  /// sheetSets (name, path, description, sheetCount, or path and error for a file SheetSetCom can't open).
   /// </summary>
   public static Task<object?> ListSheetSetsAsync()
   {
@@ -66,6 +77,9 @@ public static class PlanProductionCommands
   // getSheetSetInfo
   // -------------------------------------------------------------------------
 
+  /// <summary>getSheetSetInfo (reads only): the sheet set in the .dst file <c>name</c> (required: a path, inside the
+  /// import roots) as SheetSetCom.Read returns it (name, description, sheets). Throws CIVIL3D.INVALID_INPUT when the
+  /// name isn't a .dst path, and FileBoundary's errors.</summary>
   public static Task<object?> GetSheetSetInfoAsync(JsonObject? parameters)
   {
     var path = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "name"));
@@ -79,6 +93,10 @@ public static class PlanProductionCommands
   /// <summary>
   /// A new sheet set file (.dst) at <c>outputPath</c>, with a sheet for each of <c>layoutNames</c> of the active drawing,
   /// which must be saved, since a sheet is a reference to a layout in a file.
+  /// createSheetSet: <c>name</c> and <c>outputPath</c> (.dst, export roots) required; <c>description</c>,
+  /// <c>layoutNames</c> and <c>overwrite</c> (default false) optional. Writes the file; the drawing is not changed.
+  /// Throws CIVIL3D.INVALID_INPUT for an unsaved drawing (when layouts are named), CIVIL3D.OBJECT_NOT_FOUND for a
+  /// missing layout, and FileBoundary's errors (an existing file without overwrite included).
   /// </summary>
   public static Task<object?> CreateSheetSetAsync(JsonObject? parameters)
   {
@@ -106,6 +124,8 @@ public static class PlanProductionCommands
   /// <summary>
   /// Adds layout <c>layoutName</c> of the active drawing (default: the one named <c>sheetName</c>) to the sheet set file
   /// <c>sheetSetName</c>, numbered <c>sheetNumber</c> or after the last sheet.
+  /// addSheet: <c>sheetSetName</c> (.dst path) and <c>sheetName</c> required. Changes the .dst file (resolved through
+  /// the import roots, as an existing file), not the drawing. Same errors as createSheetSet.
   /// </summary>
   public static Task<object?> AddSheetAsync(JsonObject? parameters)
   {
@@ -121,7 +141,9 @@ public static class PlanProductionCommands
     });
   }
 
-  /// <summary>A .dst path, checked. A sheet set is a file: the name of one means nothing without where it is.</summary>
+  /// <summary>A .dst path, checked. A sheet set is a file: the name of one means nothing without where it is.
+  /// CIVIL3D.INVALID_INPUT when it doesn't end in .dst; otherwise FileBoundary.ResolveImportPath (file must exist inside
+  /// the import roots).</summary>
   private static string SheetSetFile(string sheetSetName)
   {
     if (!sheetSetName.EndsWith(".dst", StringComparison.OrdinalIgnoreCase))
@@ -166,7 +188,9 @@ public static class PlanProductionCommands
   // getSheetProperties
   // -------------------------------------------------------------------------
 
-  /// <summary>One sheet of a .dst file, by its name or number.</summary>
+  /// <summary>getSheetProperties (reads only): one sheet of the .dst file <c>sheetSetName</c>, found by
+  /// <c>sheetName</c> matching its name or number (both required). Returns name, number, title, layout, drawing and
+  /// doNotPlot. Throws CIVIL3D.OBJECT_NOT_FOUND listing the sheets when none matches.</summary>
   public static Task<object?> GetSheetPropertiesAsync(JsonObject? parameters)
   {
     var path = SheetSetFile(PluginRuntime.GetRequiredString(parameters, "sheetSetName"));
@@ -196,6 +220,8 @@ public static class PlanProductionCommands
   // setSheetTitleBlock
   // -------------------------------------------------------------------------
 
+  /// <summary>setSheetTitleBlock: reads <c>sheetName</c> (required) and always throws CIVIL3D.API_ERROR: a title
+  /// block is a block on the layout, not a sheet setting. Nothing changes.</summary>
   public static Task<object?> SetSheetTitleBlockAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "sheetName");
@@ -208,6 +234,8 @@ public static class PlanProductionCommands
   // createPlanProfileSheet
   // -------------------------------------------------------------------------
 
+  /// <summary>createPlanProfileSheet: reads <c>sheetSetName</c> and <c>alignmentName</c> (required) and always throws
+  /// CIVIL3D.API_ERROR: there is no documented API to make plan/profile sheets. Nothing is created.</summary>
   public static Task<object?> CreatePlanProfileSheetAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "sheetSetName");
@@ -221,6 +249,8 @@ public static class PlanProductionCommands
   // updatePlanProfileSheetAlignment
   // -------------------------------------------------------------------------
 
+  /// <summary>updatePlanProfileSheetAlignment: reads <c>alignmentName</c> (required) and always throws
+  /// CIVIL3D.API_ERROR: a view frame's alignment is read-only. Nothing changes.</summary>
   public static Task<object?> UpdatePlanProfileSheetAlignmentAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -233,6 +263,14 @@ public static class PlanProductionCommands
   // createSheetView
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// createSheetView (changes the drawing, one undo step): adds a viewport to layout <c>layoutName</c> (required) at
+  /// <c>centerX</c>/<c>centerY</c> (paper units, default 0,0), <c>width</c> x <c>height</c> (default 8 x 6), aimed at
+  /// the middle of the model extents. <c>scale</c> (optional) is the drawing scale denominator, e.g. 40 for 1"=40'
+  /// (CustomScale = 1/scale); without it the whole model fits. <c>viewName</c> (optional) recentres it on a named view
+  /// and is ignored when there is no such view. Returns handle, layoutName, scale and created. Throws
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown layout and CIVIL3D.INVALID_INPUT for Model.
+  /// </summary>
   public static Task<object?> CreateSheetViewAsync(JsonObject? parameters)
   {
     var layoutName = PluginRuntime.GetRequiredString(parameters, "layoutName");
@@ -304,6 +342,11 @@ public static class PlanProductionCommands
   // setSheetViewScale
   // -------------------------------------------------------------------------
 
+  /// <summary>setSheetViewScale (changes the drawing, one undo step): sets CustomScale = 1/<c>scale</c> (required)
+  /// on the viewport <c>viewportHandle</c> of layout <c>layoutName</c> (required). Without a handle, or with one that
+  /// doesn't match, it takes the layout's first viewport, which is usually the layout's own paper-space viewport.
+  /// Returns handle, scale and updated. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown layout or one without
+  /// viewports.</summary>
   public static Task<object?> SetSheetViewScaleAsync(JsonObject? parameters)
   {
     var layoutName = PluginRuntime.GetRequiredString(parameters, "layoutName");
@@ -332,6 +375,13 @@ public static class PlanProductionCommands
   // publishSheetPdf
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// publishSheetPdf: plots the active drawing's <c>layoutNames</c> (required, non-empty) to one PDF at
+  /// <c>outputPath</c> (required, .pdf, export roots; <c>overwrite</c> default false) with optional
+  /// <c>paperSize</c> and <c>plotStyleTable</c> (PdfPublisher). Runs as a write (the layouts must be made current) but
+  /// leaves no drawing change. Returns outputPath, sheetsPublished, layouts, sizeBytes and published. Throws
+  /// CIVIL3D.INVALID_INPUT for an empty list or Model, plus PdfPublisher's and FileBoundary's errors.
+  /// </summary>
   public static Task<object?> PublishSheetPdfAsync(JsonObject? parameters)
   {
     var layoutNamesNode = parameters?["layoutNames"] as JsonArray;
@@ -368,6 +418,10 @@ public static class PlanProductionCommands
   /// Publishes the sheets of the sheet set file <c>sheetSetName</c> to one PDF, in the set's order, leaving out those
   /// marked do-not-plot. The plot engine works on the active drawing, so a set with sheets in other drawings is refused
   /// by name: a PDF missing some of them would look like the whole set.
+  /// exportSheetSet: <c>sheetSetName</c> (.dst path) and <c>outputPath</c> (.pdf) required; <c>overwrite</c>,
+  /// <c>paperSize</c>, <c>plotStyleTable</c> optional. Returns sheetSetName, outputPath, sheetsExported,
+  /// sheetsSkipped, layouts, sizeBytes and exported. Throws CIVIL3D.INVALID_INPUT for a set with nothing to plot or
+  /// with sheets in other drawings, plus PdfPublisher's and FileBoundary's errors.
   /// </summary>
   public static Task<object?> ExportSheetSetAsync(JsonObject? parameters)
   {
@@ -415,6 +469,8 @@ public static class PlanProductionCommands
   // Private helpers
   // =========================================================================
 
+  /// <summary>The layout named <paramref name="layoutName"/> (ignoring case; Model included), open for read;
+  /// CIVIL3D.OBJECT_NOT_FOUND otherwise.</summary>
   private static Layout FindLayoutByName(Autodesk.AutoCAD.DatabaseServices.Database database, Transaction transaction, string layoutName)
   {
     var layoutDict = (DBDictionary)transaction.GetObject(database.LayoutDictionaryId, OpenMode.ForRead);
@@ -431,6 +487,8 @@ public static class PlanProductionCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Layout '{layoutName}' was not found.");
   }
 
+  /// <summary>The viewport with handle <paramref name="viewportHandle"/> on the layout, else the layout's first
+  /// viewport (open for read); CIVIL3D.OBJECT_NOT_FOUND when it has none.</summary>
   private static Viewport FindViewport(
     Autodesk.AutoCAD.DatabaseServices.Database database,
     Transaction transaction,
@@ -456,6 +514,8 @@ public static class PlanProductionCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"No viewport found in layout '{layout.LayoutName}'.");
   }
 
+  /// <summary>Centres the viewport on the named view and takes its height; does nothing when the view doesn't
+  /// exist.</summary>
   private static void TryApplyNamedViewToViewport(
     Autodesk.AutoCAD.DatabaseServices.Database database,
     Transaction transaction,

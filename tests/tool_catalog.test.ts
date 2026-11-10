@@ -1,3 +1,6 @@
+// Guards the flat tool catalog (src/tools/tool_catalog.ts, built from the manifest): unique names, required fields,
+// domain listing and the entries other docs and civil3d_orchestrate rely on. Pure unit test.
+
 import { describe, it, expect } from "vitest";
 import { TOOL_CATALOG, listToolCatalog, listDomains } from "../src/tools/tool_catalog.js";
 

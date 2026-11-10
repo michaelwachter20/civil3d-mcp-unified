@@ -1,3 +1,11 @@
+// Corridor reads, the background rebuild, and corridor-vs-surface volumes.
+// JSON-RPC methods (CommandDispatcher): listCorridors, getCorridor, rebuildCorridor, getCorridorSurfaces,
+// getCorridorFeatureLines, computeCorridorVolumes. Called by src/tools/domains/corridorDomain.ts (civil3d_corridor);
+// rebuild progress is polled through JobCommands (civil3d_job).
+// Reads use CivilExecution.ReadAsync. rebuildCorridor runs one CivilExecution.WriteAsync (one undo step) in a
+// background job (JobRegistry) bound to the drawing it was started for. computeCorridorVolumes uses
+// CivilExecution.MeasureAsync: a temporary TIN volume surface in a transaction that is never committed.
+// No file access; the one late-bound read (RebuildDate) goes through CivilObjectUtils.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.ApplicationServices;
@@ -8,7 +16,7 @@ namespace Civil3DMcpPlugin;
 /// <summary>
 /// Plugin methods behind civil3d_corridor (src/tools/domains/corridorDomain.ts): <c>listCorridors</c>,
 /// <c>getCorridor</c>, <c>rebuildCorridor</c>, <c>getCorridorSurfaces</c>, <c>getCorridorFeatureLines</c> and
-/// <c>computeCorridorVolumes</c>. Corridor creation and editing live elsewhere (CorridorCreationCommands and friends).
+/// <c>computeCorridorVolumes</c>. Region and target editing live in CorridorEditingCommands.
 /// <para>
 /// The rebuild is the one long operation: it runs as a background job (JobRegistry), so the call answers at once
 /// with a job id and the caller polls civil3d_job. Everything else is a plain read. Volumes are in the drawing's
@@ -42,6 +50,7 @@ public static class CorridorCommands
   /// <summary>
   /// One corridor by <c>name</c>: style, layer, state, its baselines (alignment, profile and regions with assembly
   /// and station range), corridor surfaces and the number of feature line codes. Read only.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor.
   /// </summary>
   public static Task<object?> GetCorridorAsync(JsonObject? parameters)
   {
@@ -98,6 +107,7 @@ public static class CorridorCommands
   /// <c>CivilExecution.WriteAsync</c> (one undo step) on the drawing that was active when the job started; another
   /// drawing active by then makes the job fail with nothing changed. Cancelling only works before
   /// <c>Corridor.Rebuild()</c> starts or is noticed after it returns, because Civil 3D's rebuild can't be interrupted.
+  /// The name is checked first with a read, so an unknown corridor is CIVIL3D.OBJECT_NOT_FOUND before any job exists.
   /// </summary>
   public static async Task<object?> RebuildCorridorAsync(JsonObject? parameters)
   {
@@ -254,6 +264,7 @@ public static class CorridorCommands
     });
   }
 
+  /// <summary>The short form of a corridor used by listCorridors; lastBuildTime is read late-bound and may be null.</summary>
   private static Dictionary<string, object?> ToCorridorSummary(Corridor corridor)
   {
     return new Dictionary<string, object?>
@@ -268,6 +279,7 @@ public static class CorridorCommands
     };
   }
 
+  /// <summary>Each corridor surface's name, built surface handle (null when not built) and boundary names. The transaction is unused.</summary>
   private static List<Dictionary<string, object?>> ReadCorridorSurfaces(Corridor corridor, Transaction? transaction)
   {
     var corridorSurfaces = corridor.CorridorSurfaces;
@@ -281,6 +293,7 @@ public static class CorridorCommands
       .ToList();
   }
 
+  /// <summary>The corridor's feature line code names.</summary>
   private static List<Dictionary<string, object?>> ReadCorridorFeatureLines(Corridor corridor)
   {
     var featureLines = corridor.FeatureLineCodeInfos;
@@ -294,6 +307,10 @@ public static class CorridorCommands
 
   private static string GetCorridorState(Corridor corridor) => corridor.IsOutOfDate ? "out_of_date" : "built";
 
+  /// <summary>
+  /// The built surface behind corridor surface <paramref name="name"/>. CIVIL3D.OBJECT_NOT_FOUND when the corridor
+  /// has no such corridor surface, CIVIL3D.API_ERROR when it was never built.
+  /// </summary>
   private static Autodesk.Civil.DatabaseServices.Surface FindCorridorSurfaceByName(Corridor corridor, string name, Transaction transaction)
   {
     var definition = corridor.CorridorSurfaces.Cast<CorridorSurface>()

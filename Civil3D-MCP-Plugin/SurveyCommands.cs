@@ -1,3 +1,12 @@
+// SurveyCommands.cs - handlers for Civil 3D survey databases (civil3d_survey, src/tools/domains/surveyDomain.ts).
+// Methods (CommandDispatcher.cs): listSurveyDatabases, createSurveyDatabase, listSurveyNetworks, createSurveyNetwork,
+// listSurveyPoints, addSurveyPoint, addSurveySetup, listSurveyObservations, adjustSurveyNetwork, listSurveyFigures,
+// getSurveyFigure, createSurveyFigure, addSurveyToDrawing, importSurveyLandXml. Everything goes through SurveyCom
+// (late-bound COM). Every call runs through CivilExecution.WithDocumentLockAsync (host gate, command context, document
+// lock, no transaction: COM opens objects itself), and COM errors become CIVIL3D.API_ERROR. Survey databases are files
+// in the survey working folder, so changes to them are not drawing changes and Undo can't take them back; only
+// addSurveyToDrawing changes the drawing (one undo mark). adjustSurveyNetwork and importSurveyLandXml always refuse
+// (the COM API has no call for them). Survey data is the user's: never move or edit points unless asked.
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -23,6 +32,7 @@ public static class SurveyCommands
   private static readonly string[] DirectionTypes = { "bearing_ne", "bearing_se", "bearing_sw", "bearing_nw", "azimuth" };
   private static readonly string[] DistanceUnits = { "", "feet", "meters", "survey_feet" };
 
+  // COM enum values (index into the arrays above where one exists).
   private const int TargetPrism = 1;
   private const int VerticalAngle = 1;
   private const int VerticalNone = 3;
@@ -30,6 +40,7 @@ public static class SurveyCommands
   /// <summary>Turns COM's metres into the database's units. Read once per call: asking COM per value is slow on a big job.</summary>
   private sealed record Units(double PerMetre, double None)
   {
+    /// <summary>The open database's metres-to-units factor and its "no value" marker.</summary>
     public static Units Of(dynamic project)
     {
       return new Units((double)project.GetProjectSettings().ConvertMetricToUi(1.0), (double)project.SurveyNullValue);
@@ -40,8 +51,10 @@ public static class SurveyCommands
     /// <summary>A stored length, or null for the database's "no value" marker or a field that doesn't apply to this shot.</summary>
     public double? Length(Func<double> read) => Stored(read) * PerMetre;
 
+    /// <summary>A stored angle (radians) in degrees, or null as for <see cref="Length"/>.</summary>
     public double? Angle(Func<double> read) => Stored(read) * 180.0 / Math.PI;
 
+    /// <summary>The raw value, or null for NaN, the "no value" marker or a property COM won't read for this item.</summary>
     private double? Stored(Func<double> read)
     {
       try
@@ -57,12 +70,17 @@ public static class SurveyCommands
     }
   }
 
+  /// <summary>One observation to add, already converted to COM's enum values and radians (distance still in the
+  /// database's units).</summary>
   private sealed record Shot(int Point, int AngleType, double Angle, int DistanceType, double Distance, int VerticalType, double Vertical, double TargetHeight, string Description);
 
   // -------------------------------------------------------------------------
   // Databases
   // -------------------------------------------------------------------------
 
+  /// <summary><c>listSurveyDatabases</c>: no parameters. The survey working folder and each database's name, path,
+  /// distance unit and network/figure/point counts (a database that can't be opened shows <c>openError</c> instead).
+  /// Opens each database read-only; changes nothing.</summary>
   public static Task<object?> ListSurveyDatabasesAsync()
   {
     return OnCom(() =>
@@ -83,6 +101,7 @@ public static class SurveyCommands
     });
   }
 
+  /// <summary>One database's summary, opened read-only; a COM error (e.g. locked by another user) is reported, not thrown.</summary>
   private static Dictionary<string, object?> DescribeDatabase(string name, string path)
   {
     try
@@ -108,6 +127,9 @@ public static class SurveyCommands
     }
   }
 
+  /// <summary><c>createSurveyDatabase</c>: reads <c>name</c> (required; becomes a folder name) and <c>distanceUnit</c>
+  /// (optional: feet, meters, survey_feet). Creates the database in the survey working folder (on disk, not in the
+  /// drawing). CIVIL3D.INVALID_INPUT for a bad unit, a name that can't be a folder, or a name already in use.</summary>
   public static Task<object?> CreateSurveyDatabaseAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -158,6 +180,9 @@ public static class SurveyCommands
   // Networks
   // -------------------------------------------------------------------------
 
+  /// <summary><c>listSurveyNetworks</c>: reads <c>databaseName</c> (required). Each network's name, description,
+  /// control/non-control point, setup, direction and traverse counts, and whether it is in the drawing. Read-only.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown database.</summary>
   public static Task<object?> ListSurveyNetworksAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -185,6 +210,9 @@ public static class SurveyCommands
     }));
   }
 
+  /// <summary><c>createSurveyNetwork</c>: reads <c>databaseName</c>, <c>networkName</c> (required), <c>description</c>.
+  /// Adds and saves a network in the survey database (not the drawing). CIVIL3D.INVALID_INPUT when the name exists,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown database.</summary>
   public static Task<object?> CreateSurveyNetworkAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -209,6 +237,9 @@ public static class SurveyCommands
   // Points
   // -------------------------------------------------------------------------
 
+  /// <summary><c>listSurveyPoints</c>: reads <c>databaseName</c> (required) and <c>limit</c> (default 500). Points by
+  /// number with easting/northing/elevation in the database's units, control/setup flags and drawing coordinates;
+  /// <c>truncated</c> when there are more. Read-only.</summary>
   public static Task<object?> ListSurveyPointsAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -237,6 +268,7 @@ public static class SurveyCommands
     }));
   }
 
+  /// <summary>One survey point as JSON, including where it lands in the drawing.</summary>
   private static Dictionary<string, object?> DescribePoint(dynamic point, Units units, dynamic drawing)
   {
     var inDrawing = (double[])point.CalculateDrawingCoordinate(drawing);
@@ -255,6 +287,10 @@ public static class SurveyCommands
     };
   }
 
+  /// <summary><c>addSurveyPoint</c>: reads <c>databaseName</c>, <c>networkName</c>, <c>pointNumber</c>,
+  /// <c>easting</c>, <c>northing</c> (required), <c>elevation</c>, <c>pointName</c>, <c>description</c>,
+  /// <c>control</c> (default true). Adds a control or non-control point to the network in the survey database, in the
+  /// database's units. CIVIL3D.INVALID_INPUT (missing number, number in use), CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> AddSurveyPointAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -295,6 +331,10 @@ public static class SurveyCommands
   // Setups and observations
   // -------------------------------------------------------------------------
 
+  /// <summary><c>addSurveySetup</c>: reads <c>databaseName</c>, <c>networkName</c>, <c>stationPoint</c>,
+  /// <c>backsightPoint</c> (required) and <c>observations</c> (array, see <see cref="ReadShots"/>). Adds a setup and its
+  /// shots to the survey database. CIVIL3D.INVALID_INPUT when the station or backsight point isn't in the database or
+  /// an observation is malformed, CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> AddSurveySetupAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -335,6 +375,10 @@ public static class SurveyCommands
     }));
   }
 
+  /// <summary>Parses <c>observations</c>: each needs <c>pointNumber</c>, <c>angleDegrees</c>, <c>distance</c>;
+  /// optional <c>angleType</c> (default "angle"), <c>distanceType</c> (default "horizontal"), <c>verticalDegrees</c>,
+  /// <c>targetHeight</c>, <c>description</c>. Degrees become radians. CIVIL3D.INVALID_INPUT on a missing field or an
+  /// unknown type.</summary>
   private static List<Shot> ReadShots(JsonObject? parameters)
   {
     var shots = new List<Shot>();
@@ -376,6 +420,9 @@ public static class SurveyCommands
     return shots;
   }
 
+  /// <summary><c>listSurveyObservations</c>: reads <c>databaseName</c> (required), <c>networkName</c> (optional, all
+  /// networks when absent) and <c>observationType</c> (all, angles, distances, directions, gps; default all). Read-only.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown database or network.</summary>
   public static Task<object?> ListSurveyObservationsAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -467,6 +514,9 @@ public static class SurveyCommands
     }
   }
 
+  /// <summary><c>adjustSurveyNetwork</c>: checks <c>databaseName</c> and <c>networkName</c> are given, then always
+  /// throws CIVIL3D.API_ERROR: the COM API can't run an adjustment, so the user does it in the Survey tab. Changes
+  /// nothing.</summary>
   public static Task<object?> AdjustSurveyNetworkAsync(JsonObject? parameters)
   {
     _ = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -480,6 +530,8 @@ public static class SurveyCommands
   // Figures
   // -------------------------------------------------------------------------
 
+  /// <summary><c>listSurveyFigures</c>: reads <c>databaseName</c> (optional; every database when absent). Each
+  /// figure's summary (no vertices). Read-only. CIVIL3D.OBJECT_NOT_FOUND for an unknown database.</summary>
   public static Task<object?> ListSurveyFiguresAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetOptionalString(parameters, "databaseName");
@@ -516,6 +568,9 @@ public static class SurveyCommands
     });
   }
 
+  /// <summary><c>getSurveyFigure</c>: reads <c>name</c> (required) and <c>databaseName</c> (optional; searches every
+  /// database, first match wins). The figure with its vertices and point numbers. Read-only.
+  /// CIVIL3D.OBJECT_NOT_FOUND when no database has it.</summary>
   public static Task<object?> GetSurveyFigureAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -543,6 +598,8 @@ public static class SurveyCommands
     });
   }
 
+  /// <summary>A figure's summary (name, counts, closed/breakline/lot-line flags, layer, style); with
+  /// <paramref name="withNodes"/> also its vertices (database units) and point numbers.</summary>
   private static Dictionary<string, object?> DescribeFigure(dynamic figure, string databaseName, Units units, bool withNodes)
   {
     var description = new Dictionary<string, object?>
@@ -580,6 +637,10 @@ public static class SurveyCommands
     return description;
   }
 
+  /// <summary><c>createSurveyFigure</c>: reads <c>databaseName</c>, <c>figureName</c> (required), <c>pointNumbers</c>
+  /// (array, at least two, all already in the database), <c>closed</c>, <c>figureStyle</c>, <c>layer</c>. Creates the
+  /// figure through those points in the survey database (not the drawing); on a COM failure the half-made figure is
+  /// removed. CIVIL3D.INVALID_INPUT (too few points, name in use, unknown points), CIVIL3D.API_ERROR.</summary>
   public static Task<object?> CreateSurveyFigureAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -640,7 +701,10 @@ public static class SurveyCommands
   // Drawing
   // -------------------------------------------------------------------------
 
-  /// <summary>Inserts a figure or a network into the active drawing as one undo step.</summary>
+  /// <summary><c>addSurveyToDrawing</c>: inserts a figure or a network into the active drawing as one undo step (COM
+  /// undo marks around AddToDrawing). Reads <c>databaseName</c> (required) and exactly one of <c>figureName</c> /
+  /// <c>networkName</c>. Changes the drawing; returns the new object's handle. CIVIL3D.INVALID_INPUT (neither or both
+  /// names), CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> AddSurveyToDrawingAsync(JsonObject? parameters)
   {
     var databaseName = PluginRuntime.GetRequiredString(parameters, "databaseName");
@@ -678,6 +742,9 @@ public static class SurveyCommands
     }));
   }
 
+  /// <summary><c>importSurveyLandXml</c>: checks <c>filePath</c> (through FileBoundary.ResolveImportPath, .xml or
+  /// .landxml; CIVIL3D.PATH_NOT_ALLOWED etc.) and <c>databaseName</c>, then always throws CIVIL3D.API_ERROR: the COM
+  /// API has no LandXML import, so the user uses Import Survey Data. Imports nothing.</summary>
   public static Task<object?> ImportSurveyLandXmlAsync(JsonObject? parameters)
   {
     var filePath = FileBoundary.ResolveImportPath(
@@ -693,6 +760,7 @@ public static class SurveyCommands
   // Helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>Opens the database and finds the network; CIVIL3D.OBJECT_NOT_FOUND when either is missing.</summary>
   private static T WithNetwork<T>(string databaseName, string networkName, bool forWrite, Func<dynamic, dynamic, T> action)
   {
     return SurveyCom.WithDatabase<T>(databaseName, forWrite, project =>
@@ -703,7 +771,9 @@ public static class SurveyCommands
     });
   }
 
-  /// <summary>Survey calls on the document's context, with what COM raises turned into an answer the AI can read.</summary>
+  /// <summary>Survey calls on the document's context, with what COM raises turned into an answer the AI can read.
+  /// Runs through CivilExecution.WithDocumentLockAsync (host gate, command context, lock, no transaction); COM and
+  /// late-binding errors become CIVIL3D.API_ERROR; COM objects are released after every call.</summary>
   private static Task<object?> OnCom(Func<object?> action)
   {
     return CivilExecution.WithDocumentLockAsync<object?>((_, _) =>
@@ -727,5 +797,6 @@ public static class SurveyCommands
     });
   }
 
+  /// <summary>The name for a COM enum value, or the number when it has none.</summary>
   private static string Named(string[] names, int value) => value >= 0 && value < names.Length ? names[value] : value.ToString();
 }

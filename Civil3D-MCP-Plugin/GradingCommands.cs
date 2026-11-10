@@ -1,3 +1,11 @@
+// Grading criteria and feature lines; grading groups and gradings only as far as the API allows (a count).
+// JSON-RPC methods (CommandDispatcher): listGradingGroups, getGradingGroup, createGradingGroup, deleteGradingGroup,
+// getGradingGroupVolume, createSurfaceFromGradingGroup, listGradings, getGrading, createGrading, deleteGrading,
+// listGradingCriteria, listFeatureLines, getFeatureLine, exportFeatureLineAsPolyline, createFeatureLine. Called by
+// src/tools/domains/gradingDomain.ts (civil3d_grading); WorkflowCommands' feature-line-to-grading workflow uses it too.
+// Reads use CivilExecution.ReadAsync; createFeatureLine and exportFeatureLineAsPolyline use WriteAsync (one undo step).
+// The nine grading-group/grading methods always throw CIVIL3D.API_ERROR without touching the drawing, because the
+// API can't reach them. Feature lines are found in model space only. No file access; late-bound reads via CivilObjectUtils.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -43,60 +51,70 @@ public static class GradingCommands
   // getGradingGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>getGradingGroup: not reachable through the API; always CIVIL3D.API_ERROR, nothing read or changed.</summary>
   public static Task<object?> GetGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createGradingGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>createGradingGroup: not reachable through the API; always CIVIL3D.API_ERROR, nothing changed.</summary>
   public static Task<object?> CreateGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // deleteGradingGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>deleteGradingGroup: not reachable through the API; always CIVIL3D.API_ERROR, nothing changed.</summary>
   public static Task<object?> DeleteGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // getGradingGroupVolume
   // -------------------------------------------------------------------------
 
+  /// <summary>getGradingGroupVolume: not reachable through the API (use the group's surface with the surface tools); always CIVIL3D.API_ERROR.</summary>
   public static Task<object?> GetGradingGroupVolumeAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createSurfaceFromGradingGroup
   // -------------------------------------------------------------------------
 
+  /// <summary>createSurfaceFromGradingGroup: not reachable through the API; always CIVIL3D.API_ERROR, nothing changed.</summary>
   public static Task<object?> CreateSurfaceFromGradingGroupAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // listGradings
   // -------------------------------------------------------------------------
 
+  /// <summary>listGradings: not reachable through the API (listGradingGroups gives the count); always CIVIL3D.API_ERROR.</summary>
   public static Task<object?> ListGradingsAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // getGrading
   // -------------------------------------------------------------------------
 
+  /// <summary>getGrading: not reachable through the API; always CIVIL3D.API_ERROR.</summary>
   public static Task<object?> GetGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // createGrading
   // -------------------------------------------------------------------------
 
+  /// <summary>createGrading: not reachable through the API; always CIVIL3D.API_ERROR, nothing changed.</summary>
   public static Task<object?> CreateGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // deleteGrading
   // -------------------------------------------------------------------------
 
+  /// <summary>deleteGrading: not reachable through the API; always CIVIL3D.API_ERROR, nothing changed.</summary>
   public static Task<object?> DeleteGradingAsync(JsonObject? parameters) => throw new JsonRpcDispatchException("CIVIL3D.API_ERROR", OutOfReach);
 
   // -------------------------------------------------------------------------
   // listGradingCriteria
   // -------------------------------------------------------------------------
 
+  /// <summary>listGradingCriteria: every grading criteria set's criteria (set name, name, handle, description). Read only; no parameters.</summary>
   public static Task<object?> ListGradingCriteriaAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -129,6 +147,7 @@ public static class GradingCommands
   // listFeatureLines
   // -------------------------------------------------------------------------
 
+  /// <summary>listFeatureLines: the feature lines in model space (name, handle, layer, style). Read only; no parameters.</summary>
   public static Task<object?> ListFeatureLinesAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -148,6 +167,10 @@ public static class GradingCommands
   // getFeatureLine
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// getFeatureLine: feature line <c>name</c> (required) with layer, style, length, vertices (consecutive duplicates
+  /// removed), min/max elevation and units. Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown name.
+  /// </summary>
   public static Task<object?> GetFeatureLineAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -165,6 +188,11 @@ public static class GradingCommands
   // exportFeatureLineAsPolyline
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// exportFeatureLineAsPolyline: draws a 3D polyline through feature line <c>name</c>'s vertices (the feature line
+  /// stays), on <c>targetLayer</c> or the feature line's layer; a missing layer is created. Changes the drawing.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown name, CIVIL3D.API_ERROR when it has fewer than two vertices.
+  /// </summary>
   public static Task<object?> ExportFeatureLineAsPolylineAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -216,6 +244,12 @@ public static class GradingCommands
   // createFeatureLine
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// createFeatureLine: a feature line through <c>points</c> (required, at least two <c>{x, y, z}</c>; z is required,
+  /// never assumed 0), optional <c>name</c> and <c>layer</c>, in the drawing's first site (siteless when there is none).
+  /// Made from a temporary 3D polyline in model space, which is erased. Changes the drawing. CIVIL3D.INVALID_INPUT for
+  /// too few or malformed points, CIVIL3D.OBJECT_NOT_FOUND for an unknown layer.
+  /// </summary>
   public static Task<object?> CreateFeatureLineAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetOptionalString(parameters, "name");
@@ -287,6 +321,7 @@ public static class GradingCommands
   // Private helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>Every object in model space whose type is exactly FeatureLine (corridor feature lines aren't included).</summary>
   private static IEnumerable<DBObject> EnumerateFeatureLines(
     Database database,
     Transaction transaction)
@@ -308,6 +343,7 @@ public static class GradingCommands
     }
   }
 
+  /// <summary>The model-space feature line named <paramref name="name"/> (case-insensitive), or null.</summary>
   private static DBObject? FindFeatureLineByName(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction,
@@ -370,6 +406,7 @@ public static class GradingCommands
     };
   }
 
+  /// <summary>The feature line's style name (StyleName, else the StyleId's name), read late-bound; null on any failure.</summary>
   private static string? GetFeatureLineStyleName(DBObject featureLine, Transaction transaction)
   {
     try
@@ -395,6 +432,7 @@ public static class GradingCommands
     }
   }
 
+  /// <summary>Length3D, Length2D or Length (late-bound), else the sum of the vertex-to-vertex distances.</summary>
   private static double GetFeatureLineLength(DBObject featureLine)
   {
     foreach (var propertyName in new[] { "Length3D", "Length2D", "Length" })
@@ -421,6 +459,7 @@ public static class GradingCommands
     return totalLength;
   }
 
+  /// <summary>All points of a feature line (PI and elevation points) without consecutive duplicates; empty for anything else.</summary>
   private static List<Point3d> GetFeatureLineVertices(DBObject featureLine)
   {
     if (featureLine is not Autodesk.Civil.DatabaseServices.FeatureLine typedFeatureLine)

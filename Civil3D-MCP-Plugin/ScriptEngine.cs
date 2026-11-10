@@ -1,3 +1,11 @@
+// ScriptEngine.cs - compiles and runs C# scripts with Roslyn inside Civil 3D. Callers: ScriptCommands (executeCode,
+// queryCode, compileCode, scriptSave, scriptRun, MCPRUN). Steps: ScriptSandbox checks the text, ScriptLoopGuard adds
+// cancellation checks to loops, Roslyn compiles against every loaded assembly (Civil3DCompatibility lists them;
+// ScriptReferenceResolver keeps memory flat), ScriptSymbolCheck checks what the names resolve to, then the script runs
+// with ScriptContext as its globals. Write runs: CivilExecution.ExecuteInCommandContextAsync (host gate, command
+// context), document lock, one transaction committed, wrapped in UNDO BEGIN/END so it is one undo step, view follows.
+// Read runs: CivilExecution.ExecuteReadOnlyAsync (host gate, main thread, no lock), and the transaction is always
+// aborted, so nothing the script did is kept. Any error or timeout aborts the transaction (nothing committed).
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -15,8 +23,11 @@ using RoslynOptimization = Microsoft.CodeAnalysis.OptimizationLevel;
 
 namespace Civil3DMcpPlugin;
 
+/// <summary>A compiled script: SHA-256 of its source (the cache key), the Roslyn script and up to 20 compiler warnings.</summary>
 internal sealed record CompiledScript(string Hash, Script<object> Script, IReadOnlyList<string> Warnings);
 
+/// <summary>The outcome of one run: the return value as JSON, the Print lines, whether the transaction was committed,
+/// time taken, compiler warnings, and whether the run was wrapped in UNDO BEGIN/END.</summary>
 internal sealed record ScriptRunResult(
   JsonNode? Result,
   IReadOnlyList<string> Output,
@@ -28,12 +39,14 @@ internal sealed record ScriptRunResult(
 /// <summary>
 /// Compiles and runs C# scripts with Roslyn inside Civil 3D.
 /// Compilation happens off the AutoCAD main thread and is cached by SHA-256 of
-/// the source; execution happens in command context under a document lock and
-/// a single transaction (committed for write runs, aborted for queries).
+/// the source; execution happens in one transaction (committed for write runs, aborted for queries). Write runs go
+/// through command context under a document lock; read runs go through the read path on the main thread without a
+/// lock (see <see cref="RunFromRequestAsync"/>).
 /// </summary>
 /// <remarks>Based on RoslynExecutor from barbosaihan/civil3d-mcp (MIT).</remarks>
 internal static class ScriptEngine
 {
+  // The file name Roslyn gives the script; runtime stack traces say "script.csx:line N" (see FormatRuntimeError).
   public const string ScriptFileName = "script.csx";
   // A compiled script keeps native memory alive until it leaves this cache, and compiling again takes about a second.
   private const int MaxCacheEntries = 16;
@@ -48,6 +61,7 @@ internal static class ScriptEngine
 
   private static readonly ScriptReferenceResolver ReferenceResolver = new(ScriptOptions.Default.MetadataResolver);
 
+  /// <summary>Namespaces every script gets as <c>using</c>s (also reported by getScriptingStatus).</summary>
   internal static readonly string[] Imports =
   {
     "System",
@@ -88,7 +102,12 @@ internal static class ScriptEngine
   public static bool UndoGroupingEnabled =>
     !string.Equals(Environment.GetEnvironmentVariable("CIVIL3D_SCRIPT_UNDO_GROUP"), "false", StringComparison.OrdinalIgnoreCase);
 
-  /// <summary>Validates against the sandbox and compiles (or returns the cached compilation).</summary>
+  /// <summary>
+  /// Validates against the sandbox and compiles (or returns the cached compilation). The cache holds at most 16
+  /// scripts and is cleared, with a forced GC, when full. The symbol check runs on every call for the given mode.
+  /// Throws CIVIL3D.INVALID_INPUT (empty or over 200,000 characters), CIVIL3D.SANDBOX_VIOLATION and
+  /// CIVIL3D.COMPILATION_ERROR (up to 25 errors with line and column). Doesn't touch the drawing.
+  /// </summary>
   public static CompiledScript Compile(string code, bool writeMode)
   {
     ScriptSandbox.Validate(code, writeMode);
@@ -118,11 +137,15 @@ internal static class ScriptEngine
     return compiled;
   }
 
+  /// <summary>Drops every cached compilation.</summary>
   public static void ClearCache() => Cache.Clear();
 
   /// <summary>
-  /// Runs a compiled script against the active drawing from an MCP request
-  /// (marshals into AutoCAD command context through the serialized host gate).
+  /// Runs a compiled script against the active drawing from an MCP request, through the serialized host gate: a
+  /// write run in AutoCAD command context (wrapped in UNDO BEGIN/END when undo grouping is on, so all its changes are
+  /// one undo step), a read run on the main thread outside command context (no lock, no undo step, transaction
+  /// aborted). Uses the request's cancellation token. Throws CIVIL3D.NO_DRAWING / CIVIL3D.CONFLICT (drawing changed
+  /// while queued), CIVIL3D.HOST_BUSY, and the run errors of <see cref="RunInDocumentAsync"/>.
   /// </summary>
   public static Task<ScriptRunResult> RunFromRequestAsync(CompiledScript compiled, JsonObject? args, bool write, string description)
   {
@@ -154,6 +177,12 @@ internal static class ScriptEngine
   /// Core execution. Caller must be on the AutoCAD main thread. Set
   /// <paramref name="lockDocument"/> false when already inside a document command
   /// (e.g. MCPRUN), where AutoCAD holds the lock.
+  /// Opens one transaction, runs the script with a <see cref="ScriptContext"/> under the timeout
+  /// (CIVIL3D_SCRIPT_TIMEOUT_SECONDS) linked with <paramref name="externalToken"/>, serializes the return value while
+  /// the transaction is still open, then commits (write: the drawing changes, the view follows) or aborts (read: the
+  /// rollback that keeps civil3d_query read-only). On any exception the transaction is disposed without a commit, so
+  /// nothing is kept. Reference drawings the script opened are always closed. Throws CIVIL3D.TIMEOUT,
+  /// CIVIL3D.SCRIPT_ERROR (exception type, message, script line, last output) or cancellation.
   /// </summary>
   public static async Task<ScriptRunResult> RunInDocumentAsync(
     CompiledScript compiled,
@@ -203,6 +232,8 @@ internal static class ScriptEngine
     }
   }
 
+  /// <summary>Runs the script and maps failures: our timeout (not the caller's cancel) becomes CIVIL3D.TIMEOUT, a
+  /// caller cancel and JsonRpcDispatchException pass through, anything else becomes CIVIL3D.SCRIPT_ERROR.</summary>
   private static async Task<object?> RunScriptAsync(
     CompiledScript compiled,
     ScriptContext context,
@@ -238,6 +269,8 @@ internal static class ScriptEngine
     return returnValue;
   }
 
+  /// <summary>Compiles once (behind the cache's Lazy): with the loop guard, else as written; CIVIL3D.COMPILATION_ERROR
+  /// on errors.</summary>
   private static CompiledScript CompileCore(string code, string hash)
   {
     // Every loop checks the token, so the timeout can stop a tight one (ScriptLoopGuard). If that doesn't compile (a
@@ -270,6 +303,8 @@ internal static class ScriptEngine
     return new CompiledScript(hash, script, warnings);
   }
 
+  /// <summary>Roslyn options: loaded assemblies as references, the default imports, no unsafe code, Release IL with
+  /// debug info (for line numbers), UTF-8.</summary>
   private static ScriptOptions BuildOptions()
   {
     return ScriptOptions.Default
@@ -286,6 +321,8 @@ internal static class ScriptEngine
       .WithFileEncoding(Encoding.UTF8);
   }
 
+  /// <summary>One metadata reference per loaded assembly name (from Civil3DCompatibility), rebuilt only when the number
+  /// of assembly files changes.</summary>
   private static IReadOnlyList<RoslynReference> GetReferences()
   {
     lock (ReferenceLock)
@@ -337,6 +374,7 @@ internal static class ScriptEngine
     return reference;
   }
 
+  /// <summary>Runs <c>UNDO _BEGIN</c> or <c>_END</c>; false (logged) when it fails, and the run is then not grouped.</summary>
   private static async Task<bool> TryRunUndoAsync(Document document, string option)
   {
     try
@@ -362,6 +400,8 @@ internal static class ScriptEngine
 
   private static readonly Regex ScriptLinePattern = new(@"script\.csx:line (\d+)", RegexOptions.Compiled);
 
+  /// <summary>The CIVIL3D.SCRIPT_ERROR message: the innermost exception's type and message, the AutoCAD ErrorStatus,
+  /// the script line from the stack trace, a note that nothing was committed, and the last 20 output lines.</summary>
   private static string FormatRuntimeError(System.Exception exception, IReadOnlyList<string> output)
   {
     var root = exception;

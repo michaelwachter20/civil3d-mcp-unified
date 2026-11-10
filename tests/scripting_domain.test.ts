@@ -1,3 +1,7 @@
+// Guards the knowledge and scripting tools (src/tools/domains/scriptingDomain.ts, knowledgeBase.ts, skillsLibrary.ts,
+// src/serverInstructions.ts): skills/preferences/lessons rules, which scripting actions need approval, and that
+// civil3d_execute is blocked without approval before it reaches the plugin. Uses temporary know-how folders; no Civil 3D.
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerTools } from "../src/tools/register.js";
@@ -174,6 +178,7 @@ describe("server instructions", () => {
   });
 });
 
+/** Whether a scripting-domain action needs approval, by the same policy the server applies. */
 function riskFor(action: string) {
   const definition = SCRIPTING_DOMAIN_DEFINITION.actions[action];
   return hasApprovalRisk({

@@ -1,3 +1,13 @@
+// Surface-sampling hydrology: flow path, low point, watershed and catchment-area estimates, Rational runoff, and three
+// workflows that chain them with DetentionCommands and PipeHydraulicsCommands.
+// JSON-RPC methods (CommandDispatcher): listHydrologyCapabilities, traceHydrologyFlowPath, findHydrologyLowPoint,
+// estimateHydrologyRunoff, delineateWatershed, calculateCatchmentArea, watershedRunoffWorkflow,
+// runoffDetentionWorkflow, runoffPipeWorkflow. Called by src/tools/domains/hydrologyDomain.ts (civil3d_hydrology) and
+// surfaceDomain.ts (its drainage_workflow).
+// Surface reads are CivilExecution.ReadAsync (no undo step); runoff and the capability list are pure arithmetic. The
+// workflows run each step as its own request on the host queue, not one transaction; the detention stage-storage step
+// measures inside an uncommitted transaction (MeasureAsync). Nothing here changes the drawing. Elevations come from a
+// late-bound surface call through CivilObjectUtils. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -186,7 +196,9 @@ public static class HydrologyCommands
   /// <c>stepDistance</c> (default 5) toward the lowest of eight compass directions that is lower than the current
   /// point, for at most <c>maxSteps</c> (default 100). <c>status</c> says why it stopped: stopped_flat (no lower
   /// neighbour at the start), stopped_local_minimum (a pit) or max_steps_reached; "complete" is only the initial
-  /// value and isn't returned for any maxSteps above zero.
+  /// value and isn't returned for any maxSteps above zero. Read only. CIVIL3D.INVALID_INPUT for a non-positive step or
+  /// maxSteps, CIVIL3D.OBJECT_NOT_FOUND for an unknown surface; a start point off the surface fails with Civil 3D's
+  /// own error (not caught here).
   /// </summary>
   public static Task<object?> TraceFlowPathAsync(JsonObject? parameters)
   {
@@ -261,7 +273,9 @@ public static class HydrologyCommands
   }
 
   /// <summary>The lowest elevation found by sampling surface <c>surfaceName</c> on a grid of <c>sampleSpacing</c>
-  /// (default 25) over its extents. A grid sample, so the true low point can lie between samples.</summary>
+  /// (default 25) over its extents. A grid sample, so the true low point can lie between samples. Read only.
+  /// CIVIL3D.INVALID_INPUT for a non-positive spacing, CIVIL3D.TRANSACTION_FAILED when extents or every sample are
+  /// unavailable.</summary>
   public static Task<object?> FindLowPointAsync(JsonObject? parameters)
   {
     var surfaceName = PluginRuntime.GetRequiredString(parameters, "surfaceName");
@@ -330,7 +344,9 @@ public static class HydrologyCommands
   /// Peak runoff by the Rational Method, Q = C i A, from <c>drainageArea</c> (acres or hectares),
   /// <c>runoffCoefficient</c> (0 to 1) and <c>rainfallIntensity</c> (in/hr or mm/hr). Returns both cfs (C i A with
   /// acres and in/hr, the usual 1.008 factor taken as 1) and m3/s (C i A / 360 with hectares and mm/hr). Pure
-  /// arithmetic: it doesn't use the drawing or the host queue.
+  /// arithmetic: it doesn't use the drawing or the host queue. <c>areaUnits</c> must be acres or hectares and
+  /// <c>intensityUnits</c> in_per_hr or mm_per_hr; anything else, a non-positive area or intensity, or C outside 0-1 is
+  /// CIVIL3D.INVALID_INPUT.
   /// </summary>
   public static Task<object?> EstimateRunoffAsync(JsonObject? parameters)
   {
@@ -409,6 +425,7 @@ public static class HydrologyCommands
     });
   }
 
+  /// <summary>A point as the hydrology answer shape {x, y, elevation}.</summary>
   private static Dictionary<string, object?> ToHydrologyPoint(double x, double y, double elevation)
   {
     return new Dictionary<string, object?>
@@ -457,7 +474,8 @@ public static class HydrologyCommands
   }
 
   /// <summary>Surface elevation at a point through CivilObjectUtils' late-bound call, trying FindElevationAtXY then
-  /// GetElevationAtXY so a renamed API member doesn't break every hydrology method.</summary>
+  /// GetElevationAtXY so a renamed API member doesn't break every hydrology method. A point off the surface throws
+  /// from inside the call (callers catch it); CIVIL3D.TRANSACTION_FAILED when neither method exists.</summary>
   private static double GetSurfaceElevation(CivilSurface surface, double x, double y)
   {
     foreach (var methodName in new[] { "FindElevationAtXY", "GetElevationAtXY" })
@@ -479,7 +497,8 @@ public static class HydrologyCommands
   /// <c>gridSpacing</c> grid (default 10) in a square of half-width <c>searchRadius</c> (default 100) around the outlet
   /// is traced downhill, and points whose path ends near the outlet contribute. The boundary is the convex hull of
   /// those points, so <c>approximateArea</c> overstates a watershed with a concave outline, and nothing beyond the
-  /// search square is found.
+  /// search square is found. Read only. CIVIL3D.INVALID_INPUT for a non-positive spacing or radius,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
   /// </summary>
   public static Task<object?> DelineateWatershedAsync(JsonObject? parameters)
   {
@@ -584,7 +603,8 @@ public static class HydrologyCommands
   /// Catchment area of an outlet as the number of contributing grid cells times the cell area: the same tracing as
   /// DelineateWatershedAsync on a <c>sampleSpacing</c> grid (default 15) within <c>maxDistance</c> (default 200) of the
   /// outlet, plus the contributing points' elevation range. Counting cells gives a better area than the watershed's
-  /// convex hull; the area is in drawing units squared.
+  /// convex hull; the area is in drawing units squared. Read only. CIVIL3D.INVALID_INPUT for a non-positive spacing or
+  /// distance, CIVIL3D.OBJECT_NOT_FOUND for an unknown surface.
   /// </summary>
   public static Task<object?> CalculateCatchmentAreaAsync(JsonObject? parameters)
   {
@@ -674,7 +694,10 @@ public static class HydrologyCommands
   /// Watershed to runoff in one call: the outlet is (<c>outletX</c>, <c>outletY</c>) or, when both are omitted, the
   /// surface's sampled low point; then the watershed, the catchment area, the area converted from square drawing units
   /// to acres or hectares (feet or meters drawings only), and the Rational runoff. The runoff uses the catchment
-  /// area, not the watershed's hull area. Each step is its own read on the host queue, not one transaction.
+  /// area, not the watershed's hull area. Each step is its own read on the host queue, not one transaction. Required:
+  /// <c>surfaceName</c>, <c>runoffCoefficient</c>, <c>rainfallIntensity</c>, <c>intensityUnits</c>; the step settings
+  /// and <c>runoffAreaUnits</c> are optional. CIVIL3D.INVALID_INPUT for only one outlet coordinate or unsupported
+  /// drawing units, plus every step's errors.
   /// </summary>
   public static async Task<object?> WatershedRunoffWorkflowAsync(JsonObject? parameters)
   {
@@ -788,7 +811,10 @@ public static class HydrologyCommands
   /// <summary>
   /// Rational runoff (cfs) as the inflow to DetentionCommands' basin sizing against <c>allowableOutflow</c>, plus a
   /// stage-storage-discharge table when <c>basinSurfaceName</c>, <c>bottomElevation</c> and <c>topElevation</c> are all
-  /// given (giving only some of them is an error, so a half-specified table isn't silently skipped).
+  /// given (giving only some of them is an error, so a half-specified table isn't silently skipped). Required: the
+  /// runoff inputs (<c>drainageArea</c>, <c>areaUnits</c>, <c>runoffCoefficient</c>, <c>rainfallIntensity</c>,
+  /// <c>intensityUnits</c>) and <c>allowableOutflow</c>. Doesn't change the drawing (the stage-storage contours are
+  /// never committed). CIVIL3D.INVALID_INPUT for a partial stage-storage set, plus the steps' errors.
   /// </summary>
   public static async Task<object?> RunoffDetentionWorkflowAsync(JsonObject? parameters)
   {
@@ -882,7 +908,8 @@ public static class HydrologyCommands
   /// <summary>
   /// Rational runoff times <c>designFlowMultiplier</c> as the design flow (cfs) for gravity network
   /// <c>networkName</c>, then PipeHydraulicsCommands' HGL calculation and hydraulic check (cover, velocity, slope
-  /// limits with US-customary defaults: 2 ft cover, 2 to 10 ft/s, 0.5 % slope, n = 0.013).
+  /// limits with US-customary defaults: 2 ft cover, 2 to 10 ft/s, 0.5 % slope, n = 0.013). Required: <c>networkName</c>
+  /// and the runoff inputs; <c>tailwaterElevation</c> is optional. Read only; errors are the steps' own.
   /// </summary>
   public static async Task<object?> RunoffPipeWorkflowAsync(JsonObject? parameters)
   {
@@ -995,6 +1022,7 @@ public static class HydrologyCommands
     return (false, maxSteps);
   }
 
+  /// <summary>The convex hull of the points (Andrew's monotone chain), counter-clockwise; fewer than three come back as given.</summary>
   private static List<(double x, double y)> ComputeConvexHull(List<(double x, double y)> points)
   {
     if (points.Count < 3)
@@ -1037,6 +1065,7 @@ public static class HydrologyCommands
     return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
   }
 
+  /// <summary>Plan area of a closed polygon by the shoelace formula; 0 for fewer than three points.</summary>
   private static double CalculatePolygonArea(List<(double x, double y)> points)
   {
     if (points.Count < 3)
@@ -1055,6 +1084,10 @@ public static class HydrologyCommands
     return Math.Abs(area) / 2d;
   }
 
+  // The Require* helpers check the shape of a step's answer inside a workflow; a mismatch is a plugin bug and is
+  // reported as CIVIL3D.TRANSACTION_FAILED naming the field.
+
+  /// <summary>The value as a dictionary, or CIVIL3D.TRANSACTION_FAILED naming <paramref name="context"/>.</summary>
   private static Dictionary<string, object?> RequireDictionary(object? value, string context)
   {
     if (value is Dictionary<string, object?> dictionary)
@@ -1065,6 +1098,7 @@ public static class HydrologyCommands
     throw new JsonRpcDispatchException("CIVIL3D.TRANSACTION_FAILED", $"Expected '{context}' to return an object result.");
   }
 
+  /// <summary>The value as a double (from any numeric type), or CIVIL3D.TRANSACTION_FAILED.</summary>
   private static double RequireDouble(object? value, string context)
   {
     return value switch
@@ -1078,6 +1112,7 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary>The value as an int, or CIVIL3D.TRANSACTION_FAILED.</summary>
   private static int RequireInteger(object? value, string context)
   {
     return value switch
@@ -1089,6 +1124,7 @@ public static class HydrologyCommands
     };
   }
 
+  /// <summary><c>dictionary[objectKey][valueKey]</c> as non-empty text, or CIVIL3D.TRANSACTION_FAILED.</summary>
   private static string RequireNestedString(Dictionary<string, object?> dictionary, string objectKey, string valueKey, string context)
   {
     var nested = RequireDictionary(dictionary[objectKey], $"{context}.parent");

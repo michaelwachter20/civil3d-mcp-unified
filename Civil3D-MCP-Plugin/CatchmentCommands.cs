@@ -1,3 +1,10 @@
+// Catchments and catchment groups: list, inspect, edit hydrology properties, copy to another group, flow path and
+// boundary geometry. JSON-RPC methods (CommandDispatcher): listCatchmentGroups, getCatchmentGroup, listCatchments,
+// getCatchmentProperties, setCatchmentProperties, copyCatchmentToGroup, getCatchmentFlowPath, getCatchmentBoundary.
+// Called by src/tools/domains/hydrologyDomain.ts (civil3d_hydrology catchment actions).
+// Reads use CivilExecution.ReadAsync; setCatchmentProperties and copyCatchmentToGroup use WriteAsync (one undo step).
+// Finding groups and their catchments, and properties that differ between releases, go late-bound through
+// Civil3DCompatibility. Properties Civil 3D can't answer come back as null rather than failing. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -16,6 +23,10 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  List Catchment Groups
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// listCatchmentGroups: every catchment group with handle and the names of its catchments, plus
+  /// <c>totalGroups</c>. Read only; no parameters.
+  /// </summary>
   public static Task<object?> ListCatchmentGroupsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -61,6 +72,10 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Get Catchment Group (detailed)
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// getCatchmentGroup: group <c>groupName</c> (required) with a summary of each catchment (area, perimeter, runoff
+  /// coefficient, curve number, Tc, reference surface). Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown group.
+  /// </summary>
   public static Task<object?> GetCatchmentGroupAsync(JsonObject? parameters)
   {
     var groupName = PluginRuntime.GetRequiredString(parameters, "groupName");
@@ -91,6 +106,7 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  List All Catchments (across all groups)
   // ──────────────────────────────────────────────
+  /// <summary>listCatchments: a summary of every catchment in every group, each with its <c>groupName</c>. Read only; no parameters.</summary>
   public static Task<object?> ListCatchmentsAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -124,6 +140,11 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Get Catchment Properties (detailed)
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// getCatchmentProperties: the full detail of catchment <c>catchmentName</c> (required): summary plus description,
+  /// Manning's n, impervious areas, soil group, discharge and most distant points, containing group and more. Read
+  /// only. CIVIL3D.OBJECT_NOT_FOUND for an unknown catchment.
+  /// </summary>
   public static Task<object?> GetCatchmentPropertiesAsync(JsonObject? parameters)
   {
     var catchmentName = PluginRuntime.GetRequiredString(parameters, "catchmentName");
@@ -138,6 +159,13 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Set Catchment Properties (edit)
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// setCatchmentProperties: changes catchment <c>catchmentName</c> (required). Optional <c>runoffCoefficient</c>,
+  /// <c>manningsCoefficient</c>, <c>curveNumber</c> (rounded to an integer), <c>description</c>, <c>newName</c>; at
+  /// least one is needed. Changes the drawing. Returns the list of changes and the updated summary. Manning's n and
+  /// curve number are set late-bound and listed as changed even if this release has no such property.
+  /// CIVIL3D.INVALID_INPUT when nothing is given, CIVIL3D.OBJECT_NOT_FOUND for an unknown catchment.
+  /// </summary>
   public static Task<object?> SetCatchmentPropertiesAsync(JsonObject? parameters)
   {
     var catchmentName = PluginRuntime.GetRequiredString(parameters, "catchmentName");
@@ -203,6 +231,11 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Copy Catchment To Group
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// copyCatchmentToGroup: copies catchment <c>catchmentName</c> into group <c>targetGroupName</c> (both required) with
+  /// Catchment.CreateCopy. Changes the drawing. Returns the new catchment's name and handle. CIVIL3D.OBJECT_NOT_FOUND
+  /// for an unknown catchment or group.
+  /// </summary>
   public static Task<object?> CopyCatchmentToGroupAsync(JsonObject? parameters)
   {
     var catchmentName = PluginRuntime.GetRequiredString(parameters, "catchmentName");
@@ -230,6 +263,11 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Get Catchment Flow Path
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// getCatchmentFlowPath: the flow path of catchment <c>catchmentName</c> (required): length, 3D points and segments
+  /// (type, length, slope, travel time when computed). A catchment without a flow path answers
+  /// <c>hasFlowPath</c> false instead of failing. Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown catchment.
+  /// </summary>
   public static Task<object?> GetCatchmentFlowPathAsync(JsonObject? parameters)
   {
     var catchmentName = PluginRuntime.GetRequiredString(parameters, "catchmentName");
@@ -287,6 +325,10 @@ public static class CatchmentCommands
   // ──────────────────────────────────────────────
   //  Get Catchment Boundary
   // ──────────────────────────────────────────────
+  /// <summary>
+  /// getCatchmentBoundary: the 2D and 3D boundary vertices of catchment <c>catchmentName</c> (required); a boundary
+  /// Civil 3D can't give comes back empty. Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown catchment.
+  /// </summary>
   public static Task<object?> GetCatchmentBoundaryAsync(JsonObject? parameters)
   {
     var catchmentName = PluginRuntime.GetRequiredString(parameters, "catchmentName");
@@ -414,6 +456,7 @@ public static class CatchmentCommands
     return ids;
   }
 
+  /// <summary>The catchment group named <paramref name="name"/> (case-insensitive). CIVIL3D.OBJECT_NOT_FOUND when there is none.</summary>
   private static ObjectId FindCatchmentGroupByName(object civilDoc, Database database, Transaction transaction, string name)
   {
     var groupIds = GetCatchmentGroupIds(civilDoc, database);
@@ -430,6 +473,10 @@ public static class CatchmentCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Catchment group '{name}' was not found.");
   }
 
+  /// <summary>
+  /// The catchment named <paramref name="name"/> (case-insensitive) in any group, opened with
+  /// <paramref name="openMode"/>. CIVIL3D.OBJECT_NOT_FOUND when there is none.
+  /// </summary>
   private static Catchment FindCatchmentByName(object civilDoc, Database database, Transaction transaction, string name, OpenMode openMode)
   {
     var groupIds = GetCatchmentGroupIds(civilDoc, database);
@@ -451,6 +498,7 @@ public static class CatchmentCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Catchment '{name}' was not found in any group.");
   }
 
+  /// <summary>A catchment's short answer shape; each value is null when Civil 3D can't give it.</summary>
   private static Dictionary<string, object?> ToCatchmentSummary(Catchment catchment)
   {
     return new Dictionary<string, object?>
@@ -466,6 +514,7 @@ public static class CatchmentCommands
     };
   }
 
+  /// <summary>The summary plus every detail property; release-dependent ones are read late-bound under either name.</summary>
   private static Dictionary<string, object?> ToCatchmentDetail(Catchment catchment, Transaction transaction)
   {
     var detail = ToCatchmentSummary(catchment);
@@ -551,6 +600,7 @@ public static class CatchmentCommands
     catch { return null; }
   }
 
+  /// <summary>The first of <paramref name="propertyNames"/> that reads as a number (late-bound), else null.</summary>
   private static double? SafeGetDouble(object target, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -586,6 +636,7 @@ public static class CatchmentCommands
     return null;
   }
 
+  /// <summary>Sets the first of <paramref name="propertyNames"/> this release can write (late-bound); silently does nothing if none.</summary>
   private static void TrySetDeprecatedProperty(object target, object value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)

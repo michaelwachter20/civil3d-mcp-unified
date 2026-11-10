@@ -1,3 +1,7 @@
+// Guards the local HTTP bridge (src/httpBridge.ts, 127.0.0.1:3000): /health, /health?deep=1, /tools and /execute,
+// error-to-status mapping, body size limit, bearer-token auth, CORS and Host allowlists, and abort on client disconnect.
+// The tool handler registry and the orchestrator are mocked (vi.hoisted), so no plugin or Civil 3D is involved.
+
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
@@ -38,6 +42,7 @@ interface BridgeHandle {
   close: () => Promise<void>;
 }
 
+/** Starts the bridge on a free local port with the given options and returns its base URL and a stop function. */
 async function launchBridge(options: Parameters<typeof startHttpBridge>[0] = {}): Promise<BridgeHandle> {
   const server = startHttpBridge({ port: 0, host: "127.0.0.1", ...options });
 
@@ -62,6 +67,7 @@ interface BridgeResponse {
   body: unknown;
 }
 
+/** Sends one HTTP request to the bridge and returns the status, headers and parsed body. */
 async function request(
   method: "GET" | "POST" | "OPTIONS",
   url: string,
@@ -404,6 +410,7 @@ describe("httpBridge", () => {
     });
   });
 
+  // Non-loopback binds must be refused unless a token and a Host allowlist are set; the token may come in two headers.
   describe("authorization", () => {
     it("refuses a non-loopback bind without authentication", () => {
       expect(() => startHttpBridge({ host: "0.0.0.0", port: 0, authToken: "" }))

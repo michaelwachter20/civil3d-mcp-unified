@@ -1,3 +1,10 @@
+// StmCommands.cs - starts Civil 3D's Storm and Sanitary Analysis / Hydraflow (.STM) dialogs. Methods
+// (CommandDispatcher.cs): exportStm, importStm, openStormSanitaryAnalysis, listSsaCapabilities. Caller:
+// src/tools/domains/hydrologyDomain.ts (civil3d_hydrology). Each handler queues an AutoCAD command (ExportSSA,
+// ImportSSA, AnalyzeGravityNetwork) with SendStringToExecute from inside CivilExecution.ReadAsync and returns at once;
+// the command and its dialog run after the request, outside the host gate, and the user picks the file there. So no
+// caller-supplied path is accepted (nothing to send through FileBoundary), and whatever ImportSSA changes is the
+// user's own command, not part of this request.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.ApplicationServices;
 using App = Autodesk.AutoCAD.ApplicationServices.Application;
@@ -15,6 +22,9 @@ public static class StmCommands
   // ──────────────────────────────────────────────
   //  Export to STM (Hydraflow Storm Sewers file)
   // ──────────────────────────────────────────────
+  /// <summary><c>exportStm</c>: queues ExportSSA, which opens Civil 3D's export dialog. <c>filePath</c> must be absent
+  /// (CIVIL3D.INVALID_INPUT otherwise: the dialog can't take one). Returns status "initiated" and notes; the drawing
+  /// isn't changed. CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
   public static Task<object?> ExportStmAsync(JsonObject? parameters)
   {
     var filePath = PluginRuntime.GetOptionalString(parameters, "filePath");
@@ -28,7 +38,7 @@ public static class StmCommands
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       // The ExportSSA command opens the Storm and Sanitary Analysis export dialog.
-      // If a filePath is provided, we note it for the user; the dialog will still appear.
+      // The user chooses the destination in the dialog (a filePath was refused above).
       var commandString = "ExportSSA\n";
 
       try
@@ -59,6 +69,9 @@ public static class StmCommands
   // ──────────────────────────────────────────────
   //  Import from STM
   // ──────────────────────────────────────────────
+  /// <summary><c>importStm</c>: queues ImportSSA, which opens Civil 3D's import dialog; the user picks the .STM file
+  /// and the import (which can change pipes and catchments) runs as their command after this returns. <c>filePath</c>
+  /// must be absent (CIVIL3D.INVALID_INPUT). CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
   public static Task<object?> ImportStmAsync(JsonObject? parameters)
   {
     var filePath = PluginRuntime.GetOptionalString(parameters, "filePath");
@@ -102,6 +115,8 @@ public static class StmCommands
   // ──────────────────────────────────────────────
   //  Open Storm and Sanitary Analysis
   // ──────────────────────────────────────────────
+  /// <summary><c>openStormSanitaryAnalysis</c>: no parameters used. Queues AnalyzeGravityNetwork (the analysis dialog)
+  /// and returns status "initiated". CIVIL3D.COMMAND_FAILED when the command can't be queued.</summary>
   public static Task<object?> OpenStormSanitaryAnalysisAsync(JsonObject? parameters)
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -136,6 +151,7 @@ public static class StmCommands
   // ──────────────────────────────────────────────
   //  List SSA Capabilities
   // ──────────────────────────────────────────────
+  /// <summary><c>listSsaCapabilities</c>: a fixed description of the three operations above. Doesn't touch Civil 3D.</summary>
   public static Task<object?> ListSsaCapabilitiesAsync()
   {
     return Task.FromResult<object?>(new Dictionary<string, object?>

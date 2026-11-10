@@ -1,3 +1,9 @@
+// Pure gravity-pipe arithmetic: slope from the pipe's ends, Manning full-flow capacity, part-full depth, velocity and
+// Froude number, closest distance between two pipe centerlines, sample spacing along a pipe, unit names.
+// Used by PipeNetworkCommands (checkPipeNetworkInterference, pipe data's slopePercent) and PipeHydraulicsCommands
+// (HGL, hydraulic analysis), which serve civil3d_pipe (src/tools/domains/pipeDomain.ts); the TS size_network action
+// has its own Manning's code. Serves no JSON-RPC method itself.
+// No Autodesk types, no drawing or file access: tests/FileBoundaryHarness compiles and tests it without Civil 3D.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -57,6 +63,8 @@ public static class PipeMath
     return (depth, (angle - Math.Sin(angle)) / (2 * Math.PI), Math.Sin(angle / 2));
   }
 
+  /// <summary>Q/Qfull of a round pipe flowing at depth ratio y/D (Manning, same n): area ratio times hydraulic radius
+  /// ratio to the 2/3.</summary>
   private static double FlowRatioAtDepth(double depthRatio)
   {
     var angle = 2 * Math.Acos(1 - 2 * depthRatio);

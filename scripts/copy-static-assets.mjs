@@ -1,3 +1,6 @@
+// Second half of `npm run build` (after tsc): copies the non-TypeScript files the server reads at runtime into build/:
+// the standards data, the Autodesk tutorial video catalog (autodesk_videos.json), the built-in skills (skills/) and
+// the project database schema (src/tools/project-db.sql). Writes only under build/.
 import { cp, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

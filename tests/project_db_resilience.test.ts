@@ -1,3 +1,8 @@
+// Guards how src/tools/projectDb.ts / projectNotes.ts open the suite's project database (repo rule 2): read-only reads,
+// busy and damaged databases, newer schemas, and the daily checked backup (newest 3 kept; never Project Analyzer's).
+// Works on copies of tests/fixtures/fixture.db (Project Analyzer's made-up job) in temp folders; one test damages a
+// copy on purpose. Needs Node's built-in node:sqlite.
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, truncateSync, writeFileSync, writeSync } from "node:fs";

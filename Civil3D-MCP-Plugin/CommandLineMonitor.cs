@@ -1,3 +1,10 @@
+// Command-line text and a short command history for every open drawing.
+// JSON-RPC method (CommandDispatcher): getCommandLine, called by src/tools/domains/drawingRuntimeDomain.ts
+// (civil3d_drawing action=command_line). Also used inside the plugin: CivilExecution names the active command in its
+// CIVIL3D.HOST_BUSY message, and the undo guard (DrawingCommands) asks which user commands ran since the AI's last
+// change so UNDO never reverts the user's own work silently.
+// It never touches the drawing and does not use the host queue: command events are recorded from document events,
+// and getCommandLine reads the main thread directly with a 3 s timeout, so it answers even while a request is stuck.
 using Autodesk.AutoCAD.ApplicationServices;
 using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
@@ -35,6 +42,7 @@ internal static class CommandLineMonitor
     App.DocumentManager.DocumentCreated += (_, e) => Attach(e.Document);
   }
 
+  /// <summary>Subscribes to a document's command start/end/cancel/fail events so they are recorded in the history.</summary>
   private static void Attach(Document? document)
   {
     if (document == null)
@@ -78,6 +86,10 @@ internal static class CommandLineMonitor
     }
   }
 
+  /// <summary>
+  /// Appends one command event (history capped at <see cref="MaxHistory"/>) and adjusts that command's running count
+  /// by <paramref name="delta"/>. Thread-safe.
+  /// </summary>
   private static void Record(string drawing, string command, string what, int delta)
   {
     lock (Sync)
@@ -103,6 +115,7 @@ internal static class CommandLineMonitor
     }
   }
 
+  /// <summary>The last <paramref name="count"/> command events across all drawings, oldest first (safe on any thread).</summary>
   public static IReadOnlyList<CommandEvent> RecentCommands(int count)
   {
     lock (Sync)
@@ -119,6 +132,12 @@ internal static class CommandLineMonitor
     return lines == null ? Array.Empty<string>() : lines.Cast<string>().Reverse().ToList();
   }
 
+  /// <summary>
+  /// getCommandLine: the last <c>lines</c> command-line lines (optional, default 30, clamped 1-200), whether a command
+  /// is active, the active command names (CMDNAMES, else from events), the last 20 command events, and a note when the
+  /// main thread didn't answer within 3 s or Civil 3D is waiting on one of its windows. Read only; never throws for a
+  /// busy host (lines and commandActive are then null).
+  /// </summary>
   public static async Task<object?> GetCommandLineAsync(System.Text.Json.Nodes.JsonObject? parameters)
   {
     var lineCount = Math.Clamp(PluginRuntime.GetOptionalInt(parameters, "lines") ?? 30, 1, 200);

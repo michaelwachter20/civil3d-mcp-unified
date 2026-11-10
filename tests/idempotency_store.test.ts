@@ -1,3 +1,7 @@
+// Guards src/tools/idempotencyStore.ts: a retried call with the same idempotency key and parameters runs once, a changed
+// parameter set under the same key is refused, failures are not cached, and in-flight calls are never evicted.
+// Pure unit test.
+
 import { describe, expect, it, vi } from "vitest";
 import {
   IdempotencyCapacityError,

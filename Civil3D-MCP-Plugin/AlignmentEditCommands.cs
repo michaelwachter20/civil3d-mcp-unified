@@ -1,3 +1,10 @@
+// Geometry edits on existing horizontal alignments, plus offset alignments and widenings.
+// JSON-RPC methods (CommandDispatcher): alignmentAddTangent, alignmentAddCurve, alignmentAddSpiral,
+// alignmentDeleteEntity, alignmentSetStationEquation, alignmentGetStationOffset, alignmentOffsetCreate,
+// alignmentWidenTransition. Called by src/tools/domains/alignmentDomain.ts (civil3d_alignment edit actions).
+// Every method except alignmentGetStationOffset (CivilExecution.ReadAsync) is a CivilExecution.WriteAsync: one
+// transaction, one undo step. Entity indexes are the alignment's own entity order (creation order), the same index
+// getAlignment reports. No file access, no reflection.
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.Civil.DatabaseServices;
@@ -15,6 +22,11 @@ public static class AlignmentEditCommands
 {
   // ─── alignmentAddTangent ──────────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentAddTangent: adds a fixed line from (<c>startX</c>, <c>startY</c>) to (<c>endX</c>, <c>endY</c>) to
+  /// alignment <c>alignmentName</c> (all required). Changes the drawing. Returns the new entity's index and the
+  /// coordinates. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment; Civil 3D API failures surface as internal errors.
+  /// </summary>
   public static Task<object?> AddTangentAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -48,6 +60,11 @@ public static class AlignmentEditCommands
 
   // ─── alignmentAddCurve ────────────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentAddCurve: not implemented. Reads <c>alignmentName</c>, <c>passThroughX</c>, <c>passThroughY</c> and
+  /// <c>radius</c> (required, so a missing one is CIVIL3D.INVALID_INPUT) and then always throws CIVIL3D.API_ERROR: the
+  /// schema gives no curve direction, so nothing is created and the drawing is never opened.
+  /// </summary>
   public static Task<object?> AddCurveAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -67,7 +84,10 @@ public static class AlignmentEditCommands
   /// A spiral-curve-spiral between two tangents of alignment <c>alignmentName</c>, the road layout's usual transition:
   /// <c>fromEntityIndex</c> and <c>toEntityIndex</c> are the tangents (the index alignment get shows), <c>radius</c> the
   /// curve, <c>length</c> the spiral in and <c>lengthOut</c> the spiral out (default the same). Two tangents with a
-  /// curve between them are refused by Civil 3D: delete_entity the curve first.
+  /// curve between them are refused by Civil 3D: delete_entity the curve first. <c>spiralType</c> is clothoid
+  /// (default), cubic or biquadratic. A write (one undo step); returns the new entity's index and the alignment's new
+  /// length. CIVIL3D.INVALID_INPUT for an unknown spiral type or an index out of range, CIVIL3D.OBJECT_NOT_FOUND for
+  /// an unknown alignment.
   /// </summary>
   public static Task<object?> AddSpiralAsync(JsonObject? parameters)
   {
@@ -116,6 +136,11 @@ public static class AlignmentEditCommands
 
   // ─── alignmentDeleteEntity ────────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentDeleteEntity: removes entity <c>entityIndex</c> (creation-order index from getAlignment) from alignment
+  /// <c>alignmentName</c> (both required). Changes the drawing. CIVIL3D.INVALID_INPUT for an index out of range,
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.
+  /// </summary>
   public static Task<object?> DeleteEntityAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -150,6 +175,11 @@ public static class AlignmentEditCommands
 
   // ─── alignmentSetStationEquation ─────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentSetStationEquation: adds a station equation at <c>rawStation</c> (back) whose ahead station is
+  /// <c>nominalStation</c> on alignment <c>alignmentName</c> (all required). Increasing when ahead >= back, else
+  /// decreasing. Changes the drawing. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.
+  /// </summary>
   public static Task<object?> SetStationEquationAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -180,6 +210,11 @@ public static class AlignmentEditCommands
 
   // ─── alignmentGetStationOffset ────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentGetStationOffset: the station and signed offset of point <c>x</c>, <c>y</c> on alignment
+  /// <c>alignmentName</c> (all required); same answer as alignmentPointToStation. Read only. CIVIL3D.INVALID_INPUT
+  /// for a point beyond the alignment's ends, CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.
+  /// </summary>
   public static Task<object?> GetStationOffsetAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -203,6 +238,11 @@ public static class AlignmentEditCommands
 
   // ─── alignmentOffsetCreate ────────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentOffsetCreate: creates offset alignment <c>offsetName</c> at <c>offset</c> (negative left, positive right)
+  /// from alignment <c>alignmentName</c> (all required), with optional <c>style</c> and <c>layer</c>. Changes the
+  /// drawing. Returns the names, offset and handle. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment, style or layer.
+  /// </summary>
   public static Task<object?> OffsetCreateAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");
@@ -237,6 +277,12 @@ public static class AlignmentEditCommands
 
   // ─── alignmentWidenTransition ─────────────────────────────────────────────
 
+  /// <summary>
+  /// alignmentWidenTransition: creates an offset alignment on <c>side</c> (left or anything else = right) of
+  /// <c>alignmentName</c> at <c>startOffset</c> and adds a widening to <c>endOffset</c> between <c>startStation</c> and
+  /// <c>endStation</c> (all required). <c>offsetName</c> defaults to "&lt;alignment&gt;_Widen_&lt;side&gt;"; the default
+  /// alignment style is used. Changes the drawing. CIVIL3D.OBJECT_NOT_FOUND for an unknown alignment.
+  /// </summary>
   public static Task<object?> WidenTransitionAsync(JsonObject? parameters)
   {
     var alignmentName = PluginRuntime.GetRequiredString(parameters, "alignmentName");

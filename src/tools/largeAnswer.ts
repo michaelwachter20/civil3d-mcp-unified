@@ -3,6 +3,7 @@
  * its limit (10 MiB in the SDK), and a message carries the answer twice, as text and as structured content, so an 8 MiB
  * answer from Civil 3D was enough. Past MAX_INLINE_BYTES the caller gets the answer's shape instead: its plain values,
  * how long its lists are and their first items, and where the whole answer is kept when it could be.
+ * Called by domainRuntime.ts for every tool result, after the result was offered to reportResourceStore.ts.
  */
 
 /** Well under the client's limit, with the answer sent twice. */

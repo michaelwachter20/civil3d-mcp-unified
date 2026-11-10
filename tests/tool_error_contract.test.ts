@@ -1,3 +1,6 @@
+// Guards the tool error contract (src/tools/toolHandlerRegistry.ts, SocketClient.ts): Civil 3D domain and numeric error
+// codes survive the MCP envelope, and plain availability failures stay untyped so the HTTP bridge can classify them.
+
 import { describe, expect, it } from "vitest";
 import {
   captureToolHandler,

@@ -1,3 +1,7 @@
+// QC domain: `civil3d_qc` and its `civil3d_qc_*` aliases, listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts).
+// Each action is one call to QcCommands.cs (`qc*` methods). The checks only read the drawing (no approval);
+// generate_report writes a text file through the plugin's FileBoundary, so it is declared "export" and approvalPolicy
+// asks for an approvalToken. Details per action are in the comments below.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";
@@ -79,6 +83,7 @@ const QcProfileArgsSchema = z.object({
   minKValue: z.number().positive().optional(),
 });
 
+/** `check_corridor`: checks one corridor by name (qcCheckCorridor); no limits to pass. */
 const QcCorridorArgsSchema = z.object({
   action: z.literal("check_corridor"),
   name: z.string(),

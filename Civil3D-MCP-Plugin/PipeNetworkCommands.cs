@@ -1,3 +1,13 @@
+// Gravity pipe network handlers. JSON-RPC methods (CommandDispatcher.cs): listPipeNetworks, getPipeNetwork, getPipe,
+// getStructure, checkPipeNetworkInterference, createPipeNetwork, addPipeToNetwork, resizePipeInNetwork,
+// addStructureToNetwork, listPipePartsCatalog.
+// Callers: civil3d_pipe (src/tools/domains/pipeDomain.ts: list, get, get_pipe, get_structure, check_interference,
+// create, add_pipe, add_structure, catalog_list, and the composed size_network / automate_profile_view), and
+// workflowDomain.ts's pipe_network_design (getPipeNetwork, listPipePartsCatalog, resizePipeInNetwork). In-process,
+// DrawingCommands and SurfaceCommands use CountPipeNetworks, GetFirstPipeNetworkStyleName and NetworksOnSurface.
+// Reads run in CivilExecution.ReadAsync (main thread, no undo step); create, add and resize run in
+// CivilExecution.WriteAsync (command context, document lock, one transaction, one undo step), so a refused write
+// leaves nothing behind. No file access. Late-bound member lookups go through Civil3DCompatibility only.
 using System.Collections;
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -15,12 +25,16 @@ namespace Civil3DMcpPlugin;
 /// parts catalog. Pressure networks are in PressureNetworkCommands, hydraulics in PipeHydraulicsCommands.
 ///
 /// Parts are chosen by their exact size name in the network's parts list (FindPartForNetwork), so list the catalog
-/// first. Pipe data carries centerline elevations, not inverts: the managed Pipe API doesn't expose endpoint inverts.
-/// The network collection is read late-bound from several member names so the class works across releases.
+/// first. A pipe's end points are on its centerline: pipe data gives the centerline elevations plus inverts worked out
+/// from them (PipeHydraulicsCommands.InvertIn/InvertOut), because the managed Pipe API doesn't expose endpoint inverts.
+/// Networks come from CivilDocument.GetPipeNetworkIds(); only the network style collection is read late-bound by
+/// member name. Names (networks, pipes, structures, parts lists, styles) match case-insensitively. Lookups that fail
+/// throw CIVIL3D.OBJECT_NOT_FOUND; missing or bad arguments throw CIVIL3D.INVALID_INPUT.
 /// </summary>
 public static class PipeNetworkCommands
 {
-  /// <summary>Every gravity network with its pipe and structure counts and reference surface.</summary>
+  /// <summary>Every gravity network with its pipe and structure counts and reference surface. No parameters; read
+  /// only.</summary>
   public static Task<object?> ListPipeNetworksAsync()
   {
     return CivilExecution.ReadAsync<object?>((doc, civilDoc, database, transaction) =>
@@ -37,7 +51,8 @@ public static class PipeNetworkCommands
   }
 
   /// <summary>Network <c>name</c> in full: parts list, style, reference surface and alignment, and every pipe and
-  /// structure (the shape pipeDomain.ts's size_network and automate_profile_view read).</summary>
+  /// structure (the shape pipeDomain.ts's size_network and automate_profile_view read). <c>name</c> is required. Read
+  /// only; an unknown network is CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> GetPipeNetworkAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -49,7 +64,8 @@ public static class PipeNetworkCommands
   }
 
   /// <summary>One pipe (<c>pipeName</c> in <c>networkName</c>): structures at each end, 3D length, inner diameter,
-  /// slope, material and centerline elevations.</summary>
+  /// slope, material, centerline elevations and inverts. Both names are required. Read only; an unknown network or
+  /// pipe is CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> GetPipeAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -63,7 +79,8 @@ public static class PipeNetworkCommands
   }
 
   /// <summary>One structure (<c>structureName</c> in <c>networkName</c>): type, rim and sump elevations, location and
-  /// connected pipes.</summary>
+  /// connected pipes. Both names are required. Read only; an unknown network or structure is
+  /// CIVIL3D.OBJECT_NOT_FOUND.</summary>
   public static Task<object?> GetStructureAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -87,7 +104,9 @@ public static class PipeNetworkCommands
   /// <c>minClearance</c> anywhere (default 0: out of the ground) is a conflict, at its worst sample. Points off the
   /// surface are skipped and counted.</item>
   /// </list>
-  /// Pipes only; structures aren't checked. The answer lists each conflict with where it is.
+  /// Pipes only; structures aren't checked. The answer lists each conflict with where it is. Read only.
+  /// <c>networkName</c>, <c>targetType</c> and <c>targetName</c> are required; another <c>targetType</c> is
+  /// CIVIL3D.INVALID_INPUT, and an unknown network or surface is CIVIL3D.OBJECT_NOT_FOUND.
   /// </summary>
   public static Task<object?> CheckPipeNetworkInterferenceAsync(JsonObject? parameters)
   {
@@ -218,7 +237,9 @@ public static class PipeNetworkCommands
   /// <summary>
   /// Creates gravity network <c>name</c> with parts list <c>partsList</c> (required), and optional <c>layer</c>,
   /// <c>style</c> (ignored when not found), <c>referenceSurface</c> and <c>referenceAlignment</c>. Civil 3D may adjust
-  /// the name if it is taken; the answer gives the name actually used.
+  /// the name if it is taken; the answer gives the name actually used. Changes the drawing (one undo step).
+  /// Throws CIVIL3D.CONFLICT when a network of that name already exists, and CIVIL3D.OBJECT_NOT_FOUND for an unknown
+  /// parts list, reference surface or reference alignment.
   /// </summary>
   public static Task<object?> CreatePipeNetworkAsync(JsonObject? parameters)
   {
@@ -281,8 +302,11 @@ public static class PipeNetworkCommands
     });
   }
 
-  /// <summary>Adds a structure of size <c>partName</c> at (<c>x</c>, <c>y</c>) with <c>rimElevation</c> (default 0)
-  /// and <c>sumpDepth</c> below the rim (default 0), without applying the network's design rules.</summary>
+  /// <summary>Adds a structure of size <c>partName</c> to <c>networkName</c> at (<c>x</c>, <c>y</c>) (all required),
+  /// with optional <c>name</c>, <c>rimElevation</c> and <c>sumpDepth</c> below the rim (default 0), without applying
+  /// the network's design rules. With no <c>rimElevation</c> the rim is the network's reference surface at (x, y); a
+  /// network without one, or a point off it, is CIVIL3D.INVALID_INPUT. An unknown network or part size is
+  /// CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step).</summary>
   public static Task<object?> AddStructureToNetworkAsync(JsonObject? parameters)
   {
     var networkName = PluginRuntime.GetRequiredString(parameters, "networkName");
@@ -332,6 +356,9 @@ public static class PipeNetworkCommands
   /// <c>startStructure</c> / <c>endStructure</c> (connected to them); an end with neither is refused rather than
   /// placed at the origin. Design rules aren't applied. With <c>diameter</c>, a part whose inner diameter differs is
   /// refused, and because the write's transaction then isn't committed, no pipe is left behind.
+  /// <c>networkName</c> and <c>partName</c> are required; <c>name</c> is optional. Points are {x, y, z} objects and z
+  /// is required. Refusals are CIVIL3D.INVALID_INPUT; an unknown network, structure or part size is
+  /// CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step).
   /// </summary>
   public static Task<object?> AddPipeToNetworkAsync(JsonObject? parameters)
   {
@@ -373,7 +400,10 @@ public static class PipeNetworkCommands
   /// <summary>
   /// Changes pipe <c>pipeName</c> to part size <c>newPartName</c> (from the parts list) and/or to inner diameter
   /// <c>newDiameter</c> (drawing units, the exact size, not the closest). When both are given, the part swap happens
-  /// first and the diameter is applied after it.
+  /// first and the diameter is applied after it. <c>networkName</c> and <c>pipeName</c> are required; with neither
+  /// change given the call is CIVIL3D.INVALID_INPUT before the drawing is touched. An unknown network, pipe or part
+  /// size is CIVIL3D.OBJECT_NOT_FOUND. Changes the drawing (one undo step); the answer echoes the request, not the
+  /// pipe's new size.
   /// </summary>
   public static Task<object?> ResizePipeInNetworkAsync(JsonObject? parameters)
   {
@@ -414,7 +444,8 @@ public static class PipeNetworkCommands
     });
   }
 
-  /// <summary>Every parts list (or just <c>partsList</c>) with its part size names, the names partName takes.</summary>
+  /// <summary>Every parts list (or just optional <c>partsList</c>) with its part size names, the names partName takes.
+  /// Read only; an unknown <c>partsList</c> gives an empty list, not an error.</summary>
   public static Task<object?> ListPipePartsCatalogAsync(JsonObject? parameters)
   {
     var partsListName = PluginRuntime.GetOptionalString(parameters, "partsList");
@@ -445,6 +476,8 @@ public static class PipeNetworkCommands
     return ((CivilDocument)civilDoc).GetPipeNetworkIds().Count;
   }
 
+  /// <summary>The first pipe network style's name (or null), for DrawingCommands' style summary. The collection is
+  /// read late-bound because its property name differs between releases.</summary>
   public static string? GetFirstPipeNetworkStyleName(object civilDoc, Transaction transaction)
   {
     var styles = ((CivilDocument)civilDoc).Styles;
@@ -453,6 +486,7 @@ public static class PipeNetworkCommands
     return LookupUtils.GetFirstStyleName(collection, transaction);
   }
 
+  /// <summary>Every gravity network in the drawing, opened in <paramref name="openMode"/>.</summary>
   private static IEnumerable<Network> EnumeratePipeNetworks(object civilDoc, Transaction transaction, OpenMode openMode)
   {
     foreach (ObjectId objectId in ((CivilDocument)civilDoc).GetPipeNetworkIds())
@@ -461,6 +495,8 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>Network ids from whichever of several member names exist (ids can repeat). Not called in this file:
+  /// EnumeratePipeNetworks reads GetPipeNetworkIds() directly.</summary>
   private static IEnumerable<ObjectId> GetPipeNetworkIds(object civilDoc)
   {
     var candidates = new[]
@@ -484,6 +520,8 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>Object ids in a collection, plus the ObjectId/Id of items that aren't ids themselves (ids can repeat).
+  /// Used only by the unused GetPipeNetworkIds and GetChildObjectIds.</summary>
   private static IEnumerable<ObjectId> ToObjectIdsFlexible(object? value)
   {
     foreach (var objectId in CivilObjectUtils.ToObjectIds(value))
@@ -510,6 +548,7 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>The gravity network named <paramref name="name"/> (case-insensitive), or CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static Network FindPipeNetworkByName(object civilDoc, Transaction transaction, string name, OpenMode openMode)
   {
     foreach (var network in EnumeratePipeNetworks(civilDoc, transaction, openMode))
@@ -523,6 +562,8 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pipe network '{name}' was not found.");
   }
 
+  /// <summary>The pipe of this network named <paramref name="pipeName"/> (case-insensitive), or
+  /// CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static Pipe FindPipeByName(Network network, Transaction transaction, string pipeName, OpenMode openMode)
   {
     foreach (ObjectId objectId in network.GetPipeIds())
@@ -537,6 +578,8 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Pipe '{pipeName}' was not found in network '{CivilObjectUtils.GetName(network)}'.");
   }
 
+  /// <summary>The structure of this network named <paramref name="structureName"/> (case-insensitive), or
+  /// CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static Structure FindStructureByName(Network network, Transaction transaction, string structureName, OpenMode openMode)
   {
     foreach (ObjectId objectId in network.GetStructureIds())
@@ -573,6 +616,7 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>One row of listPipeNetworks: name, handle, pipe and structure counts, reference surface.</summary>
   private static Dictionary<string, object?> ToPipeNetworkSummary(Network network, Transaction transaction)
   {
     return new Dictionary<string, object?>
@@ -585,6 +629,8 @@ public static class PipeNetworkCommands
     };
   }
 
+  /// <summary>The getPipeNetwork answer: the network's settings and units, with every pipe (ToPipeData) and structure
+  /// (ToStructureData).</summary>
   private static Dictionary<string, object?> ToPipeNetworkDetail(Network network, Transaction transaction)
   {
     var pipes = network.GetPipeIds().Cast<ObjectId>()
@@ -609,6 +655,8 @@ public static class PipeNetworkCommands
     };
   }
 
+  /// <summary>A pipe as JSON: end structures, 3D length, inner diameter, Civil 3D's slope and the percent slope, part
+  /// size, material, centerline elevations and inverts.</summary>
   private static Dictionary<string, object?> ToPipeData(Pipe pipe, Transaction transaction)
   {
     return new Dictionary<string, object?>
@@ -632,6 +680,8 @@ public static class PipeNetworkCommands
     };
   }
 
+  /// <summary>A structure as JSON: part type, rim and sump elevations, x and y, and connected pipe names (or handles).
+  /// </summary>
   private static Dictionary<string, object?> ToStructureData(Structure structure, Transaction transaction)
   {
     var connectedPipeIds = Enumerable.Range(0, structure.ConnectedPipesCount)
@@ -651,12 +701,15 @@ public static class PipeNetworkCommands
     };
   }
 
+  /// <summary>Creates an empty gravity network; Network.Create takes the name by ref and may change it.</summary>
   private static ObjectId CreatePipeNetwork(object civilDoc, string name)
   {
     var requestedName = name;
     return Network.Create((CivilDocument)civilDoc, ref requestedName);
   }
 
+  /// <summary>The network's reference surface elevation at (x, y), for a structure added without a rim. No reference
+  /// surface, or a point off it, is CIVIL3D.INVALID_INPUT asking for rimElevation.</summary>
   private static double RimFromSurface(Network network, Transaction transaction, double x, double y)
   {
     if (Reference(() => network.ReferenceSurfaceId).IsNull)
@@ -677,6 +730,8 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>Adds a structure of part size <paramref name="partName"/> at <paramref name="location"/> with design
+  /// rules off, then sets its rim and rim-to-sump height. Returns the new structure's id.</summary>
   private static ObjectId AddStructureToNetwork(Network network, Transaction transaction, Point3d location, string partName, double rimElevation, double sumpDepth)
   {
     var part = FindPartForNetwork(network, transaction, partName, DomainType.Structure);
@@ -688,6 +743,12 @@ public static class PipeNetworkCommands
     return createdId;
   }
 
+  /// <summary>
+  /// Adds a straight pipe with design rules off. An end without a point starts on its structure's sump and is raised
+  /// half the inner height to the centerline; an end with neither point nor structure is CIVIL3D.INVALID_INPUT. The
+  /// ends are then connected to the named structures. A part whose inner diameter isn't <paramref name="diameter"/>
+  /// throws CIVIL3D.INVALID_INPUT after the pipe was added, which rolls the whole write back. Returns the pipe's id.
+  /// </summary>
   private static ObjectId AddPipeToNetwork(Network network, Transaction transaction, string partName, double? diameter, Point3d? startPoint, Point3d? endPoint, ObjectId startStructureId, ObjectId endStructureId)
   {
     var start = startPoint ?? GetStructureLocation(transaction, startStructureId, "start");
@@ -714,6 +775,7 @@ public static class PipeNetworkCommands
     return createdId;
   }
 
+  /// <summary>Child ids read late-bound from several member names. Not called in this file.</summary>
   private static IEnumerable<ObjectId> GetChildObjectIds(object owner, params string[] memberNames)
   {
     foreach (var memberName in memberNames)
@@ -729,12 +791,14 @@ public static class PipeNetworkCommands
     }
   }
 
+  /// <summary>A property or field read by name through Civil3DCompatibility (null when neither exists).</summary>
   private static object? GetNamedMemberValue(object? value, string memberName)
   {
     return Civil3DCompatibility.GetPropertyValue(value, memberName)
       ?? Civil3DCompatibility.GetFieldValue(value, memberName);
   }
 
+  /// <summary>An object's name, or null for a null id or an object that can't be opened.</summary>
   private static string? ResolveObjectName(Transaction transaction, ObjectId objectId)
   {
     if (objectId == ObjectId.Null)
@@ -767,6 +831,8 @@ public static class PipeNetworkCommands
     return ObjectId.Null;
   }
 
+  // GetAnyDouble, GetAnyString, GetPointProperty, Distance, CalculateSlope and EnumerateNamedObjects below are not
+  // called in this file.
   private static double? GetAnyDouble(object? value, params string[] propertyNames)
   {
     foreach (var propertyName in propertyNames)
@@ -835,6 +901,8 @@ public static class PipeNetworkCommands
     return (endPoint.Value.Z - startPoint.Value.Z) / horizontal;
   }
 
+  /// <summary>Parameter <paramref name="parameterName"/> as a point {x, y, z}, or null when it isn't an object. A
+  /// missing x, y or z is CIVIL3D.INVALID_INPUT: elevation 0 is never assumed.</summary>
   private static Point3d? ReadPoint(JsonObject? parameters, string parameterName)
   {
     if (PluginRuntime.GetParameter(parameters, parameterName) is not JsonObject pointNode)
@@ -848,6 +916,8 @@ public static class PipeNetworkCommands
     return new Point3d(x, y, z);
   }
 
+  /// <summary>The style named <paramref name="styleName"/> in the first of the named style collections that has it,
+  /// read late-bound; ObjectId.Null (not an error) when none has it.</summary>
   private static ObjectId FindStyleId(object civilDoc, Transaction transaction, string styleName, params string[] collectionNames)
   {
     var styles = GetNamedMemberValue(civilDoc, "Styles");
@@ -877,6 +947,7 @@ public static class PipeNetworkCommands
     return ObjectId.Null;
   }
 
+  /// <summary>The id of the parts list named <paramref name="partsListName"/>, or CIVIL3D.OBJECT_NOT_FOUND.</summary>
   private static ObjectId FindPartsListId(object civilDoc, Transaction transaction, string partsListName)
   {
     foreach (var partsList in EnumeratePartsLists(civilDoc, transaction))
@@ -890,6 +961,7 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Parts list '{partsListName}' was not found.");
   }
 
+  /// <summary>Every parts list in the drawing (Styles.PartsListSet), opened for read.</summary>
   private static IEnumerable<object> EnumeratePartsLists(object civilDoc, Transaction transaction)
   {
     foreach (ObjectId objectId in ((CivilDocument)civilDoc).Styles.PartsListSet)
@@ -959,6 +1031,8 @@ public static class PipeNetworkCommands
     throw new JsonRpcDispatchException("CIVIL3D.OBJECT_NOT_FOUND", $"Exact {domain} size '{partName}' was not found in the parts list for network '{network.Name}'.");
   }
 
+  /// <summary>A structure's x and y at its sump elevation, for a pipe end placed on it. A null id means the caller gave
+  /// neither a point nor a structure for that end: CIVIL3D.INVALID_INPUT.</summary>
   private static Point3d GetStructureLocation(Transaction transaction, ObjectId structureId, string endpointName)
   {
     if (structureId.IsNull)

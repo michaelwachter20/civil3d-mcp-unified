@@ -1,3 +1,10 @@
+// What counts as the AI making or deleting COGO points, for the "points only when the user asks" rule.
+// PointCreationGate asks the user in a Civil 3D window before such work runs; this file only decides whether the
+// work touches points: C# code (civil3d_execute, saved scripts; ScriptCommands) that calls Add* or Remove*/Clear on
+// the CogoPoints collection or a variable holding it, hands the collection to other code, or erases a CogoPoint, and
+// the AutoCAD commands that make points (acad_command). IMPORTPOINTS is not listed: that is Civil 3D's own importer.
+// A text check, so it errs toward asking. No Autodesk or WPF types, so tests/FileBoundaryHarness compiles and tests
+// it without Civil 3D; no drawing or file access.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,9 +38,12 @@ public static class PointCreationRules
     "CREATEPOINTS", "AECCCREATEPOINTS", "CREATEPOINTMANUAL", "AECCCREATEPOINTMANUAL", "CREATEPOINTSPOLYLINEVERTICES",
   };
 
+  /// <summary>"CogoPoints" plus every variable name the code assigns the collection to.</summary>
   private static IEnumerable<string> CollectionNames(string code) =>
     new[] { "CogoPoints" }.Concat(Alias.Matches(code).Select(m => m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value));
 
+  /// <summary>True when the code calls one of <paramref name="methods"/> (a regex alternation) on the collection or
+  /// one of its aliases.</summary>
   private static bool CallsOnCollection(string code, string methods) =>
     CollectionNames(code).Any(name => Regex.IsMatch(code, $@"\b{Regex.Escape(name)}\s*\.\s*(?:{methods})\s*\("));
 

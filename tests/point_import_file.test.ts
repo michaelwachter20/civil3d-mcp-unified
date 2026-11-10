@@ -1,3 +1,6 @@
+// Guards civil3d_point import_file / list_formats (src/tools/domains/pointDomain.ts): points from a file go in only
+// through Civil 3D's own importer, and the server instructions say so. ConnectionManager is mocked; no Civil 3D.
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { sendCommandMock } = vi.hoisted(() => ({

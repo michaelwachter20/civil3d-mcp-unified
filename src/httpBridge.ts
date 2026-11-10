@@ -1,16 +1,3 @@
-import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
-import {
-  hasToolHandler,
-  executeRegisteredTool,
-  listRegisteredToolNames,
-} from "./tools/toolHandlerRegistry.js";
-import { executeToolCallViaOrchestrator } from "./tools/civil3d_orchestrate.js";
-import { createLogger } from "./utils/logger.js";
-import { Civil3DRpcError } from "./utils/SocketClient.js";
-import { createRequestId, runWithRequestId } from "./utils/requestContext.js";
-import { dependencyVersions } from "./version.js";
-
 /**
  * The local HTTP bridge: the same tools as the MCP server, for HTTP clients that don't speak MCP (scripts, the
  * Copilot add-in, health checks). src/index.ts starts it next to the stdio transport.
@@ -25,7 +12,21 @@ import { dependencyVersions } from "./version.js";
  * X-MCP-Token header) and `MCP_HTTP_ALLOWED_HOSTS`. The Host header is always checked (against DNS rebinding), a
  * browser Origin must be in `MCP_HTTP_ALLOWED_ORIGINS`, and wildcards are refused. Each request gets an id (the
  * caller's `X-Request-Id` when it is well formed) and is cancelled if the client disconnects before the answer.
+ * Tested by tests/http_bridge.test.ts; scripts/live-host-smoke.mjs drives a live server through it.
  */
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
+import {
+  hasToolHandler,
+  executeRegisteredTool,
+  listRegisteredToolNames,
+} from "./tools/toolHandlerRegistry.js";
+import { executeToolCallViaOrchestrator } from "./tools/civil3d_orchestrate.js";
+import { createLogger } from "./utils/logger.js";
+import { Civil3DRpcError } from "./utils/SocketClient.js";
+import { createRequestId, runWithRequestId } from "./utils/requestContext.js";
+import { dependencyVersions } from "./version.js";
+
 const log = createLogger("HttpBridge");
 
 /** Overrides for the bridge's settings; anything left out comes from the `MCP_HTTP_*` environment variables. */
@@ -38,6 +39,7 @@ export interface HttpBridgeOptions {
   allowedHosts?: string[];
 }
 
+/** The settings after defaults and safety checks (resolveConfig); allowedHosts is never empty. */
 interface ResolvedHttpBridgeConfig {
   host: string;
   port: number;
@@ -47,6 +49,7 @@ interface ResolvedHttpBridgeConfig {
   allowedHosts: string[];
 }
 
+/** Whether a bind address is this machine only (localhost, 127.0.0.1, ::1); only those may run without a token. */
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   return normalized === "localhost"
@@ -55,6 +58,7 @@ function isLoopbackHost(host: string): boolean {
     || normalized === "[::1]";
 }
 
+/** A comma-separated MCP_HTTP_ALLOWED_ORIGINS value as a list (exact origins, compared as given). */
 function parseAllowedOrigins(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -62,6 +66,7 @@ function parseAllowedOrigins(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/** A comma-separated MCP_HTTP_ALLOWED_HOSTS value as normalized host names (ports dropped). */
 function parseAllowedHosts(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -142,6 +147,7 @@ class HttpBridgeError extends Error {
   }
 }
 
+/** The `POST /execute` body: a tool name (as listed by `GET /tools`) and its arguments. */
 type ExecuteRequest = {
   tool?: string;
   parameters?: Record<string, unknown>;
@@ -217,6 +223,7 @@ function isHostAllowed(request: IncomingMessage, allowedHosts: string[]): boolea
   return typeof host === "string" && allowedHosts.includes(host);
 }
 
+/** Echoes the Origin back in Access-Control-Allow-Origin only when it is listed (never "*"). */
 function applyCorsHeaders(
   request: IncomingMessage,
   response: ServerResponse,
@@ -229,6 +236,7 @@ function applyCorsHeaders(
   }
 }
 
+/** Sends `payload` as JSON with the status and the CORS method/header lists, and ends the response. */
 function writeJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -237,10 +245,12 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
   response.end(JSON.stringify(payload));
 }
 
+/** The value if it is an object, else `{}` (health answers are read field by field). */
 function objectResult(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
+/** Sends the bridge's error shape `{ error: { code, message } }`. */
 function writeError(
   response: ServerResponse,
   statusCode: number,
@@ -344,7 +354,7 @@ async function executeLegacyTool(toolName: string, parameters: Record<string, un
 
 /**
  * Execute a tool by name. Resolution order:
- *   1. Registered MCP tool handlers (all 180+ tools)
+ *   1. Registered MCP tool handlers (every registered tool, aliases included)
  *   2. Legacy synthetic endpoints (drawing-context convenience queries)
  *   3. Error
  */
@@ -401,6 +411,7 @@ async function handleHealth(request: IncomingMessage, response: ServerResponse):
   }
 }
 
+/** Calls the civil3d_health tool (a read-only plugin call); throws when the plugin is unreachable. */
 async function probePlugin(): Promise<Record<string, unknown>> {
   return objectResult(await executeBridgeTool("civil3d_health", {}));
 }
@@ -482,6 +493,7 @@ async function handleExecute(
   }
 }
 
+/** Answers a CORS preflight (OPTIONS) with 204; reached only after the Host and Origin checks passed. */
 function writePreflight(
   request: IncomingMessage,
   response: ServerResponse,

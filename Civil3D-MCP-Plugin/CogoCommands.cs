@@ -1,3 +1,8 @@
+// Coordinate-geometry math: inverse, direction-distance, traverse with closure, horizontal curve solve.
+// JSON-RPC methods (CommandDispatcher): cogoInverse, cogoDirectionDistance, cogoTraverse, cogoCurveSolve.
+// Called by src/tools/domains/geometryDomain.ts (civil3d_geometry cogo actions).
+// Pure math on the request's numbers: no CivilExecution, no drawing read or write, no undo step, no files. Bearings
+// are decimal degrees clockwise from north (+Y); slopes are percent.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.Geometry;
 
@@ -13,6 +18,10 @@ public static class CogoCommands
   // cogoInverse  -- bearing + distance between two points
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// cogoInverse: distance, azimuth (decimal and DMS text) and deltas from (<c>x1</c>, <c>y1</c>) to (<c>x2</c>,
+  /// <c>y2</c>), all required. Doesn't touch the drawing. CIVIL3D.INVALID_INPUT for a missing coordinate.
+  /// </summary>
   public static Task<object?> CogoInverseAsync(JsonObject? parameters)
   {
     var x1 = PluginRuntime.GetRequiredDouble(parameters, "x1");
@@ -27,6 +36,11 @@ public static class CogoCommands
   // cogoDirectionDistance  -- project a point given bearing and distance
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// cogoDirectionDistance: the point <c>distance</c> along azimuth <c>bearingDegrees</c> from (<c>fromX</c>,
+  /// <c>fromY</c>) (all required), with optional <c>fromZ</c> and percent <c>slope</c> for the z change. Doesn't touch
+  /// the drawing. CIVIL3D.INVALID_INPUT for a missing value.
+  /// </summary>
   public static Task<object?> CogoDirectionDistanceAsync(JsonObject? parameters)
   {
     var fromX = PluginRuntime.GetRequiredDouble(parameters, "fromX");
@@ -58,6 +72,13 @@ public static class CogoCommands
   // cogoTraverse  -- solve a series of bearing/distance courses
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// cogoTraverse: runs <c>courses</c> (required, objects with <c>bearingDegrees</c>, <c>distance</c>, optional
+  /// <c>slope</c> and <c>description</c>) from (<c>startX</c>, <c>startY</c>, optional <c>startZ</c>). Returns every
+  /// point with its running station, the end point and total length; with <c>isClosed</c> true also the closure
+  /// error, its azimuth and precision (1:n, null when perfect). Doesn't touch the drawing. CIVIL3D.INVALID_INPUT for
+  /// no courses or a malformed course.
+  /// </summary>
   public static Task<object?> CogoTraverseAsync(JsonObject? parameters)
   {
     var startX = PluginRuntime.GetRequiredDouble(parameters, "startX");
@@ -148,6 +169,12 @@ public static class CogoCommands
   // cogoCurveSolve  -- solve horizontal curve from two of: radius/delta/length/tangent/chord
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// cogoCurveSolve: a circular curve's radius, delta, length, tangent, chord, external, middle ordinate and degree
+  /// of curve (arc definition) from optional <c>radius</c>, <c>deltaDegrees</c>, <c>length</c>, <c>tangent</c>,
+  /// <c>chord</c>. Only these pairs are solved: radius with any one other, or length with tangent (Newton
+  /// iteration). Any other input is CIVIL3D.INVALID_INPUT. Doesn't touch the drawing.
+  /// </summary>
   public static Task<object?> CogoCurveSolveAsync(JsonObject? parameters)
   {
     var radius = PluginRuntime.GetOptionalDouble(parameters, "radius");
@@ -252,6 +279,7 @@ public static class CogoCommands
     return ((deg % 360) + 360) % 360;
   }
 
+  /// <summary>Decimal degrees as DDD°MM'SS.S" text (truncates, so 59.96" can show as 60.0").</summary>
   private static string DecimalToDms(double degrees)
   {
     var d = (int)degrees;
@@ -261,6 +289,11 @@ public static class CogoCommands
     return $"{d:D3}°{m:D2}'{s:00.0}\"";
   }
 
+  /// <summary>
+  /// The central angle (radians) for arc length <paramref name="L"/> and tangent <paramref name="T"/>, by Newton's
+  /// method on T = (L/d)·tan(d/2). Stops after <paramref name="maxIter"/> steps or if a step leaves (0, 2π], returning
+  /// the last estimate without reporting non-convergence.
+  /// </summary>
   private static double SolveDeltaFromLengthAndTangent(double L, double T, int maxIter = 50)
   {
     // T = R*tan(d/2) and L = R*d => R = L/d

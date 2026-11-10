@@ -1,3 +1,9 @@
+// Corridor region and target editing on one baseline at a time.
+// JSON-RPC methods (CommandDispatcher): getCorridorTargetMappings, setCorridorTargetMappings, addCorridorRegion,
+// deleteCorridorRegion. Called by src/tools/domains/corridorDomain.ts (civil3d_corridor).
+// getCorridorTargetMappings is a CivilExecution.ReadAsync. The three edits are CivilExecution.WriteAsync (one undo
+// step) and rebuild the corridor synchronously inside that write, unlike rebuildCorridor's background job, so a large
+// corridor holds the host queue until the rebuild ends. Baselines and regions are addressed by index. No file access.
 using System.Text.Json.Nodes;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.Civil.DatabaseServices;
@@ -24,6 +30,12 @@ public static class CorridorEditingCommands
   // getCorridorTargetMappings
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// getCorridorTargetMappings: for corridor <c>corridorName</c> (required), baseline <c>baselineIndex</c> (default 0)
+  /// and optionally one <c>regionIndex</c>, each region's stations and its targets (parameter and logical name,
+  /// subassembly, target type, target object names). Read only. CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor,
+  /// CIVIL3D.INVALID_INPUT for a baseline index out of range; a region index out of range just returns no regions.
+  /// </summary>
   public static Task<object?> GetCorridorTargetMappingsAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -66,6 +78,14 @@ public static class CorridorEditingCommands
   // setCorridorTargetMappings
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// setCorridorTargetMappings: on corridor <c>corridorName</c> (required), baseline <c>baselineIndex</c> and region
+  /// <c>regionIndex</c> (both default 0), points each target named in <c>targets</c> (required array of
+  /// <c>{parameterName, targetType surface|alignment|profile, targetName}</c>; incomplete entries are skipped) at that
+  /// object, then rebuilds the corridor. Changes the drawing. Returns how many targets were set. Throws
+  /// CIVIL3D.INVALID_INPUT for a missing targets array, an index out of range or a target name the region doesn't
+  /// have (message lists its targets), CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor or target object (or type).
+  /// </summary>
   public static Task<object?> SetCorridorTargetMappingsAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -137,6 +157,13 @@ public static class CorridorEditingCommands
   // addCorridorRegion
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// addCorridorRegion: adds region "Region n" with assembly <c>assemblyName</c> from <c>startStation</c> to
+  /// <c>endStation</c> (all required, with <c>corridorName</c>) on baseline <c>baselineIndex</c> (default 0), sets
+  /// <c>frequency</c> along tangents (default 10), <c>frequencyAtCurves</c> and <c>frequencyAtKneePoints</c> (applied
+  /// as the profile-curve frequency; both default to frequency), then rebuilds the corridor. Changes the drawing.
+  /// CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor or assembly, CIVIL3D.INVALID_INPUT for a bad baseline index.
+  /// </summary>
   public static Task<object?> AddCorridorRegionAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -195,6 +222,12 @@ public static class CorridorEditingCommands
   // deleteCorridorRegion
   // -------------------------------------------------------------------------
 
+  /// <summary>
+  /// deleteCorridorRegion: removes region <c>regionIndex</c> (required) of baseline <c>baselineIndex</c> (default 0) of
+  /// corridor <c>corridorName</c> (required) and rebuilds the corridor. Changes the drawing; returns what was deleted.
+  /// CIVIL3D.INVALID_INPUT for an index out of range, CIVIL3D.OBJECT_NOT_FOUND for an unknown corridor,
+  /// CIVIL3D.API_ERROR when Civil 3D doesn't remove the region.
+  /// </summary>
   public static Task<object?> DeleteCorridorRegionAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetRequiredString(parameters, "corridorName");
@@ -239,6 +272,7 @@ public static class CorridorEditingCommands
   // Helpers
   // -------------------------------------------------------------------------
 
+  /// <summary>The corridor's baseline at <paramref name="index"/>. CIVIL3D.INVALID_INPUT when out of range.</summary>
   private static Baseline GetBaseline(Corridor corridor, int index)
   {
     if (index < 0 || index >= corridor.Baselines.Count)
@@ -247,6 +281,7 @@ public static class CorridorEditingCommands
     return corridor.Baselines[index];
   }
 
+  /// <summary>A region's targets as answer rows, with the names of the objects each one targets.</summary>
   private static List<Dictionary<string, object?>> ReadTargetMappings(
     BaselineRegion region, Transaction transaction)
   {
@@ -271,6 +306,10 @@ public static class CorridorEditingCommands
     return mappings;
   }
 
+  /// <summary>
+  /// The surface, alignment or profile (any alignment's) named <paramref name="targetName"/>, by
+  /// <paramref name="targetType"/>; null when not found or the type is something else.
+  /// </summary>
   private static ObjectId? ResolveTargetObjectId(
     Autodesk.Civil.ApplicationServices.CivilDocument civilDoc,
     Transaction transaction, string targetType, string targetName)

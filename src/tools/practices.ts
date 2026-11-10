@@ -1,3 +1,9 @@
+// civil3d_practices: the suite's shared good practices in <shared folder>\practices.json, which Project Analyzer and
+// TBC MCP read and write too. Used by scriptingDomain.ts (the tool), serverInstructions.ts (current practices in every
+// AI's instructions) and projectNotes.ts (overview). Civil 3D MCP changes only entries with source "civil3d" (TOOL from
+// projectDb.ts), retires instead of deleting, keeps fields it doesn't know, and refuses job data (jobDataIn, stricter
+// than generalKnowledge.ts). Writes go through utils/atomicFiles.ts (lock, backup, atomic rename). Never calls the
+// plugin. The file's contract is in the block below.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { keepBackup, withFileLock } from "../utils/atomicFiles.js";
@@ -18,6 +24,7 @@ import { TOOL } from "./projectDb.js";
  *   - each change holds practices.json.lock, so another Civil 3D MCP on this PC waits instead of losing an update
  */
 
+/** One entry of practices.json; unknown fields written by other suite tools are carried along untouched. */
 export interface Practice {
   id: string;
   practice: string;
@@ -29,12 +36,17 @@ export interface Practice {
   [field: string]: unknown;
 }
 
+/** <shared folder>\practices.json (may not exist yet). */
 export function practicesFile(): string {
   return path.join(sharedRoot(), "practices.json");
 }
 
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
+/**
+ * The whole file (`data`, kept so other top-level fields survive a rewrite) and its entries with an id. A missing file
+ * is empty; a file that isn't a JSON object throws CIVIL3D.CONFLICT so it is never overwritten.
+ */
 function readPracticesFile(): { data: Record<string, unknown>; practices: Practice[] } {
   const file = practicesFile();
   if (!existsSync(file)) return { data: {}, practices: [] };
@@ -73,6 +85,7 @@ function change<T>(work: (practices: Practice[]) => T): Promise<T> {
   });
 }
 
+// What the AI sees of a practice; readOnly marks another tool's entry, which this tool must not change.
 const present = (practice: Practice) => ({
   id: practice.id,
   practice: practice.practice,
@@ -81,6 +94,7 @@ const present = (practice: Practice) => ({
   ...(practice.source === TOOL ? {} : { readOnly: true }),
 });
 
+/** Every tool's practices, retired ones only when asked. Throws CONFLICT when the file doesn't parse. */
 export function listPractices(includeRetired = false) {
   const { practices } = readPracticesFile();
   return practices.filter((practice) => includeRetired || !practice.retired);
@@ -95,6 +109,7 @@ export function practicesForInstructions(): Practice[] {
   }
 }
 
+/** civil3d_practices action=list: the file's path, the count and each practice as the AI sees it. */
 export function describePractices(includeRetired = false) {
   const practices = listPractices(includeRetired);
   return {
@@ -104,6 +119,7 @@ export function describePractices(includeRetired = false) {
   };
 }
 
+/** civil3d_practices action=search: query words in topics score 3, in the text 1; best first, at most 50. */
 export function searchPractices(query: string) {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const matches = listPractices()
@@ -130,6 +146,7 @@ export function jobDataIn(text: string): string | undefined {
   return problem ? `it contains ${problem}` : undefined;
 }
 
+/** The practice as one line; throws INVALID_INPUT when it is empty or holds job data. */
 function cleanText(practice: string): string {
   const text = oneLine(practice);
   if (!text) throw knowledgeError("CIVIL3D.INVALID_INPUT", "The practice is empty.");
@@ -142,6 +159,10 @@ function cleanText(practice: string): string {
 
 const cleanTopics = (topics: string[] | undefined) => [...new Set((topics ?? []).map(oneLine).filter(Boolean))];
 
+/**
+ * Adds a practice as "practice-<next>" with source "civil3d"; ids count every entry, retired and other tools' too, so
+ * none is reused. The same text as a current practice (any tool, any case) is "unchanged". Writes practices.json.
+ */
 export async function addPractice(practice: string, topics?: string[]) {
   const text = cleanText(practice);
   return change((entries) => {
@@ -154,6 +175,10 @@ export async function addPractice(practice: string, topics?: string[]) {
   });
 }
 
+/**
+ * The entry this tool may change: throws OBJECT_NOT_FOUND for an unknown id, CONFLICT for another tool's entry
+ * (the suite contract) or a retired one.
+ */
 function ownEntry(entries: Practice[], id: string): Practice {
   const entry = entries.find((candidate) => candidate?.id === id);
   if (!entry) throw knowledgeError("CIVIL3D.OBJECT_NOT_FOUND", `No practice with id '${id}'. Use action=list to see them.`);
@@ -164,6 +189,7 @@ function ownEntry(entries: Practice[], id: string): Practice {
   return entry;
 }
 
+/** Rewrites one of Civil 3D MCP's own practices (topics only when given) and stamps `updated`. */
 export async function updatePractice(id: string, practice: string, topics?: string[]) {
   const text = cleanText(practice);
   return change((entries) => {
@@ -175,6 +201,7 @@ export async function updatePractice(id: string, practice: string, topics?: stri
   });
 }
 
+/** Retires one of Civil 3D MCP's own practices (sets `retired`); nothing is deleted from the file. */
 export async function removePractice(id: string) {
   return change((entries) => {
     const entry = ownEntry(entries, id);

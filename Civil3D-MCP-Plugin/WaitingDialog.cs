@@ -1,3 +1,6 @@
+// WaitingDialog.cs - names a modal AutoCAD dialog that is blocking the main thread, so a stalled request can say why.
+// Used by CivilExecution (the HOST_BUSY message and the main thread id), CommandLineMonitor and DrawingCommands
+// (health / command line). Win32 calls only (user32/kernel32); never touches AutoCAD or the drawing.
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -29,6 +32,7 @@ internal static class WaitingDialog
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   private static extern int GetWindowText(IntPtr window, StringBuilder text, int size);
 
+  /// <summary>The calling thread's Win32 id (CivilExecution records the main thread's at startup).</summary>
   public static uint CurrentThreadId() => GetCurrentThreadId();
 
   /// <summary>The title of the first dialog open on AutoCAD's main thread, or null when there is none.</summary>

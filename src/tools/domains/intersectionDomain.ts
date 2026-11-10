@@ -1,3 +1,9 @@
+// Intersection domain: the `civil3d_intersection` tool plus the aliases `civil3d_intersection_list` and
+// `civil3d_intersection_get`. Listed in MIGRATED_DOMAIN_DEFINITIONS (toolManifest.ts).
+// Read-only: list -> listIntersections, get -> getIntersection, both in IntersectionCommands.cs; no approval.
+// Creating intersections is not offered because the managed API doesn't expose it (see the tool description).
+// Its catalog domain is "alignment" (there is no separate "intersection" ToolDomain), so the catalog and the
+// orchestrator group it with alignments.
 import { z } from "zod";
 import { withApplicationConnection } from "../../utils/ConnectionManager.js";
 import type { DomainToolDefinition } from "../domainRuntime.js";

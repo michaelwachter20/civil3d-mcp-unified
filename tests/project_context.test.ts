@@ -1,3 +1,6 @@
+// Guards getProjectContext (src/orchestration/ProjectContextService.ts): drawing, object and selection context come from
+// one native plugin command, not several. Uses a fake plugin server on a local port; no Civil 3D.
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as net from "node:net";
 

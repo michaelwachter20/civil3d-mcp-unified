@@ -1,7 +1,3 @@
-import { z } from "zod";
-import { withApplicationConnection } from "../../utils/ConnectionManager.js";
-import type { DomainToolDefinition } from "../domainRuntime.js";
-
 /**
  * The grading domain: `civil3d_grading` (grading groups, gradings, criteria, feature lines), the `civil3d_feature_line`
  * alias (its own `list` / `get` / `export_as_polyline` operations, mapped onto the `feature_line_*` actions) and one
@@ -11,7 +7,14 @@ import type { DomainToolDefinition } from "../domainRuntime.js";
  *
  * Civil 3D's API doesn't reach grading groups or gradings, so `group_list` only counts gradings and the other group and
  * grading actions refuse, naming what to use instead. Criteria and feature lines work. Coordinates are in drawing units.
+ *
+ * Approval (approvalPolicy.ts): the list/get/volume/criteria actions are reads. group_create, group_delete,
+ * group_surface_create, create, delete, feature_line_create and feature_line_export_as_polyline are declared as
+ * writes and need an approvalToken (even those the plugin refuses).
  */
+import { z } from "zod";
+import { withApplicationConnection } from "../../utils/ConnectionManager.js";
+import type { DomainToolDefinition } from "../domainRuntime.js";
 
 /** A point in drawing units; a missing elevation becomes 0. */
 const Point3DSchema = z.object({
@@ -109,7 +112,7 @@ const GradingGroupVolumeArgsSchema = z.object({
   name: z.string(),
 });
 
-/** Without `surfaceName`, Civil 3D names the group's new surface itself. */
+/** `surfaceName` optional. The plugin currently refuses this action (see the file header). */
 const GradingGroupSurfaceCreateArgsSchema = z.object({
   action: z.literal("group_surface_create"),
   name: z.string(),
@@ -129,7 +132,7 @@ const GradingGetArgsSchema = z.object({
 
 /**
  * A grading from a feature line (by name) into a group, with a criteria name from criteria_list (Civil 3D's default
- * when left out) on the given side (right when left out).
+ * when left out) on the given side (right when left out). The plugin currently refuses it (see the file header).
  */
 const GradingCreateArgsSchema = z.object({
   action: z.literal("create"),
@@ -174,9 +177,9 @@ const FeatureLineCreateArgsSchema = z.object({
 
 /**
  * The grading domain: `civil3d_grading` (grading groups, gradings, grading criteria, feature lines, and a surface
- * or volume from a grading group) and its aliases. Every action is one call to GradingCommands.cs, which reaches
- * the grading API late-bound so it tolerates differences between releases. Listed in toolManifest.ts;
- * exposures[0] is the canonical tool.
+ * or volume from a grading group) and its aliases. Every action is one call to GradingCommands.cs; there, every
+ * group and grading method except listGradingGroups throws CIVIL3D.API_ERROR at once, while the criteria and
+ * feature line methods do real work. Listed in toolManifest.ts; exposures[0] is the canonical tool.
  */
 export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
   domain: "grading",
@@ -233,7 +236,8 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
         async (appClient) => await appClient.sendCommand("deleteGradingGroup", { name: args.name }),
       ),
     },
-    // Cut and fill as the grading group reports them, in the drawing's volume units; net is cut minus fill.
+    // Meant to give the grading group's cut and fill; the plugin refuses it (CIVIL3D.API_ERROR) like every group and
+    // grading action except group_list.
     group_volume: {
       action: "group_volume",
       inputSchema: GradingGroupVolumeArgsSchema,

@@ -1,3 +1,11 @@
+// Pay-item quantities and a preliminary cost estimate from the drawing: earthwork between two surfaces, pipe network
+// lengths and structure counts, priced with the caller's unit prices.
+// JSON-RPC methods (CommandDispatcher): exportPayItems, calculateMaterialCostEstimate. Called by
+// src/tools/domains/costEstimationDomain.ts (civil3d_cost_estimation).
+// Both run in CivilExecution.MeasureAsync: earthwork needs a temporary TIN volume surface, which is created in a
+// transaction that is never committed (the drawing keeps nothing; the lock leaves one blank undo step). The CSV is
+// written only through FileBoundary.WriteAllTextAtomic (allowed roots, .csv only, no overwrite unless asked). Pipe
+// network access is late-bound through CivilObjectUtils. Corridor material quantities are not supported (API_ERROR).
 using System.Collections;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +24,16 @@ public static class CostEstimationCommands
 {
   // ─── exportPayItems ──────────────────────────────────────────────────────────
 
+  /// <summary>
+  /// exportPayItems: writes a quantity CSV to <c>outputPath</c> (required) and returns its lines. Includes earthwork
+  /// cut/fill when <c>includeEarthwork</c> (default true) and both <c>baseSurface</c> and <c>designSurface</c> are
+  /// given, pipe network lengths (<c>includePipeLengths</c>), structure counts by part type
+  /// (<c>includeStructureCounts</c>). Optional <c>payItems</c> (<c>{code, description, unit, unitPrice}</c>) add price
+  /// columns when a line matches by code or description; <c>overwrite</c> allows replacing the file. Doesn't change
+  /// the drawing; writes one file. Throws CIVIL3D.API_ERROR when <c>corridorName</c> is given with
+  /// <c>includeCorridorMaterials</c> (default true) or the drawing units aren't feet or meters, CIVIL3D.OBJECT_NOT_FOUND
+  /// / INVALID_INPUT for the surfaces, and FileBoundary's path errors (e.g. CIVIL3D.PATH_NOT_ALLOWED).
+  /// </summary>
   public static Task<object?> ExportPayItemsAsync(JsonObject? parameters)
   {
     var outputPath = PluginRuntime.GetRequiredString(parameters, "outputPath");
@@ -90,6 +108,14 @@ public static class CostEstimationCommands
 
   // ─── calculateMaterialCostEstimate ───────────────────────────────────────────
 
+  /// <summary>
+  /// calculateMaterialCostEstimate: prices the drawing's quantities (earthwork when <c>baseSurface</c> and
+  /// <c>designSurface</c> are given, every pipe network's length, structure counts) with <c>payItems</c> (required, at
+  /// least one with a description), adds <c>mobilizationPercent</c> (default 5) and <c>contingencyPercent</c> (default
+  /// 0), and returns line items, totals and the pay items that matched nothing. With <c>outputPath</c> also writes a
+  /// CSV (<c>overwrite</c> optional). Doesn't change the drawing. Throws CIVIL3D.INVALID_INPUT without pay items,
+  /// CIVIL3D.API_ERROR for any <c>corridorName</c> or unsupported units, plus surface and FileBoundary errors.
+  /// </summary>
   public static Task<object?> CalculateMaterialCostEstimateAsync(JsonObject? parameters)
   {
     var corridorName = PluginRuntime.GetOptionalString(parameters, "corridorName");
@@ -178,6 +204,7 @@ public static class CostEstimationCommands
 
   private sealed record PayItem(string Code, string Description, string Unit, double UnitPrice);
 
+  /// <summary>The caller's pay items; entries without a description are dropped and a bad unitPrice counts as 0.</summary>
   private static List<PayItem> ParsePayItems(JsonArray? node)
   {
     var items = new List<PayItem>();
@@ -196,6 +223,7 @@ public static class CostEstimationCommands
     return items;
   }
 
+  /// <summary>A quantity line for exportPayItems, priced when a pay item matches its code or exact description.</summary>
   private static Dictionary<string, object?> MakeLine(string code, string description, string unit, double quantity, List<PayItem> payItems)
   {
     var match = payItems.FirstOrDefault(p => string.Equals(p.Code, code, StringComparison.OrdinalIgnoreCase)
@@ -211,6 +239,10 @@ public static class CostEstimationCommands
     };
   }
 
+  /// <summary>
+  /// Adds a priced line for the estimate: matched by code, or by either description containing the other. Adds the
+  /// line total to <paramref name="subtotal"/> and records the pay item as matched.
+  /// </summary>
   private static void AddCostLine(List<Dictionary<string, object?>> lineItems, List<PayItem> payItems, HashSet<PayItem> matched,
     string code, string description, string unit, double quantity, ref double subtotal)
   {
@@ -234,6 +266,11 @@ public static class CostEstimationCommands
     });
   }
 
+  /// <summary>
+  /// Unadjusted cut and fill between two named surfaces from a temporary TIN volume surface (only valid inside
+  /// MeasureAsync's uncommitted transaction): M3 in a meters drawing, CY (cubic feet / 27) in a feet or survey-feet
+  /// drawing. CIVIL3D.API_ERROR for other units; surface lookups and RequireDifferentSurfaces throw their own codes.
+  /// </summary>
   private static (double Cut, double Fill, string Unit) GetEarthworkVolumes(Autodesk.Civil.ApplicationServices.CivilDocument civilDoc, Database database, Transaction transaction, string baseSurface, string designSurface)
   {
     var baseSurf = CivilObjectUtils.FindSurfaceByName(civilDoc, transaction, baseSurface, OpenMode.ForRead);
@@ -260,6 +297,7 @@ public static class CostEstimationCommands
       "CY");
   }
 
+  /// <summary>The CIVIL3D.API_ERROR for corridor materials, which the Corridor API can't give (sample-line-group material lists can).</summary>
   private static JsonRpcDispatchException CorridorMaterialCapabilityError(string corridorName)
   {
     return new JsonRpcDispatchException(
@@ -269,6 +307,10 @@ public static class CostEstimationCommands
       "supply a sample-line-group/material-list mapping in a dedicated QTO workflow instead.");
   }
 
+  /// <summary>
+  /// Total pipe length (3D, else 2D, else Length) per gravity pipe network, read late-bound; networks with no length
+  /// are left out. Named "Lf" but in drawing units. Any error yields whatever was collected so far.
+  /// </summary>
   private static List<(string NetworkName, double LengthLf)> GetAllPipeNetworkLengths(object civilDoc, Transaction transaction)
   {
     var results = new List<(string, double)>();
@@ -312,6 +354,7 @@ public static class CostEstimationCommands
     return results;
   }
 
+  /// <summary>Structure counts across all pipe networks by part type (else description), read late-bound; errors yield what was counted.</summary>
   private static List<(string TypeName, double Count)> GetStructureCounts(object civilDoc, Transaction transaction)
   {
     var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -344,6 +387,7 @@ public static class CostEstimationCommands
     return counts.Select(kv => ($"{kv.Key} (Structure)", (double)kv.Value)).ToList();
   }
 
+  /// <summary>The pay-item CSV text, with price columns only when pay items were given. Text fields are quoted but not escaped.</summary>
   private static string BuildCsv(List<Dictionary<string, object?>> lines, bool hasPricing)
   {
     var sb = new StringBuilder();
@@ -361,6 +405,7 @@ public static class CostEstimationCommands
     return sb.ToString();
   }
 
+  /// <summary>The cost-estimate CSV text: line items, then subtotal, mobilization, contingency and total rows.</summary>
   private static string BuildCostCsv(List<Dictionary<string, object?>> lineItems, double subtotal, double mob, double contingency, double total)
   {
     var sb = new StringBuilder();

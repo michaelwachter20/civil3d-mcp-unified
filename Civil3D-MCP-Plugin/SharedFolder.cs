@@ -1,3 +1,9 @@
+// SharedFolder.cs - finds the suite's shared folder (by default Documents\Project Knowledge), the folder Project
+// Analyzer, TBC MCP and the Civil 3D MCP server share for job databases, practices.json and know-how. Used by
+// ScriptLibrary (saved scripts default to <shared>\civil3d\scripts) and FileBoundary (imports from the shared folder are
+// refused: it is reference knowledge, never drawing data). The lookup must match src/ (the MCP server) and the other
+// suite tools; see ../project-analyzer/docs/suite-knowledge.md. Reads environment variables and checks folders exist;
+// never creates, renames or writes anything. Also compiled into tests/FileBoundaryHarness.
 namespace Civil3DMcpPlugin;
 
 /// <summary>
