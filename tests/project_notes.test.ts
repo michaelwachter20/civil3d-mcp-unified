@@ -268,6 +268,22 @@ describe("project notes on the suite's project database", () => {
     expect(await locatePath("Q:\\Other\\file.dwg", ELM)).toMatchObject({ method: null, path: null });
   });
 
+  // Project Analyzer up to 0.3.4 stored reference_roots as [original, in_copy] pairs, not the contract's objects, so
+  // this fallback never applied to a database it wrote. Both forms are read.
+  it("reads reference_roots stored as pairs by an older Project Analyzer", async () => {
+    const db = open();
+    try {
+      db.prepare("UPDATE meta SET value = ? WHERE key = 'reference_roots'").run(JSON.stringify([["p:\\jobs\\1234 elm st", "Project"], "junk", null]));
+    } finally {
+      db.close();
+    }
+    invalidateJobIndex();
+    expect(await locatePath("P:\\Jobs\\1234 Elm St\\Survey\\EG.xml", ELM)).toMatchObject({
+      method: "reference_roots", relative: "Project\\Survey\\EG.xml", path: "C:\\Jobs\\Elm Street\\Project\\Survey\\EG.xml",
+    });
+    expect(await locatePath("Q:\\Other\\file.dwg", ELM)).toMatchObject({ method: null, path: null });
+  });
+
   it("surfaces a short overview once per job on the first code result", async () => {
     drawing = ELM_DRAWING;
     const briefing = await projectNotesOnce();

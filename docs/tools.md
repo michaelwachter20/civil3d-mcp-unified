@@ -1164,7 +1164,7 @@ The drawing's point file format names, for `import_file`.
 Points from a file come in through `import_file` only. Every other way of making COGO points asks the user in a
 window in Civil 3D first: `create`, `import` with typed-in data, C# run through `civil3d_execute` or a saved script
 that uses the point collection and calls `Add`, and the CREATEPOINTS commands. "Allow" goes ahead; "Don't allow", or
-no answer within 60 seconds, creates nothing (`CIVIL3D.USER_DECLINED`). The AI can't answer the window itself.
+no answer within 50 seconds, creates nothing (`CIVIL3D.USER_DECLINED`). The AI can't answer the window itself.
 `CIVIL3D_POINT_CREATION=off` refuses them all without asking; `allow` skips the window (unattended test setups only).
 
 #### `delete`

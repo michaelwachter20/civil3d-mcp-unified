@@ -312,10 +312,11 @@ const EXPLICIT_TOOL_CATALOG: ToolCatalogEntry[] = [
     keywords: ["calculate sight distance", "sight distance", "stopping sight distance", "passing sight distance", "decision sight distance"],
     requiredFields: ["designSpeed"],
     description: "Calculates design sight distance requirements and can optionally evaluate a specific alignment/profile location.",
+    // No speedUnits default: the plugin reads a bare speed in the drawing's units (mph in feet, km/h in metres), and a
+    // unit the request names is passed on. A fixed "kmh" here computed "45 mph" as 45 km/h (180 ft instead of 360 ft).
     buildToolArgs: buildPassthroughArgs(
-      ["designSpeed", "alignmentName", "profileName"],
+      ["designSpeed", "speedUnits", "alignmentName", "profileName"],
       {
-        speedUnits: "kmh",
         sightDistanceType: "stopping",
         grade: 0,
         perceptionReactionTime: 2.5,
@@ -333,7 +334,7 @@ const EXPLICIT_TOOL_CATALOG: ToolCatalogEntry[] = [
     requiredFields: ["alignmentName", "profileName", "designSpeed"],
     description: "Checks stopping sight distance compliance along a named alignment and profile.",
     buildToolArgs: buildPassthroughArgs(
-      ["alignmentName", "profileName", "designSpeed"],
+      ["alignmentName", "profileName", "designSpeed", "speedUnits"],
       {
         stationInterval: 25,
         standard: "AASHTO",
@@ -352,11 +353,11 @@ const EXPLICIT_TOOL_CATALOG: ToolCatalogEntry[] = [
     buildToolArgs: buildPassthroughArgs(
       ["inflow", "outflow", "surfaceName"],
       {
+        // Bottom width and freeboard are lengths, so they are left to the plugin, which picks them in the drawing's
+        // units (10 and 1 in feet, 3 and 0.3 in metres). Fixed numbers here meant a 10 m wide basin in a metric drawing.
         stormDuration: 60,
         method: "modified_rational",
         sideSlope: 3.0,
-        bottomWidth: 10.0,
-        freeboardDepth: 1.0,
       },
     ),
   },

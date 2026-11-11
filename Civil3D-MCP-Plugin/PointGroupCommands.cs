@@ -96,8 +96,11 @@ public static class PointGroupCommands
   // deletePointGroup
   // -------------------------------------------------------------------------
 
-  /// <summary>deletePointGroup (changes the drawing, one undo step): erases the group <c>name</c> (required); its
-  /// points stay in the drawing. Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group.</summary>
+  /// <summary>deletePointGroup (changes the drawing, one undo step): removes the group <c>name</c> (required) through
+  /// the point group collection; its points stay in the drawing. Never PointGroup.Erase(): that leaves a null slot in
+  /// the collection, which breaks the Point Groups dialog and made every later walk over the groups (listPointGroups,
+  /// a lookup by name) fail with eNullObjectId until the drawing was reopened. Remove works on a group this
+  /// transaction holds open (checked in Civil 3D 2027). Throws CIVIL3D.OBJECT_NOT_FOUND for an unknown group.</summary>
   public static Task<object?> DeletePointGroupAsync(JsonObject? parameters)
   {
     var name = PluginRuntime.GetRequiredString(parameters, "name");
@@ -105,7 +108,7 @@ public static class PointGroupCommands
     return CivilExecution.WriteAsync<object?>((doc, civilDoc, database, transaction) =>
     {
       var group = FindPointGroupByName(civilDoc, transaction, name, OpenMode.ForWrite);
-      group.Erase();
+      civilDoc.PointGroups.Remove(group.ObjectId);
 
       return new Dictionary<string, object?>
       {
@@ -294,6 +297,8 @@ public static class PointGroupCommands
   {
     foreach (ObjectId objectId in civilDoc.PointGroups)
     {
+      // A group erased directly (by hand-written code, or this tool before 2.4.2) leaves a null slot behind.
+      if (objectId.IsNull || objectId.IsErased) continue;
       var group = CivilObjectUtils.GetRequiredObject<PointGroup>(transaction, objectId, mode);
       if (string.Equals(group.Name, name, StringComparison.OrdinalIgnoreCase))
       {

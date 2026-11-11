@@ -217,7 +217,7 @@ foreach (ObjectId id in ms) {
 
 // ---- obstacles: COGO point markers and labels as shown (same geometry as the declutter script) ----
 var groupList = new List<(bool ovL, ObjectId ls, bool ovP, ObjectId ps, HashSet<uint> nums)>();
-foreach (ObjectId gid in CivilDoc.PointGroups) { var g = Get<PointGroup>(gid); groupList.Add((g.IsPointLabelStyleOverridden, g.PointLabelStyleId, g.IsPointStyleOverridden, g.PointStyleId, new HashSet<uint>(g.GetPointNumbers()))); }
+foreach (ObjectId gid in CivilDoc.PointGroups) { if (gid.IsNull || gid.IsErased) continue; var g = Get<PointGroup>(gid); groupList.Add((g.IsPointLabelStyleOverridden, g.PointLabelStyleId, g.IsPointStyleOverridden, g.PointStyleId, new HashSet<uint>(g.GetPointNumbers()))); }
 var styleVis = new Dictionary<ObjectId, bool>();
 bool LabelStyleVisible(ObjectId id) { if (id.IsNull) return false; if (styleVis.TryGetValue(id, out var v)) return v; var lay = Get<Autodesk.Civil.DatabaseServices.Styles.LabelStyle>(id).Properties.Label.Layer.Value; return styleVis[id] = LayerVisible(lay); }
 double pTextH = 0.075 * mpp, pGap = 0.005 * mpp, dog = 0.05 * mpp, markerR = 0.85;
@@ -353,6 +353,7 @@ foreach (var ci in Enumerable.Range(0, chains.Count).OrderByDescending(i => Math
         if (cum[k] >= s - halfL - 0.1 * mpp && cum[k - 1] <= s + halfL + 0.1 * mpp) continue;
       }
       if (allowOtherContours && segOwner[i] >= 0 && segOwner[i] != ci) continue;
+      if (SegHitsRect(segA[i], segB[i], c, u, halfL, halfH)) { hit = true; break; }
     }
     if (hit) { rejectedCrowded++; continue; }
     placed.Add((c, u, halfL, z, ci)); lastS = s;

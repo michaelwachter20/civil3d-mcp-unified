@@ -491,6 +491,37 @@ describe("workflow domain execution", () => {
     });
   });
 
+  // Found live: the workflow calls size_network's execute without its schema, so the defaults (n = 0.013, 2 to 10
+  // velocity) never arrived, n was NaN, and 8 cfs at 1% in a 12 inch pipe (3.56 cfs full) came back as "no change".
+  it("sizes with the default Manning's n and velocities when the caller gives none", async () => {
+    sendCommandMock.mockImplementation(async (commandName: string, args: Record<string, unknown>) => {
+      switch (commandName) {
+        case "getPipeNetwork":
+          return {
+            name: args.name,
+            partsList: "Storm Sewer",
+            units: "feet",
+            pipes: [{ name: "P-1", diameter: 1, slope: 0.01, slopePercent: 1, length: 100, partSizeName: "12 inch Concrete Pipe" }],
+          };
+        case "listPipePartsCatalog":
+          return { partsLists: [{ name: "Storm Sewer", parts: ["12 inch Concrete Pipe", "15 inch Concrete Pipe", "18 inch Concrete Pipe", "24 inch Concrete Pipe"] }] };
+        default:
+          throw new Error(`Unexpected command: ${commandName}`);
+      }
+    });
+
+    const result = await WORKFLOW_DOMAIN_DEFINITION.actions.pipe_network_design.execute({
+      action: "pipe_network_design",
+      networkName: "STM-1",
+      defaultDesignFlow: 8,
+      runHydraulicAnalysis: false,
+    });
+
+    const recommendation = (result.outputs.sizing as { recommendations: Array<Record<string, unknown>> }).recommendations[0];
+    expect(recommendation.requiredDiameter).toBeCloseTo(1.3544, 3);
+    expect(recommendation).toMatchObject({ selectedPart: "18 inch Concrete Pipe", changeNeeded: true, applied: false });
+  });
+
   it("publishes a sheet set through the plan production workflow", async () => {
     sendCommandMock.mockImplementation(async (commandName: string, args: Record<string, unknown>) => {
       if (commandName === "planProductionPublishWorkflow") {

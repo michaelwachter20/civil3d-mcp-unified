@@ -890,11 +890,17 @@ export async function locatePath(written: string, name?: string) {
       };
     }
     const lower = wanted.toLowerCase();
-    for (const root of parseJson<Array<{ original?: string; in_copy?: string }>>(metaValue(db, "reference_roots"), [])) {
-      const original = String(root.original ?? "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+    // The contract's form is {"original", "in_copy"}; Project Analyzer up to 0.3.4 stored [original, in_copy] pairs
+    // instead, so both are read (reading only the objects, this fallback never applied to a real job's database).
+    const storedRoots = parseJson<unknown>(metaValue(db, "reference_roots"), []);
+    const roots = (Array.isArray(storedRoots) ? storedRoots : []).map((entry): { original?: unknown; in_copy?: unknown } =>
+      Array.isArray(entry) ? { original: entry[0], in_copy: entry[1] } : entry && typeof entry === "object" ? entry : {});
+    for (const stored of roots) {
+      const root = { original: typeof stored.original === "string" ? stored.original : "", in_copy: typeof stored.in_copy === "string" ? stored.in_copy : "" };
+      const original = root.original.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
       if (!original || !(lower === original || lower.startsWith(`${original}\\`))) continue;
       const rest = wanted.slice(original.length).replace(/^\\+/, "");
-      const relative = path.win32.join(root.in_copy ?? "", rest);
+      const relative = path.win32.join(root.in_copy, rest);
       const target = inCopy(relative);
       return {
         project: job.name, referenceOnly: referenceOnly(db), written, method: "reference_roots", relative, path: target, exists: !!target && existsSync(target),

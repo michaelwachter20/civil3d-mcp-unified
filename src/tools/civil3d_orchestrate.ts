@@ -184,6 +184,7 @@ function buildMergedParams(args: OrchestrateArgs, routed: ReturnType<typeof rout
     overwrite: args.overwrite ?? routed.extractedParams.overwrite,
     gridSpacing: args.gridSpacing ?? routed.extractedParams.gridSpacing,
     designSpeed: args.designSpeed ?? routed.extractedParams.designSpeed,
+    speedUnits: routed.extractedParams.speedUnits,
     inflow: args.inflow ?? routed.extractedParams.inflow,
     outflow: args.outflow ?? routed.extractedParams.outflow,
     bottomElevation: args.bottomElevation ?? routed.extractedParams.bottomElevation,

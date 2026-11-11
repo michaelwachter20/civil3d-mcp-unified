@@ -588,7 +588,10 @@ public static class SurfaceCommands
       if (format == "detailed")
       {
         lines.Add($"");
-        lines.Add($"Net Balance: {(net >= 0 ? "Cut exceeds fill" : "Fill exceeds cut")} by {Math.Abs(net):F3} {units}^3");
+        // UnadjustedNetVolume is fill minus cut: positive means more fill. (Checked in Civil 3D 2027 with a comparison
+        // surface 2 above a flat base: cut 0, fill and net +20000. This line used to say the opposite.)
+        var balance = net > 0 ? "Fill exceeds cut" : net < 0 ? "Cut exceeds fill" : "Cut and fill balance";
+        lines.Add(net == 0 ? $"Net Balance: {balance}" : $"Net Balance: {balance} by {Math.Abs(net):F3} {units}^3");
         lines.Add($"Cut/Fill Ratio: {(fill > 0 ? (cut / fill).ToString("F3") : "N/A")}");
       }
 

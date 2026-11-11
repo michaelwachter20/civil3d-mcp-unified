@@ -392,6 +392,8 @@ public static class PointCommands
       var groups = new List<Dictionary<string, object?>>();
       foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.PointGroups)
       {
+        // A group erased directly leaves a null slot in the collection; opening it fails with eNullObjectId.
+        if (objectId.IsNull || objectId.IsErased) continue;
         var group = CivilObjectUtils.GetRequiredObject<PointGroup>(transaction, objectId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
         var query = group.GetQuery() as StandardPointGroupQuery;
         groups.Add(new Dictionary<string, object?>
@@ -442,6 +444,7 @@ public static class PointCommands
   {
     foreach (Autodesk.AutoCAD.DatabaseServices.ObjectId objectId in civilDoc.PointGroups)
     {
+      if (objectId.IsNull || objectId.IsErased) continue;   // the null slot an erased group leaves behind
       var group = CivilObjectUtils.GetRequiredObject<PointGroup>(transaction, objectId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
       if (!string.Equals(group.Name, groupName, StringComparison.OrdinalIgnoreCase))
       {

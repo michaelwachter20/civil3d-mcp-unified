@@ -24,7 +24,7 @@ and Civil 3D plugin installation.
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Node.js | 18 or later | Required to run the MCP server |
+| Node.js | 22.15 or later | Required to run the MCP server (`package.json` engines: the project notes use the built-in `node:sqlite`) |
 | npm | 8 or later | Comes with Node.js |
 | Autodesk Civil 3D | 2027 | Plugin host. AutoCAD 2027 only loads .NET 10 plugins |
 | .NET 10 SDK | 10.0 | Required to build the C# plugin (Visual Studio 2022 cannot target AutoCAD 2027; use the `dotnet` CLI or VS 2026) |

@@ -118,6 +118,33 @@ describe("orchestration routing", () => {
     expect(routed.extractedParams.designSpeed).toBe(80);
   });
 
+  // Found live: the route sent speedUnits "kmh" whatever the request said, so 45 mph gave 180 ft instead of 360 ft.
+  it("keeps the speed unit a request names, and sends none when it names none", () => {
+    const mph = routeIntent("calculate the stopping sight distance for 45 mph");
+    expect(mph.match.intent).toBe("calculate_sight_distance");
+    expect(mph.extractedParams).toMatchObject({ designSpeed: 45, speedUnits: "mph" });
+    expect(mph.match.buildToolArgs(mph.extractedParams as Record<string, unknown>)).toMatchObject({ designSpeed: 45, speedUnits: "mph" });
+
+    const metric = routeIntent("calculate sight distance at 80 km/h");
+    expect(metric.extractedParams).toMatchObject({ designSpeed: 80, speedUnits: "kmh" });
+
+    const worded = routeIntent("calculate sight distance for a design speed of 45 mph");
+    expect(worded.extractedParams).toMatchObject({ designSpeed: 45, speedUnits: "mph" });
+
+    // No unit named: the plugin follows the drawing (mph in feet, km/h in metres).
+    const bare = routeIntent("calculate sight distance design speed 45");
+    expect(bare.extractedParams.speedUnits).toBeUndefined();
+    expect(bare.match.buildToolArgs(bare.extractedParams as Record<string, unknown>)).not.toHaveProperty("speedUnits");
+  });
+
+  it("leaves a detention basin's lengths to the plugin, which picks them in the drawing's units", () => {
+    const routed = routeIntent("size detention basin inflow 25 outflow 8");
+    const toolArgs = routed.match.buildToolArgs(routed.extractedParams as Record<string, unknown>);
+    expect(toolArgs).toMatchObject({ inflow: 25, outflow: 8 });
+    expect(toolArgs).not.toHaveProperty("bottomWidth");
+    expect(toolArgs).not.toHaveProperty("freeboardDepth");
+  });
+
   it("routes detention sizing requests and extracts flow values", () => {
     const routed = routeIntent("size detention basin inflow 25 outflow 8");
 

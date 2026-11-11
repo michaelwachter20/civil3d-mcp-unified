@@ -204,15 +204,24 @@ const PipeStructurePropertiesArgsSchema = z.object({
   networkName: z.string(),
   structureName: z.string(),
 });
+/**
+ * size_network's defaults. The schema fills them in for a call through the tool; `execute` applies them again, because
+ * workflowDomain.ts's pipe_network_design calls `execute` directly, without the schema. Left to the schema alone, a
+ * workflow call without them sized every pipe with n = NaN and reported the existing size as large enough.
+ */
+const DEFAULT_MANNINGS_N = 0.013;
+const DEFAULT_TARGET_VELOCITY_MIN = 2.0;
+const DEFAULT_TARGET_VELOCITY_MAX = 10.0;
+
 const PipeSizeNetworkArgsSchema = z.object({
   action: z.literal("size_network"),
   networkName: z.string(),
   partsList: z.string().optional(),
   defaultDesignFlow: z.number().positive().optional(),
   perPipeDesignFlows: z.array(PipeFlowSchema).optional(),
-  manningsN: z.number().positive().optional().default(0.013),
-  targetVelocityMin: z.number().positive().optional().default(2.0),
-  targetVelocityMax: z.number().positive().optional().default(10.0),
+  manningsN: z.number().positive().optional().default(DEFAULT_MANNINGS_N),
+  targetVelocityMin: z.number().positive().optional().default(DEFAULT_TARGET_VELOCITY_MIN),
+  targetVelocityMax: z.number().positive().optional().default(DEFAULT_TARGET_VELOCITY_MAX),
   applyChanges: z.boolean().optional().default(false),
 });
 const PipeAutomateProfileViewArgsSchema = z.object({
@@ -378,6 +387,10 @@ function computeVelocity(flow: number, diameter: number): number {
 
 /** The smallest diameter whose full-flow capacity carries `flow`, by bisection (doubling the upper bound first). */
 function solveRequiredDiameter(flow: number, slopePct: number, manningsN: number, drawingUnits: string): number {
+  // Every comparison with NaN is false, so the bisection below would end at its starting size and look like an answer.
+  if (!(manningsN > 0) || !Number.isFinite(manningsN)) {
+    throw new Error(`Manning's n must be a positive number to size a pipe (got ${manningsN}).`);
+  }
   let low = 0.001;
   let high = 1;
   while (fullFlowCapacity(high, slopePct, manningsN, drawingUnits) < flow && high < 1_000_000) high *= 2;
@@ -672,9 +685,9 @@ export const PIPE_DOMAIN_DEFINITION: DomainToolDefinition = {
         for (const pipe of network.pipes) {
           const flow = flowMap.get(pipe.name.toLowerCase()) ?? args.defaultDesignFlow;
           const { recommendation, swapTo } = sizePipe(pipe, parts, flow == null ? undefined : Number(flow), {
-            manningsN: Number(args.manningsN),
-            velocityMin: Number(args.targetVelocityMin),
-            velocityMax: Number(args.targetVelocityMax),
+            manningsN: Number(args.manningsN ?? DEFAULT_MANNINGS_N),
+            velocityMin: Number(args.targetVelocityMin ?? DEFAULT_TARGET_VELOCITY_MIN),
+            velocityMax: Number(args.targetVelocityMax ?? DEFAULT_TARGET_VELOCITY_MAX),
             applyChanges: Boolean(args.applyChanges),
             drawingUnits,
           });

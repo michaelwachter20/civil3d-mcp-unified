@@ -2,9 +2,9 @@
 // alignment lengths, point counts per point group, and a CSV export of several of these.
 // JSON-RPC methods (CommandDispatcher.cs): qtySurfaceVolume, qtyPipeNetworkLengths, qtyPressureNetworkLengths,
 // qtyParcelAreas, qtyAlignmentLengths, qtyPointCountByGroup, qtyExportToCsv and qtyEarthworkSummary serve
-// civil3d_quantity_takeoff (src/tools/domains/quantityTakeoffDomain.ts). qtyCorridorVolumes and qtyMaterialListGet are
-// dispatched but no TS domain calls them yet; they read the QTO material lists of the sample-line groups on a
-// corridor's alignments (CostEstimationCommands reuses CorridorMaterialLists for corridor pay items).
+// civil3d_quantity_takeoff (src/tools/domains/quantityTakeoffDomain.ts), as do qtyCorridorVolumes and
+// qtyMaterialListGet (its corridor_volumes and material_lists): they read the QTO material lists of the sample-line
+// groups on a corridor's alignments (CostEstimationCommands reuses CorridorMaterialLists for corridor pay items).
 // Nothing here changes the drawing. Reads go through CivilExecution.ReadAsync (main thread, no undo step). The volume
 // methods (and qtyExportToCsv with surface volumes) use MeasureAsync: a temporary TinVolumeSurface needs a document
 // lock, the transaction is never committed, and the lock leaves one blank undo step. qtyExportToCsv writes its .csv

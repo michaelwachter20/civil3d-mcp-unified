@@ -22,11 +22,21 @@ const GRADING_OUT_OF_REACH =
   "Civil 3D's API doesn't reach grading groups or gradings, in .NET or COM. Use the Grading Creation Tools. A group's " +
   "surface is an ordinary surface, so the surface tools can read it and its volumes.";
 
-/** A point in drawing units; a missing elevation becomes 0. */
+/** A point the plugin answers with, in drawing units; a missing elevation reads as 0. For answers only. */
 const Point3DSchema = z.object({
   x: z.number(),
   y: z.number(),
   z: z.number().optional().default(0),
+});
+
+/**
+ * A point of a feature line to create. The elevation is required: the plugin refuses a point without z rather than
+ * assume elevation 0 (GradingCommands.cs), and a default here would hide that by sending 0 for the caller.
+ */
+const FeatureLinePointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  z: z.number().describe("Elevation in drawing units. Required: elevation 0 is never assumed."),
 });
 
 const FeatureLineSummarySchema = z.object({
@@ -72,7 +82,7 @@ const canonicalGradingInputShape = {
   ]),
   name: z.string().optional(),
   targetLayer: z.string().optional(),
-  points: z.array(Point3DSchema).optional(),
+  points: z.array(FeatureLinePointSchema).optional(),
   layer: z.string().optional(),
 };
 
@@ -160,7 +170,7 @@ const FeatureLineExportArgsSchema = z.object({
 /** A new feature line through at least two points, in order, on layer "0" unless `layer` says otherwise. */
 const FeatureLineCreateArgsSchema = z.object({
   action: z.literal("feature_line_create"),
-  points: z.array(Point3DSchema).min(2),
+  points: z.array(FeatureLinePointSchema).min(2),
   name: z.string().optional(),
   layer: z.string().optional(),
 });
@@ -467,7 +477,7 @@ export const GRADING_DOMAIN_DEFINITION: DomainToolDefinition = {
       displayName: "Civil 3D Feature Line Create",
       description: "Creates a new Civil 3D feature line from an ordered list of 3D points.",
       inputShape: {
-        points: z.array(Point3DSchema).min(2),
+        points: z.array(FeatureLinePointSchema).min(2),
         name: z.string().optional(),
         layer: z.string().optional(),
       },

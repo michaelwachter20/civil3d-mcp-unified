@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Six bugs found by a full read of the code and reproduced in Civil 3D 2027 on a blank drawing:**
+  - `civil3d_point group_delete` erased the point group object, which left a null slot in the drawing's point groups:
+    `list_groups` and every lookup of a group by name then failed with `eNullObjectId` until the drawing was
+    reopened. It now removes the group through the collection, and the group walks skip such a slot.
+  - `civil3d_workflow pipe_network_design` sized pipes without the default Manning's n and velocities (n was NaN) and
+    reported the existing size as large enough: 8 cfs at 1% in a 12 inch pipe came back as "no change" instead of 18
+    inch. The defaults now apply to a workflow call too, and sizing refuses an n that isn't a positive number.
+  - `civil3d_grading feature_line_create` filled in elevation 0 for a point without `z`, although the plugin refuses
+    such a point on purpose. `z` is now required.
+  - `civil3d_surface volume_report` (detailed) said "Cut exceeds fill" for a positive net volume. Net is fill minus
+    cut, so it now says "Fill exceeds cut".
+  - `civil3d_orchestrate` computed "45 mph" as 45 km/h (180 ft of stopping sight distance instead of 360 ft). The
+    unit a request names is passed on; with none, the drawing's units decide. Its detention route no longer sends a
+    10 by 1 basin bottom and freeboard whatever the drawing's units.
+  - The `add_contour_labels_in_clear_spots` skill's script never tested a spot against its obstacles, so labels
+    landed on linework and other annotation. The test is back.
+
 - **Bug pass from the code review (plugin and server).** Highlights:
   - Safety: `civil3d_point transform` with no point numbers or group refuses unless `allPoints: true`; scale and
     rotation turn about `baseX`/`baseY` (required). Point numbers must be positive integers. Exports can't write into

@@ -49,6 +49,8 @@ export interface RouteParams {
   overwrite?: boolean;
   gridSpacing?: number;
   designSpeed?: number;
+  /** The speed unit the request names next to a number ("45 mph", "80 km/h"); left out, the plugin follows the drawing. */
+  speedUnits?: "mph" | "kmh";
   inflow?: number;
   outflow?: number;
   bottomElevation?: number;
@@ -258,8 +260,12 @@ function extractParams(request: string): RouteParams {
   const limit = extractNamedNumber(request, "limit");
   const layerPrefix = extractNamedValue(request, "layer\\s*prefix");
   const gridSpacing = extractNamedNumber(request, "grid\\s*spacing") ?? extractNamedNumber(request, "spacing");
+  // A unit written after a number is kept: dropping it turned "45 mph" into 45 km/h.
+  const speedWithUnit = /(\d+(?:\.\d+)?)\s*(mph|km\s*\/\s*h|kmh|kph)\b/i.exec(request);
+  const speedUnits = speedWithUnit ? (speedWithUnit[2].toLowerCase() === "mph" ? "mph" as const : "kmh" as const) : undefined;
   const designSpeed = extractNamedNumber(request, "design\\s*speed")
-    ?? /(?:at|for)\s+(\d+(?:\.\d+)?)\s*(?:kmh|mph|kph)/i.exec(request)?.[1];
+    ?? extractNamedNumber(request, "design\\s*speed\\s+of")
+    ?? speedWithUnit?.[1];
   const inflow = extractNamedNumber(request, "inflow");
   const outflow = extractNamedNumber(request, "outflow");
   const bottomElevation = extractNamedNumber(request, "bottom(?:\\s+elevation)?");
@@ -318,6 +324,7 @@ function extractParams(request: string): RouteParams {
     outputPath: outputPath ?? undefined,
     gridSpacing: gridSpacing ?? undefined,
     designSpeed: typeof designSpeed === "string" ? Number(designSpeed) : designSpeed,
+    speedUnits,
     inflow: inflow ?? undefined,
     outflow: outflow ?? undefined,
     bottomElevation: bottomElevation ?? undefined,

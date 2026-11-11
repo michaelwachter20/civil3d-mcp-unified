@@ -169,10 +169,10 @@ const SheetViewCreateArgsSchema = z.object({
 });
 
 /**
- * `scale` as in sheet_view_create (40 for 1" = 40'); without `viewportHandle` the plugin takes the first viewport in
- * the layout.
- * NOTE: the plugin also falls back to the first viewport when `viewportHandle` matches none, instead of refusing, and
- * the first viewport in a layout is usually AutoCAD's overall paper-space viewport, not a model view.
+ * `scale` as in sheet_view_create (40 for 1" = 40'); without `viewportHandle` the plugin takes the layout's only model
+ * viewport. It refuses (CIVIL3D.INVALID_INPUT, listing the layout's model viewports) when the layout has none or
+ * several and no handle was given, when the handle matches none of them, and for the layout's own paper-space
+ * viewport (PlanProductionCommands.FindViewport).
  */
 const SheetViewSetScaleArgsSchema = z.object({
   action: z.literal("sheet_view_set_scale"),

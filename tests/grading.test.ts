@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { GRADING_DOMAIN_DEFINITION } from "../src/tools/domains/gradingDomain.js";
-import { actionInput, toolActionInput, toolInput } from "./helpers/realSchemas.js";
+import { actionInput, toolActionInput, toolInput, toolShape } from "./helpers/realSchemas.js";
 
 const GradingGroupGetSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_get");
 const GradingGroupCreateSchema = actionInput(GRADING_DOMAIN_DEFINITION, "group_create");
@@ -140,16 +140,23 @@ describe("civil3d_feature_line_create input schema", () => {
     }).success).toBe(false);
   });
 
-  it("defaults z to 0 when omitted", () => {
-    const result = FeatureLineCreateSchema.safeParse({
+  // The plugin refuses a point without z ("elevation 0 will not be assumed"); a default here sent 0 for the caller.
+  it("refuses a point without z instead of assuming elevation 0", () => {
+    expect(FeatureLineCreateSchema.safeParse({
       points: [
         { x: 100, y: 200 },
         { x: 300, y: 400 },
       ],
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect((result.data.points as Array<{ z: number }>)[0].z).toBe(0);
+    }).success).toBe(false);
+    expect(FeatureLineCreateSchema.safeParse({
+      points: [
+        { x: 100, y: 200, z: 10 },
+        { x: 300, y: 400 },
+      ],
+    }).success).toBe(false);
+    for (const tool of ["civil3d_grading", "civil3d_feature_line_create"]) {
+      expect(toolShape(tool).safeParse({ action: "feature_line_create", points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] }).success).toBe(false);
+      expect(toolShape(tool).safeParse({ action: "feature_line_create", points: [{ x: 1, y: 2, z: 0 }, { x: 3, y: 4, z: 0 }] }).success).toBe(true);
     }
   });
 
