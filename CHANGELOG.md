@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v2.5.0 — 2026-11-12
+
+v2.4.1 (below) was never released on its own; this release includes it.
 
 - **Six bugs found by a full read of the code and reproduced in Civil 3D 2027 on a blank drawing:**
   - `civil3d_point group_delete` erased the point group object, which left a null slot in the drawing's point groups:
