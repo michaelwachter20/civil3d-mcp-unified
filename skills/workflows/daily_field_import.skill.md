@@ -44,11 +44,13 @@ parameters:
 ## When to use
 A project keeps one drawing with every survey point ("all points"), updated after each field day from the crews'
 checked files. Learn the drawing's conventions from earlier days before the first run: layer names and properties
-per day and crew, point group names and queries (include-numbers), styles, where new groups go in the list, and how
-earlier duplicates were numbered (prefixes like 1..., 2..., 3... on bumped numbers). Keep the project's own folder
+per day and crew, point group names and queries (include-numbers), styles, and how earlier duplicates were numbered (prefixes like 1..., 2..., 3... on bumped numbers). Keep the project's own folder
 layout, crew codes and group list in project notes, not here.
 
 ## Hard rules
+- **The new day's point group goes at the very TOP of the point group list (index 0 of `DrawOrder`), every time.**
+  Never place it next to the previous day's group or copy where earlier day groups sit: the user moves finished days
+  further down themselves, so the older day groups are no guide. Check the position after the run.
 - Field files are **read only**: never edit, rename, move, re-save or delete anything in the field folders and never
   write files there. If a file looks wrong, report it.
 - Never change point data: northing, easting, elevation and raw description go in exactly as in the file. The only
@@ -65,7 +67,8 @@ layout, crew codes and group list in project notes, not here.
    Duplicates: each number gets the smallest of +step, +2*step, ... that is free, which matches the Duplicate Point
    Number dialog with "Add an offset" applied to all and repeated until the import goes through.
 3. Verify every point against its file line (coordinates, elevation, raw and full description, layer, styles), and
-   that the groups hold exactly the imported numbers and sit at the top of the list. Save (QSAVE).
+   that the groups hold exactly the imported numbers and are at index 0 of the point group list (the very top, above
+   the material groups). Save (QSAVE).
 4. `update-point-groups` for the material groups (same as right-click > Update; they re-run their own filters - never
    add points to them by hand). A group count that drops is usually a stale count from earlier, unrelated edits:
    check its query before worrying. Save again.
